@@ -268,17 +268,18 @@ void drawIdleUI()
   M5.Display.setCursor(10, 110);
   M5.Display.printf("Batt: %d%%", M5.Power.getBatteryLevel());
 
-  // Hello World from the DAL: prove begin() ran by surfacing the active
-  // device count and the host profile's capability count.
+  // Hello World from the DAL: surface the active device count, the host
+  // profile's capability count, and the registered driver count.
   const auto* host = nocturnation::dal::DAL::profile_of("local");
   const unsigned caps = host
       ? (unsigned)(host->input_capability_count + host->output_capability_count)
       : 0;
   M5.Display.setCursor(10, 128);
   M5.Display.setTextSize(1);
-  M5.Display.printf("DAL: %u dev, %u cap",
+  M5.Display.printf("DAL: %u dev, %u cap, %u drv",
                     (unsigned)nocturnation::dal::DAL::active_device_count(),
-                    caps);
+                    caps,
+                    (unsigned)nocturnation::dal::DAL::registered_driver_count());
 }
 
 void drawBeatUI()

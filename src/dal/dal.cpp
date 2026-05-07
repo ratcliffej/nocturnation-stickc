@@ -6,6 +6,7 @@
 
 #include "dal/dal.h"
 #include "hal/hal.h"
+#include "drivers/local_driver.h"
 
 #include <cstring>
 
@@ -161,10 +162,14 @@ void DAL::begin() {
 
     compose_host_profile();
 
-    // Register the host as the "local" device. Drivers are registered by
-    // later commits as each protocol-handler arrives; for now the registry
-    // just knows about the host.
+    // Register the host as the "local" device.
     register_device("local", &s_host_profile, 0);
+
+    // Register the LocalDriver so that fire_display_* and subscribe_button_*
+    // calls actually reach the host's HAL backends. The driver's begin()
+    // refuses registration on hosts where neither display nor buttons are
+    // wired (returns false), keeping the fail-silent semantics intact.
+    register_driver(local_driver_instance());
 }
 
 void DAL::loop_tick() {
