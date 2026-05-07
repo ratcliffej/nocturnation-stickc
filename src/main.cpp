@@ -1,9 +1,18 @@
 #include <Arduino.h>
 #include "M5Unified.h"
 #include "pixmob_protocol.h"
-#include "dal/dal.h"     // Epic 2 in-progress: bring up the DAL alongside
-                          // M5Unified. M5Unified call sites get migrated to
-                          // DAL helpers one at a time in subsequent commits.
+#include "dal/dal.h"
+
+// File-scope using declarations. main.cpp is orchestration code and the DAL
+// is its primary library; pulling the namespace into scope lets callers
+// read as `DAL::fire_rgb_pulse(...)` rather than the noisier
+// `nocturnation::dal::DAL::fire_rgb_pulse(...)`. Selective `using` for the
+// few HAL types that surface in callback signatures (ButtonId, ButtonEvent)
+// avoids dragging in the full HAL namespace, which orchestration shouldn't
+// be calling into anyway.
+using namespace nocturnation::dal;
+using nocturnation::hal::ButtonId;
+using nocturnation::hal::ButtonEvent;
 
 
 
@@ -63,10 +72,8 @@ bool beatModePaused = false;
 void drawIdleUI();
 void drawBeatUI();
 void sendCurrentIR();
-void onButtonEvent(const char* source,
-                   const nocturnation::dal::ButtonPressEvent& ev);
-void onAudioFrame(const char* source,
-                  const nocturnation::dal::AudioFrameEvent& ev);
+void onButtonEvent(const char* source, const ButtonPressEvent& ev);
+void onAudioFrame(const char* source, const AudioFrameEvent& ev);
 
 uint16_t modeColour()
 {
@@ -102,12 +109,12 @@ void setBeatMode(bool on)
     ibiCount       = 0;
     estimatedBPM   = 0.0f;
     lastBeatMs     = 0;
-    nocturnation::dal::DAL::start_audio_input("local", 16000, 512);
+    DAL::start_audio_input("local", 16000, 512);
     drawBeatUI();
   }
   else
   {
-    nocturnation::dal::DAL::stop_audio_input("local");
+    DAL::stop_audio_input("local");
     drawIdleUI();
   }
 }
@@ -117,11 +124,8 @@ void setBeatMode(bool on)
 // same flux / threshold / refractory / BPM-tracking logic the prototype's
 // detectBeat() did, then drives the visible response (screen flash,
 // optional IR send, redraw) when a beat fires.
-void onAudioFrame(const char*,
-                  const nocturnation::dal::AudioFrameEvent& ev)
+void onAudioFrame(const char*, const AudioFrameEvent& ev)
 {
-  using namespace nocturnation::dal;
-
   if (!beatModeActive) return;       // mic might still be running mid-shutdown
 
   currentLevel = ev.overall_rms;
@@ -221,15 +225,12 @@ void sendCurrentIR() {
   // bytes are byte-identical to the prototype's irsend.sendRaw path - the
   // PixMobIRDriver wraps the same pixmob::buildSingleColor encoder with the
   // same default chance (CHANCE_100) and the same group_id (0).
-  using namespace nocturnation::dal;
   DAL::fire_rgb_pulse("all-pixmobs", RgbPulseEvent{
       r, g, b, attack, sustain, release, pixmob::CHANCE_100});
 }
 
 void drawIdleUI()
 {
-  using namespace nocturnation::dal;
-
   DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
 
   DAL::fire_display_show_text("local", DisplayShowTextEvent{
@@ -261,8 +262,6 @@ void drawIdleUI()
 
 void drawBeatUI()
 {
-  using namespace nocturnation::dal;
-
   DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
 
   // Mode title (with optional " : Muted" suffix)
@@ -362,25 +361,23 @@ void setup()
   // IMU, Battery, Mic, and IRTx. DAL::begin internally calls HAL::begin
   // (which calls IRTxStickC::begin -> IRsend::begin) and registers the
   // LocalDriver and PixMobIRDriver.
-  nocturnation::dal::DAL::begin();
+  DAL::begin();
 
   // Subscribe to button events from the host. The handler dispatches by
   // (id, kind) to the same logic the old M5.BtnX.wasPressed/wasClicked
   // checks used to live in loop().
-  nocturnation::dal::DAL::subscribe_button_presses("local", &onButtonEvent);
+  DAL::subscribe_button_presses("local", &onButtonEvent);
 
   // Subscribe to audio frames from the host. The handler runs the
   // beat-detection logic that used to live in detectBeat() and triggers
   // the visible response (flash + IR + redraw) on each detected beat.
   // The mic stays off until setBeatMode(true) calls DAL::start_audio_input.
-  nocturnation::dal::DAL::subscribe_audio_frames("local", &onAudioFrame);
+  DAL::subscribe_audio_frames("local", &onAudioFrame);
 
   drawIdleUI();
 }
 
-void onButtonEvent(const char*, const nocturnation::dal::ButtonPressEvent& ev) {
-  using namespace nocturnation::hal;
-
+void onButtonEvent(const char*, const ButtonPressEvent& ev) {
   // Btn2 (side button): cycle colour mode.
   if (ev.id == ButtonId::Btn2 && ev.kind == ButtonEvent::Pressed) {
     currentMode = static_cast<Mode>((currentMode + 1) % MODE_COUNT);
@@ -414,7 +411,7 @@ void loop()
 
   // Advance HAL/DAL state. The HAL polls buttons and the LocalDriver's
   // bridge fires our onButtonEvent() handler from inside this call.
-  nocturnation::dal::DAL::loop_tick();
+  DAL::loop_tick();
 
   if (beatModeActive)
   {
