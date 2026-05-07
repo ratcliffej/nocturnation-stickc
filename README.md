@@ -146,7 +146,7 @@ The `[env:native]` section of `platformio.ini` excludes firmware sources from th
 - **Epic 2 (next).** Architecture refactor: introduce a hardware abstraction layer (HAL) to decouple the firmware from the M5StickC and the M5Unified library, then extract the FX engine, the IR transport, and the mode state machine behind clean abstractions. The goal is enabling alternate host boards (vendor-independent), additional transports (ESP-NOW mesh, BLE), and additional receivers (Tildagon badges, DMX/Art-Net bridges) without touching beat detection.
 - **Beyond.** Multi-node mesh, group-addressed effects, audience-app integrations.
 
-The full architecture specification lives in a private project workspace; reach out if you'd like access for design contributions.
+The full architecture specification lives in [docs/architecture.md](docs/architecture.md), with active Epic plans in [docs/epics/](docs/epics/). The Notion mirror is private; the Markdown copies in this repo are the source of truth.
 
 ---
 
