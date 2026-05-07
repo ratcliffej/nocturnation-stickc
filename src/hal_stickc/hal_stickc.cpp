@@ -8,10 +8,13 @@
 //   IMU       - MPU6886
 //   Battery   - AXP192
 //
+// Capabilities currently declared (continued):
+//
+//   Mic       - PDM mic via I2S, FFT done by arduinoFFT. Emits AudioFrames
+//               only while begin()/end() has been used to enable it.
+//
 // Not yet declared (interfaces exist; backends pending):
 //
-//   Mic     - lifecycle clashes with main.cpp's setBeatMode()/M5.Mic.begin/end
-//             pattern; will land when beat detection migrates to orchestration.
 //   IRTx    - main.cpp owns the global IRsend(IR_PIN); declaring IRTx here
 //             would mean a second IRsend instance fighting for GPIO 19's RMT
 //             channel. Will land when IRsend ownership consolidates into the
@@ -26,6 +29,7 @@
 #include "buttons_stickc.h"
 #include "imu_stickc.h"
 #include "battery_stickc.h"
+#include "mic_stickc.h"
 
 namespace nocturnation {
 namespace hal {
@@ -39,6 +43,7 @@ static constexpr Capability kCapabilities[] = {
     Capability::Buttons,
     Capability::IMU,
     Capability::Battery,
+    Capability::Mic,
 };
 static constexpr size_t kCapabilityCount =
     sizeof(kCapabilities) / sizeof(kCapabilities[0]);
@@ -62,6 +67,7 @@ DisplayStickC s_display;
 ButtonsStickC s_buttons;
 IMUStickC     s_imu;
 BatteryStickC s_battery;
+MicStickC     s_mic;
 }  // namespace
 
 // -----------------------------------------------------------------------------
@@ -78,24 +84,30 @@ void HAL::begin() {
     s_imu.begin();
     // Battery has no begin() in the HAL interface - M5.Power is up after
     // M5.begin() and the BatteryStickC backend is purely a query wrapper.
+    // Mic is NOT begun here. Orchestration enables it via the DAL
+    // (DAL::start_audio_input) when entering beat mode and disables it
+    // when leaving; the prototype's M5.Mic / M5.Speaker contention pattern
+    // is preserved exactly.
 }
 
 void HAL::loop_tick() {
     // Polled capabilities advance here. Buttons emits events to subscribers
-    // when M5Unified's edge state shows a transition. (Mic frame production
-    // will land here when the Mic backend ships.)
+    // when M5Unified's edge state shows a transition. Mic produces an
+    // AudioFrame on each successful M5.Mic.record() call (~32 ms blocking
+    // window when running; cheap no-op when not).
     s_buttons.poll();
+    s_mic.poll();
 }
 
 // -----------------------------------------------------------------------------
 // Accessors
 // -----------------------------------------------------------------------------
 
-Mic*     HAL::mic()      { return nullptr; }   // not yet implemented
 IRTx*    HAL::ir_tx()    { return nullptr; }   // not yet implemented
 IRRx*    HAL::ir_rx()    { return nullptr; }
 ESPNow*  HAL::esp_now()  { return nullptr; }
 
+Mic*     HAL::mic()      { return &s_mic; }
 Display* HAL::display()  { return &s_display; }
 Buttons* HAL::buttons()  { return &s_buttons; }
 IMU*     HAL::imu()      { return &s_imu; }

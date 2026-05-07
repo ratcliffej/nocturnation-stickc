@@ -33,9 +33,27 @@ bool LocalDriver::begin() {
         any_capability_wired = true;
     }
 
-    // Refuse registration if neither input nor output capability is wired -
-    // there's nothing useful for this driver to do, and registering would
-    // just add lookup overhead.
+    // Input: mic. Register a HAL frame callback that translates each raw
+    // hal::AudioFrame into the DAL's AudioFrameEvent and delivers it to
+    // any orchestration-level subscribers. The mic is NOT started here -
+    // orchestration controls lifecycle via DAL::start_audio_input /
+    // stop_audio_input, which dispatches into start_audio_input() below.
+    if (auto* mic = hal::HAL::mic()) {
+        mic->set_frame_callback([](const hal::AudioFrame& frame) {
+            AudioFrameEvent ev;
+            ev.timestamp_ms  = frame.timestamp_ms;
+            ev.bass_energy   = frame.bass_energy;
+            ev.mid_energy    = frame.mid_energy;
+            ev.treble_energy = frame.treble_energy;
+            ev.overall_rms   = frame.overall_rms;
+            DAL::deliver_audio_frame("local", ev);
+        });
+        any_capability_wired = true;
+    }
+
+    // Refuse registration if no capability is wired - there's nothing
+    // useful for this driver to do, and registering would just add
+    // lookup overhead.
     return any_capability_wired;
 }
 
@@ -63,6 +81,24 @@ bool LocalDriver::send(uint8_t /*group_id*/, const DisplayFillRectEvent& ev) {
     auto* d = hal::HAL::display();
     if (!d) return false;
     d->fill_rect(ev.x, ev.y, ev.w, ev.h, ev.color);
+    return true;
+}
+
+// -----------------------------------------------------------------------------
+// Audio input lifecycle
+// -----------------------------------------------------------------------------
+
+bool LocalDriver::start_audio_input(uint16_t sample_rate_hz, uint16_t fft_size) {
+    auto* mic = hal::HAL::mic();
+    if (!mic) return false;
+    mic->begin(sample_rate_hz, fft_size);
+    return mic->is_running();
+}
+
+bool LocalDriver::stop_audio_input() {
+    auto* mic = hal::HAL::mic();
+    if (!mic) return false;
+    mic->end();
     return true;
 }
 

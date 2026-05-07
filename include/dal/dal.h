@@ -161,6 +161,13 @@ public:
     virtual bool send(uint8_t /*group_id*/, const DisplayClearEvent&)     { return false; }
     virtual bool send(uint8_t /*group_id*/, const DisplayFillRectEvent&)  { return false; }
     virtual bool send(uint8_t /*group_id*/, const DisplayMeterEvent&)     { return false; }
+
+    // Input lifecycle hooks. Called by DAL::start_audio_input / stop_audio_input
+    // on the driver registered for the target's transport. Drivers that do
+    // not source audio frames default to no-op (returns false).
+    virtual bool start_audio_input(uint16_t /*sample_rate_hz*/,
+                                   uint16_t /*fft_size*/) { return false; }
+    virtual bool stop_audio_input() { return false; }
 };
 
 // =============================================================================
@@ -226,6 +233,17 @@ public:
     static bool subscribe_button_presses  (const char* target, ButtonPressCallback  cb);
     static bool subscribe_esp_now_inbound (const char* target, EspNowInboundCallback cb);
     static bool subscribe_dmx_inbound     (const char* target, DmxInboundCallback   cb);
+
+    // -------------------------------------------------------------------------
+    // Input lifecycle. Some inputs (audio mic) need to be enabled/disabled by
+    // orchestration; sample-rate / fft-size hint the underlying backend if it
+    // supports configurable parameters. Returns false on unknown target,
+    // unsupported capability for that target, or no driver available.
+    // -------------------------------------------------------------------------
+    static bool start_audio_input(const char* target,
+                                  uint16_t sample_rate_hz = 16000,
+                                  uint16_t fft_size       = 512);
+    static bool stop_audio_input (const char* target);
 
     // -------------------------------------------------------------------------
     // Internal: drivers and tests use these to deliver input events to

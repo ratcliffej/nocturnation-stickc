@@ -293,6 +293,30 @@ bool DAL::subscribe_dmx_inbound(const char* target, DmxInboundCallback cb) {
 }
 
 // =============================================================================
+// Input lifecycle
+// =============================================================================
+
+bool DAL::start_audio_input(const char* target,
+                            uint16_t sample_rate_hz,
+                            uint16_t fft_size) {
+    const ActiveDevice* device = find_device(target);
+    if (!device || !device->profile) return false;
+    if (!device->profile->has_input(CapabilityId::AudioFrame)) return false;
+    Driver* driver = find_driver_for_transport(device->profile->transport);
+    if (!driver) return false;
+    return driver->start_audio_input(sample_rate_hz, fft_size);
+}
+
+bool DAL::stop_audio_input(const char* target) {
+    const ActiveDevice* device = find_device(target);
+    if (!device || !device->profile) return false;
+    if (!device->profile->has_input(CapabilityId::AudioFrame)) return false;
+    Driver* driver = find_driver_for_transport(device->profile->transport);
+    if (!driver) return false;
+    return driver->stop_audio_input();
+}
+
+// =============================================================================
 // Event delivery (called by drivers, also exposed for tests)
 // =============================================================================
 

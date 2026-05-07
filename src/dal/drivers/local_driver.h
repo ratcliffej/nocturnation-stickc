@@ -29,6 +29,9 @@ public:
     bool send(uint8_t group_id, const DisplayClearEvent&)     override;
     bool send(uint8_t group_id, const DisplayFillRectEvent&)  override;
     bool send(uint8_t group_id, const DisplayMeterEvent&)     override;
+
+    bool start_audio_input(uint16_t sample_rate_hz, uint16_t fft_size) override;
+    bool stop_audio_input() override;
 };
 
 // Singleton accessor used by DAL::begin() to register the driver.

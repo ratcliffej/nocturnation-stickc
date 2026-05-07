@@ -2,7 +2,6 @@
 #include "M5Unified.h"
 #include <IRremoteESP8266.h>
 #include <IRsend.h>
-#include <arduinoFFT.h>
 #include "pixmob_protocol.h"
 #include "dal/dal.h"     // Epic 2 in-progress: bring up the DAL alongside
                           // M5Unified. M5Unified call sites get migrated to
@@ -29,16 +28,10 @@ const char *modeNames[MODE_COUNT] = {"OFF", "RED", "GREEN", "BLUE", "YELLOW", "W
 Mode currentMode = MODE_RED;
 
 // ===== Audio / beat detection =====
-const int SAMPLE_RATE = 16000;
-const size_t FFT_SIZE = 512; // ~32 ms window at 16 kHz
-const int BASS_BIN_LO = 2;   // ~62 Hz
-const int BASS_BIN_HI = 7;   // ~187 Hz
-
-int16_t micBuf[FFT_SIZE];
-double vReal[FFT_SIZE];
-double vImag[FFT_SIZE];
-
-ArduinoFFT<double> FFT(vReal, vImag, FFT_SIZE, (double)SAMPLE_RATE);
+// Sample rate, FFT size, and bass-band bin range are now owned by the HAL
+// Mic backend (src/hal_stickc/mic_stickc.cpp); orchestration receives band-
+// summary AudioFrameEvents and runs the beat-detection logic below on each
+// frame.
 
 float baselineFlux = 100.0f;
 float prevBassEnergy = 0.0f;
@@ -73,6 +66,8 @@ void drawBeatUI();
 void sendCurrentIR();
 void onButtonEvent(const char* source,
                    const nocturnation::dal::ButtonPressEvent& ev);
+void onAudioFrame(const char* source,
+                  const nocturnation::dal::AudioFrameEvent& ev);
 
 uint16_t modeColour()
 {
@@ -100,126 +95,97 @@ void setBeatMode(bool on)
   beatModeActive = on;
   if (on)
   {
-    M5.Speaker.end();
-    M5.Mic.begin();
-    baselineFlux = 100.0f;
+    // Reset analysis state and turn the mic on through the DAL.
+    baselineFlux   = 100.0f;
     prevBassEnergy = 0.0f;
-    currentFlux = 0.0f;
-    // Reset BPM tracking on each entry to beat mode
-    ibiIndex = 0;
-    ibiCount = 0;
-    estimatedBPM = 0.0f;
-    lastBeatMs = 0;
+    currentFlux    = 0.0f;
+    ibiIndex       = 0;
+    ibiCount       = 0;
+    estimatedBPM   = 0.0f;
+    lastBeatMs     = 0;
+    nocturnation::dal::DAL::start_audio_input("local", 16000, 512);
     drawBeatUI();
   }
   else
   {
-    M5.Mic.end();
+    nocturnation::dal::DAL::stop_audio_input("local");
     drawIdleUI();
   }
 }
 
-bool detectBeat()
+// Beat-detection orchestration. Consumes spectrum frames from the DAL
+// (sourced by the StickC HAL Mic + the LocalDriver bridge) and runs the
+// same flux / threshold / refractory / BPM-tracking logic the prototype's
+// detectBeat() did, then drives the visible response (screen flash,
+// optional IR send, redraw) when a beat fires.
+void onAudioFrame(const char*,
+                  const nocturnation::dal::AudioFrameEvent& ev)
 {
-  if (!M5.Mic.isEnabled())
-    return false;
-  if (!M5.Mic.record(micBuf, FFT_SIZE, SAMPLE_RATE))
-    return false;
+  using namespace nocturnation::dal;
 
-  // Compute mean absolute amplitude (cheap volume proxy)
-  uint32_t sum = 0;
-  for (size_t i = 0; i < FFT_SIZE; i++) sum += abs(micBuf[i]);
-  currentLevel = (float)sum / FFT_SIZE;
+  if (!beatModeActive) return;       // mic might still be running mid-shutdown
 
-  // Gate: if it's quiet, skip the rest entirely
+  currentLevel = ev.overall_rms;
+
+  // Volume gate.
   if (currentLevel < VOLUME_GATE) {
-    prevBassEnergy = 0.0f;   // reset so we don't "remember" loud bass during silence
-    return false;
+    prevBassEnergy = 0.0f;
+    return;
   }
 
+  // Spectral flux: rectified rise in bass-band energy.
+  float flux = ev.bass_energy - prevBassEnergy;
+  if (flux < 0) flux = 0;
+  prevBassEnergy = ev.bass_energy;
+  currentFlux    = flux;
 
-  for (size_t i = 0; i < FFT_SIZE; i++)
-  {
-    vReal[i] = (double)micBuf[i];
-    vImag[i] = 0.0;
-  }
-
-  FFT.windowing(FFTWindow::Hamming, FFTDirection::Forward);
-  FFT.compute(FFTDirection::Forward);
-  FFT.complexToMagnitude();
-
-  // Sum magnitudes in the bass band (~62-187 Hz)
-  float bassEnergy = 0.0f;
-  for (int i = BASS_BIN_LO; i <= BASS_BIN_HI; i++)
-  {
-    bassEnergy += (float)vReal[i];
-  }
-
-  // Spectral flux: rectified rise in bass-band energy
-  float flux = bassEnergy - prevBassEnergy;
-  if (flux < 0)
-    flux = 0;
-  prevBassEnergy = bassEnergy;
-  currentFlux = flux;
-
+  // Adaptive baseline (EMA).
   baselineFlux = baselineFlux * (1.0f - BASELINE_ALPHA) + flux * BASELINE_ALPHA;
 
-  unsigned long now = millis();
-  if (flux > baselineFlux * BEAT_MULTIPLIER && flux > FLUX_FLOOR && (now - lastBeatMs) > BEAT_REFRACTORY_MS)
-  {
-    // Record inter-beat interval before updating lastBeatMs
-    if (lastBeatMs > 0)
-    {
-      unsigned long ibi = now - lastBeatMs;
-      // Reject anything outside reasonable musical range (50-200 BPM)
-      if (ibi >= 300 && ibi <= 1200)
-      {
-        ibiBuffer[ibiIndex] = ibi;
-        ibiIndex = (ibiIndex + 1) % IBI_BUFFER_SIZE;
-        if (ibiCount < IBI_BUFFER_SIZE)
-          ibiCount++;
+  const unsigned long now = millis();
+  const bool is_beat = flux > baselineFlux * BEAT_MULTIPLIER
+                    && flux > FLUX_FLOOR
+                    && (now - lastBeatMs) > BEAT_REFRACTORY_MS;
 
-        if (ibiCount >= 3)
-        {
-          // Copy to a sortable buffer
-          unsigned long sorted[IBI_BUFFER_SIZE];
-          for (size_t i = 0; i < ibiCount; i++)
-            sorted[i] = ibiBuffer[i];
+  if (!is_beat) return;
 
-          // Insertion sort - fine for small buffer
-          for (size_t i = 1; i < ibiCount; i++)
-          {
-            unsigned long key = sorted[i];
-            size_t j = i;
-            while (j > 0 && sorted[j - 1] > key)
-            {
-              sorted[j] = sorted[j - 1];
-              j--;
-            }
-            sorted[j] = key;
+  // BPM tracking - record IBI before updating lastBeatMs.
+  if (lastBeatMs > 0) {
+    const unsigned long ibi = now - lastBeatMs;
+    if (ibi >= 300 && ibi <= 1200) {  // 50..200 BPM window
+      ibiBuffer[ibiIndex] = ibi;
+      ibiIndex = (ibiIndex + 1) % IBI_BUFFER_SIZE;
+      if (ibiCount < IBI_BUFFER_SIZE) ibiCount++;
+
+      if (ibiCount >= 3) {
+        unsigned long sorted[IBI_BUFFER_SIZE];
+        for (size_t i = 0; i < ibiCount; ++i) sorted[i] = ibiBuffer[i];
+        for (size_t i = 1; i < ibiCount; ++i) {
+          unsigned long key = sorted[i];
+          size_t j = i;
+          while (j > 0 && sorted[j - 1] > key) {
+            sorted[j] = sorted[j - 1];
+            --j;
           }
-
-          // Median is middle element (or average of two middle for even counts)
-          unsigned long medianIbi;
-          if (ibiCount % 2 == 1)
-          {
-            medianIbi = sorted[ibiCount / 2];
-          }
-          else
-          {
-            medianIbi = (sorted[ibiCount / 2 - 1] + sorted[ibiCount / 2]) / 2;
-          }
-
-          if (medianIbi > 50)
-            estimatedBPM = 60000.0f / (float)medianIbi;
+          sorted[j] = key;
         }
+        unsigned long medianIbi = (ibiCount % 2 == 1)
+            ? sorted[ibiCount / 2]
+            : (sorted[ibiCount / 2 - 1] + sorted[ibiCount / 2]) / 2;
+        if (medianIbi > 50) estimatedBPM = 60000.0f / (float)medianIbi;
       }
     }
-
-    lastBeatMs = now;
-    return true;
   }
-  return false;
+  lastBeatMs = now;
+
+  // Beat response: flash the screen, fire IR (unless muted), redraw the
+  // beat UI. Same actions and ordering as the prototype's loop did.
+  DAL::fire_display_clear("local", DisplayClearEvent{modeColour()});
+  if (!beatModePaused) sendCurrentIR();
+  delay(30);
+  drawBeatUI();
+  lastDrawMs = millis();   // prevent the loop body's periodic redraw
+                           // from firing again immediately after this.
 }
 
 void sendCurrentIR() {
@@ -454,6 +420,12 @@ void setup()
   // checks used to live in loop().
   nocturnation::dal::DAL::subscribe_button_presses("local", &onButtonEvent);
 
+  // Subscribe to audio frames from the host. The handler runs the
+  // beat-detection logic that used to live in detectBeat() and triggers
+  // the visible response (flash + IR + redraw) on each detected beat.
+  // The mic stays off until setBeatMode(true) calls DAL::start_audio_input.
+  nocturnation::dal::DAL::subscribe_audio_frames("local", &onAudioFrame);
+
   drawIdleUI();
 }
 
@@ -497,23 +469,14 @@ void loop()
 
   if (beatModeActive)
   {
-    if (detectBeat())
+    // Beat detection lives in onAudioFrame() now (called from the DAL when
+    // a fresh AudioFrameEvent arrives). The loop body just keeps the BPM
+    // / meter UI fresh between beats.
+    unsigned long now = millis();
+    if (now - lastDrawMs > 50)
     {
-      nocturnation::dal::DAL::fire_display_clear("local",
-          nocturnation::dal::DisplayClearEvent{modeColour()});
-      if (!beatModePaused)
-        sendCurrentIR();
-      delay(30);
       drawBeatUI();
-    }
-    else
-    {
-      unsigned long now = millis();
-      if (now - lastDrawMs > 50)
-      {
-        drawBeatUI();
-        lastDrawMs = now;
-      }
+      lastDrawMs = now;
     }
   }
   else
