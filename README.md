@@ -94,13 +94,22 @@ Two layers of automated verification, plus a third manual one.
 
 ### Native unit tests
 
-Pure-logic tests run on the host - no StickC needed. The current suite asserts that the C++ IR encoder ([`include/pixmob_protocol.h`](include/pixmob_protocol.h)) produces bit-for-bit identical output to the upstream Python reference encoder ([jamesw343/PixMob_IR](https://github.com/jamesw343/PixMob_IR)) for a representative set of inputs.
+Pure-logic tests run on the host - no StickC needed. The current suite covers:
+
+- Sanity check that the test toolchain is alive.
+- Bit-for-bit IR encoder parity against [jamesw343/PixMob_IR](https://github.com/jamesw343/PixMob_IR)'s Python reference for a representative set of inputs.
+- HAL capability declaration / query mechanics.
+- DAL registry, capability supports, fail-silent dispatch, and event delivery to subscribers.
+
+Tests live in two native environments: `native` (header-only tests) and `native_dal` (tests that exercise `src/dal/dal.cpp`). Run both with:
 
 ```bash
-pio test -e native
+pio test -e native -e native_dal
 ```
 
-You should see five passing tests.
+You should see 23 passing tests across the four test suites.
+
+`pio run` (no `-e`) builds the firmware only. `pio test` without `-e` will not pick up the native envs because the firmware env is the only `default_env`; passing both `-e` flags above is the explicit invocation.
 
 ### Build verification
 
