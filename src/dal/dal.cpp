@@ -7,6 +7,7 @@
 #include "dal/dal.h"
 #include "hal/hal.h"
 #include "drivers/local_driver.h"
+#include "drivers/pixmob_ir_driver.h"
 
 #include <cstring>
 
@@ -165,11 +166,15 @@ void DAL::begin() {
     // Register the host as the "local" device.
     register_device("local", &s_host_profile, 0);
 
-    // Register the LocalDriver so that fire_display_* and subscribe_button_*
-    // calls actually reach the host's HAL backends. The driver's begin()
-    // refuses registration on hosts where neither display nor buttons are
-    // wired (returns false), keeping the fail-silent semantics intact.
+    // Register PixMob bracelets as broadcast target. Specific groups can be
+    // added by callers via DAL::register_device("group-N", &profiles::PixMobX4Gen3_1, N)
+    // once the constellation work needs them.
+    register_device("all-pixmobs", &profiles::PixMobX4Gen3_1, 0);
+
+    // Register concrete drivers. Each refuses registration when its HAL
+    // prerequisite is absent (e.g. no IRTx -> PixMob driver doesn't register).
     register_driver(local_driver_instance());
+    register_driver(pixmob_ir_driver_instance());
 }
 
 void DAL::loop_tick() {

@@ -12,14 +12,12 @@
 //
 //   Mic       - PDM mic via I2S, FFT done by arduinoFFT. Emits AudioFrames
 //               only while begin()/end() has been used to enable it.
+//   IRTx      - GPIO 19 IR LED via IRremoteESP8266. Owns the only IRsend
+//               instance in the firmware; main.cpp's previous global
+//               IRsend has been removed.
 //
 // Not yet declared (interfaces exist; backends pending):
 //
-//   IRTx    - main.cpp owns the global IRsend(IR_PIN); declaring IRTx here
-//             would mean a second IRsend instance fighting for GPIO 19's RMT
-//             channel. Will land when IRsend ownership consolidates into the
-//             HAL backend (and main.cpp's irsend.sendRaw call sites migrate
-//             to DAL helpers).
 //   IRRx    - hardware exists on the Plus2; not used in Epic 2.
 //   ESPNow  - Epic 4.
 
@@ -30,6 +28,7 @@
 #include "imu_stickc.h"
 #include "battery_stickc.h"
 #include "mic_stickc.h"
+#include "ir_tx_stickc.h"
 
 namespace nocturnation {
 namespace hal {
@@ -44,6 +43,7 @@ static constexpr Capability kCapabilities[] = {
     Capability::IMU,
     Capability::Battery,
     Capability::Mic,
+    Capability::IRTx,
 };
 static constexpr size_t kCapabilityCount =
     sizeof(kCapabilities) / sizeof(kCapabilities[0]);
@@ -68,6 +68,7 @@ ButtonsStickC s_buttons;
 IMUStickC     s_imu;
 BatteryStickC s_battery;
 MicStickC     s_mic;
+IRTxStickC    s_ir_tx;
 }  // namespace
 
 // -----------------------------------------------------------------------------
@@ -88,6 +89,7 @@ void HAL::begin() {
     // (DAL::start_audio_input) when entering beat mode and disables it
     // when leaving; the prototype's M5.Mic / M5.Speaker contention pattern
     // is preserved exactly.
+    s_ir_tx.begin();
 }
 
 void HAL::loop_tick() {
@@ -103,11 +105,11 @@ void HAL::loop_tick() {
 // Accessors
 // -----------------------------------------------------------------------------
 
-IRTx*    HAL::ir_tx()    { return nullptr; }   // not yet implemented
 IRRx*    HAL::ir_rx()    { return nullptr; }
 ESPNow*  HAL::esp_now()  { return nullptr; }
 
 Mic*     HAL::mic()      { return &s_mic; }
+IRTx*    HAL::ir_tx()    { return &s_ir_tx; }
 Display* HAL::display()  { return &s_display; }
 Buttons* HAL::buttons()  { return &s_buttons; }
 IMU*     HAL::imu()      { return &s_imu; }

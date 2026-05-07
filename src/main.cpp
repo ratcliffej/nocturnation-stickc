@@ -1,7 +1,5 @@
 #include <Arduino.h>
 #include "M5Unified.h"
-#include <IRremoteESP8266.h>
-#include <IRsend.h>
 #include "pixmob_protocol.h"
 #include "dal/dal.h"     // Epic 2 in-progress: bring up the DAL alongside
                           // M5Unified. M5Unified call sites get migrated to
@@ -11,8 +9,9 @@
 
 
 // ===== Hardware =====
-const uint16_t IR_PIN = 19;
-IRsend irsend(IR_PIN);
+// IR transmission goes through hal::HAL::ir_tx() now, owned by the StickC
+// HAL backend (src/hal_stickc/ir_tx_stickc.cpp). Orchestration calls into
+// it indirectly via DAL::fire_rgb_pulse against a registered PixMob device.
 
 enum Mode
 {
@@ -55,8 +54,8 @@ float estimatedBPM = 0.0f; // 0 = not yet estimated
 const float VOLUME_GATE = 500.0f;   // tune for your environment
 float currentLevel = 0.0f;          // for diagnostic display
 
-// Working buffer for the encoder. 80 entries is plenty for any 9-byte command.
-static uint16_t irBuf[80];
+// Encoder working buffer now lives inside PixMobIRDriver
+// (src/dal/drivers/pixmob_ir_driver.cpp); orchestration no longer needs it.
 
 bool beatModeActive = false;
 bool beatModePaused = false;
@@ -199,7 +198,7 @@ void sendCurrentIR() {
     default: return;
   }
 
-  // Choose envelope based on current BPM
+  // Choose envelope based on current BPM.
   pixmob::Time attack, sustain, release;
   if (estimatedBPM > 160.0f) {
     // Very fast: 0+32+96 = 128ms
@@ -207,20 +206,24 @@ void sendCurrentIR() {
     sustain = pixmob::T_32_MS;
     release = pixmob::T_96_MS;
   } else if (estimatedBPM > 100.0f || estimatedBPM == 0.0f) {
-    // Medium / unknown (default): 32+96+192 = 320ms - your current "punchy"
+    // Medium / unknown (default): 32+96+192 = 320ms - the "punchy" default.
     attack  = pixmob::T_32_MS;
     sustain = pixmob::T_96_MS;
     release = pixmob::T_96_MS;
   } else {
-    // Slow ballad: 32+192+192 = 416ms - more presence
+    // Slow ballad: 32+192+192 = 416ms - more presence.
     attack  = pixmob::T_32_MS;
     sustain = pixmob::T_192_MS;
     release = pixmob::T_192_MS;
   }
 
-  size_t n = pixmob::buildSingleColor(irBuf, 80, r, g, b,
-                                      attack, sustain, release);
-  if (n > 0) irsend.sendRaw(irBuf, n, 38);
+  // Fire to all bracelets (group 0 / broadcast) via the DAL. The encoded
+  // bytes are byte-identical to the prototype's irsend.sendRaw path - the
+  // PixMobIRDriver wraps the same pixmob::buildSingleColor encoder with the
+  // same default chance (CHANCE_100) and the same group_id (0).
+  using namespace nocturnation::dal;
+  DAL::fire_rgb_pulse("all-pixmobs", RgbPulseEvent{
+      r, g, b, attack, sustain, release, pixmob::CHANCE_100});
 }
 
 void drawIdleUI()
@@ -317,90 +320,36 @@ void drawBeatUI()
 }
 
 
-// New function for one-time bracelet group setup.
-// Hold one bracelet in front of the StickC, fire this, label the bracelet.
-void assignBraceletToGroup(uint8_t groupId) {
-  size_t n = pixmob::buildSetGroupId(irBuf, 80, /*groupSel=*/0, groupId);
-  if (n > 0) {
-    // Send three times to be safe
-    irsend.sendRaw(irBuf, n, 38); delay(50);
-    irsend.sendRaw(irBuf, n, 38); delay(50);
-    irsend.sendRaw(irBuf, n, 38);
-  }
-}
-
-// And a targeted-colour helper for the constellation work:
+// ---------------------------------------------------------------------------
+// Constellation / setup helpers (currently disabled).
+//
+// These four functions were the prototype's bracelet-setup and effect helpers.
+// They referenced the global IRsend instance and pixmob::buildSetGroupId /
+// buildSingleColor with dynamic group IDs. After the IRsend ownership moved
+// into the HAL, they need DAL counterparts:
+//
+//   assignBraceletToGroup -> needs a DAL "AssignDeviceGroup" capability +
+//                            fire helper (PixMob's Set Group Id command).
+//   sendColourToGroup     -> needs dynamic group addressing (either pre-
+//                            registered "group-N" devices or a generic
+//                            fire_rgb_pulse_to_group helper).
+//   smoothHueCycle        -> trivially DAL::fire_rgb_pulse("all-pixmobs", ...)
+//                            once we want to call it again.
+//   starlight             -> same.
+//
+// They're disabled rather than deleted because Jason wrote them for the
+// constellation art piece and they're useful reference. They are not called
+// from any active code path in this firmware. The active call site
+// commented-out lines in loop() (// starlight(1000); // smoothHueCycle(...))
+// remain commented out below.
+#if 0
+void assignBraceletToGroup(uint8_t groupId) { /* see comment block above */ }
 void sendColourToGroup(uint8_t r, uint8_t g, uint8_t b,
                       pixmob::Time attack, pixmob::Time sustain, pixmob::Time release,
-                      uint8_t groupId) {
-  size_t n = pixmob::buildSingleColor(irBuf, 80, r, g, b,
-                                      attack, sustain, release,
-                                      pixmob::CHANCE_100, groupId);
-  if (n > 0) irsend.sendRaw(irBuf, n, 38);
-}
-
-
-void smoothHueCycle(float cyclesPerSec, uint16_t durationMs) {
-  const uint16_t STEP_MS = 50;
-  float hue = 0.0f;
-  float hueStep = cyclesPerSec * 360.0f * (STEP_MS / 1000.0f);  // degrees per step
-
-  unsigned long start = millis();
-  while (millis() - start < durationMs) {
-    // HSV->RGB (saturation=1, value=1)
-    float h = hue / 60.0f;
-    int sector = (int)h;
-    float f = h - sector;
-    uint8_t v = 255;
-    uint8_t p = 0;
-    uint8_t q = (uint8_t)(255.0f * (1.0f - f));
-    uint8_t t = (uint8_t)(255.0f * f);
-    uint8_t r, g, b;
-    switch (sector) {
-      case 0:  r = v; g = t; b = p; break;
-      case 1:  r = q; g = v; b = p; break;
-      case 2:  r = p; g = v; b = t; break;
-      case 3:  r = p; g = q; b = v; break;
-      case 4:  r = t; g = p; b = v; break;
-      default: r = v; g = p; b = q; break;
-    }
-
-    size_t n = pixmob::buildSingleColor(irBuf, 80, r, g, b,
-                                        pixmob::T_0_MS,
-                                        pixmob::T_96_MS,
-                                        pixmob::T_32_MS);
-    if (n > 0) irsend.sendRaw(irBuf, n, 38);
-
-    hue += hueStep;
-    if (hue >= 360.0f) hue -= 360.0f;
-    delay(STEP_MS);
-  }
-}
-
-void starlight(uint16_t durationMs) {
-  unsigned long start = millis();
-
-  while (millis() - start < durationMs) {
-    // Pick a colour - cool palette for "stars"
-    uint8_t pick = random(4);
-    uint8_t r, g, b;
-    switch (pick) {
-      case 0: r = 0xFF; g = 0xFF; b = 0xFF; break;  // white
-      case 1: r = 0xC0; g = 0xC0; b = 0xFF; break;  // pale blue (hot star)
-      case 2: r = 0xFF; g = 0xE0; b = 0xC0; break;  // warm white
-      case 3: r = 0xFF; g = 0xFF; b = 0xC0; break;  // pale yellow (sun-like)
-    }
-
-    size_t n = pixmob::buildSingleColor(irBuf, 80, r, g, b,
-                                        pixmob::T_192_MS,    // gentle attack
-                                        pixmob::T_96_MS,     // brief sustain
-                                        pixmob::T_480_MS,    // long fade
-                                        pixmob::CHANCE_16);  // sparse twinkles
-    if (n > 0) irsend.sendRaw(irBuf, n, 38);
-
-    delay(200 + random(300));  // irregular timing - 200-500 ms
-  }
-}
+                      uint8_t groupId) { /* see comment block above */ }
+void smoothHueCycle(float cyclesPerSec, uint16_t durationMs) { /* see comment block above */ }
+void starlight(uint16_t durationMs) { /* see comment block above */ }
+#endif
 
 
 void setup()
@@ -408,11 +357,11 @@ void setup()
   auto cfg = M5.config();
   M5.begin(cfg);
   M5.Display.setRotation(1);
-  irsend.begin();
 
-  // Bring up the DAL. The StickC HAL backend now declares Display + Buttons
-  // + IMU + Battery; the LocalDriver translates display events into HAL
-  // calls and bridges HAL button events up to subscribers.
+  // Bring up the DAL. The StickC HAL backend now declares Display, Buttons,
+  // IMU, Battery, Mic, and IRTx. DAL::begin internally calls HAL::begin
+  // (which calls IRTxStickC::begin -> IRsend::begin) and registers the
+  // LocalDriver and PixMobIRDriver.
   nocturnation::dal::DAL::begin();
 
   // Subscribe to button events from the host. The handler dispatches by

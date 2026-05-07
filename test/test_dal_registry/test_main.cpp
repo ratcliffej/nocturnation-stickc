@@ -184,13 +184,14 @@ static void test_button_press_delivered_to_subscriber(void) {
 static void test_active_device_listing(void) {
     dal::DAL::register_device("a", &dal::profiles::PixMobX4Gen3_1, 1);
     dal::DAL::register_device("b", &dal::profiles::PixMobX4Gen3_1, 2);
-    // "local" + "a" + "b" = 3
-    TEST_ASSERT_EQUAL_size_t(3, dal::DAL::active_device_count());
-    // Order is registration order; "local" first because begin() registers it.
-    TEST_ASSERT_EQUAL_STRING("local", dal::DAL::active_device_name(0));
-    TEST_ASSERT_EQUAL_STRING("a",     dal::DAL::active_device_name(1));
-    TEST_ASSERT_EQUAL_STRING("b",     dal::DAL::active_device_name(2));
-    TEST_ASSERT_NULL(dal::DAL::active_device_name(3));
+    // DAL::begin() registers "local" then "all-pixmobs"; this test then
+    // adds "a" + "b". Total = 4, in registration order.
+    TEST_ASSERT_EQUAL_size_t(4, dal::DAL::active_device_count());
+    TEST_ASSERT_EQUAL_STRING("local",       dal::DAL::active_device_name(0));
+    TEST_ASSERT_EQUAL_STRING("all-pixmobs", dal::DAL::active_device_name(1));
+    TEST_ASSERT_EQUAL_STRING("a",           dal::DAL::active_device_name(2));
+    TEST_ASSERT_EQUAL_STRING("b",           dal::DAL::active_device_name(3));
+    TEST_ASSERT_NULL(dal::DAL::active_device_name(4));
 }
 
 int main(int, char**) {
