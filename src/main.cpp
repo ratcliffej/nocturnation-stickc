@@ -4,6 +4,9 @@
 #include <IRsend.h>
 #include <arduinoFFT.h>
 #include "pixmob_protocol.h"
+#include "dal/dal.h"     // Epic 2 in-progress: bring up the DAL alongside
+                          // M5Unified. M5Unified call sites get migrated to
+                          // DAL helpers one at a time in subsequent commits.
 
 
 
@@ -264,6 +267,14 @@ void drawIdleUI()
   M5.Display.printf("A: Test\n B: Change colour\n P: Toggle Beat Mode");
   M5.Display.setCursor(10, 110);
   M5.Display.printf("Batt: %d%%", M5.Power.getBatteryLevel());
+
+  // Hello World from the DAL: prove begin() ran by surfacing the active
+  // device count. With the StickC HAL stub declaring no capabilities yet,
+  // we expect "DAL: 1 dev" (the host's own "local" entry).
+  M5.Display.setCursor(10, 128);
+  M5.Display.setTextSize(1);
+  M5.Display.printf("DAL: %u dev",
+                    (unsigned)nocturnation::dal::DAL::active_device_count());
 }
 
 void drawBeatUI()
@@ -391,6 +402,12 @@ void setup()
   M5.begin(cfg);
   M5.Display.setRotation(1);
   irsend.begin();
+
+  // Bring up the DAL. With the StickC HAL stub at zero declared capabilities,
+  // this composes an empty "local" host profile and registers it - enough to
+  // prove the wiring. As HAL backends land, capabilities will appear here.
+  nocturnation::dal::DAL::begin();
+
   drawIdleUI();
 }
 
