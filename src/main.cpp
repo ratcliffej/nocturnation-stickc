@@ -71,6 +71,8 @@ bool beatModePaused = false;
 void drawIdleUI();
 void drawBeatUI();
 void sendCurrentIR();
+void onButtonEvent(const char* source,
+                   const nocturnation::dal::ButtonPressEvent& ev);
 
 uint16_t modeColour()
 {
@@ -257,60 +259,94 @@ void sendCurrentIR() {
 
 void drawIdleUI()
 {
-  M5.Display.fillScreen(BLACK);
-  M5.Display.setCursor(10, 10);
-  M5.Display.setTextSize(3);
-  M5.Display.setTextColor(WHITE, BLACK);
-  M5.Display.printf("%s", modeNames[currentMode]);
-  M5.Display.setCursor(10, 50);
-  M5.Display.setTextSize(2);
-  M5.Display.printf("A: Test\n B: Change colour\n P: Toggle Beat Mode");
-  M5.Display.setCursor(10, 110);
-  M5.Display.printf("Batt: %d%%", M5.Power.getBatteryLevel());
+  using namespace nocturnation::dal;
 
-  // Hello World from the DAL: surface the active device count, the host
-  // profile's capability count, and the registered driver count.
-  const auto* host = nocturnation::dal::DAL::profile_of("local");
+  DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
+
+  DAL::fire_display_show_text("local", DisplayShowTextEvent{
+      10, 10, modeNames[currentMode], WHITE, BLACK, 3});
+
+  DAL::fire_display_show_text("local", DisplayShowTextEvent{
+      10, 50, "A: Test\n B: Change colour\n P: Toggle Beat Mode",
+      WHITE, BLACK, 2});
+
+  char batt_buf[24];
+  snprintf(batt_buf, sizeof(batt_buf), "Batt: %d%%",
+           M5.Power.getBatteryLevel());
+  DAL::fire_display_show_text("local", DisplayShowTextEvent{
+      10, 110, batt_buf, WHITE, BLACK, 2});
+
+  // DAL self-status footer.
+  const auto* host = DAL::profile_of("local");
   const unsigned caps = host
       ? (unsigned)(host->input_capability_count + host->output_capability_count)
       : 0;
-  M5.Display.setCursor(10, 128);
-  M5.Display.setTextSize(1);
-  M5.Display.printf("DAL: %u dev, %u cap, %u drv",
-                    (unsigned)nocturnation::dal::DAL::active_device_count(),
-                    caps,
-                    (unsigned)nocturnation::dal::DAL::registered_driver_count());
+  char dal_buf[64];
+  snprintf(dal_buf, sizeof(dal_buf), "DAL: %u dev, %u cap, %u drv",
+           (unsigned)DAL::active_device_count(),
+           caps,
+           (unsigned)DAL::registered_driver_count());
+  DAL::fire_display_show_text("local", DisplayShowTextEvent{
+      10, 128, dal_buf, WHITE, BLACK, 1});
 }
 
 void drawBeatUI()
 {
-  M5.Display.fillScreen(BLACK);
-  M5.Display.setCursor(10, 5);
-  M5.Display.setTextSize(3);
-  M5.Display.setTextColor(WHITE, BLACK);
-  M5.Display.printf(" %s%s", modeNames[currentMode], beatModePaused ? " : Muted" : "");
+  using namespace nocturnation::dal;
 
-  M5.Display.setCursor(10, 40);
-  M5.Display.setTextSize(2);
-  if (estimatedBPM > 0.0f)
-    M5.Display.printf(" BPM: %.0f", estimatedBPM);
-    //M5.Display.printf(" BPM: %.0f Lvl:%.0f", estimatedBPM, currentLevel);
-    else
-    M5.Display.printf(" BPM: ---");
+  DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
 
-  M5.Display.setCursor(10, 70);
-  M5.Display.printf(" Batt: %d%%", M5.Power.getBatteryLevel());
+  // Mode title (with optional " : Muted" suffix)
+  char title_buf[32];
+  snprintf(title_buf, sizeof(title_buf), " %s%s",
+           modeNames[currentMode],
+           beatModePaused ? " : Muted" : "");
+  DAL::fire_display_show_text("local", DisplayShowTextEvent{
+      10, 5, title_buf, WHITE, BLACK, 3});
 
-  // Level meter showing flux as a multiple of baseline
+  // BPM
+  char bpm_buf[24];
+  if (estimatedBPM > 0.0f) {
+    snprintf(bpm_buf, sizeof(bpm_buf), " BPM: %.0f", estimatedBPM);
+  } else {
+    snprintf(bpm_buf, sizeof(bpm_buf), " BPM: ---");
+  }
+  DAL::fire_display_show_text("local", DisplayShowTextEvent{
+      10, 40, bpm_buf, WHITE, BLACK, 2});
+
+  // Battery
+  char batt_buf[24];
+  snprintf(batt_buf, sizeof(batt_buf), " Batt: %d%%",
+           M5.Power.getBatteryLevel());
+  DAL::fire_display_show_text("local", DisplayShowTextEvent{
+      10, 70, batt_buf, WHITE, BLACK, 2});
+
+  // Level meter showing flux as a multiple of baseline. Composed from
+  // FillRect primitives because the DAL has no draw-rect (outline) or
+  // draw-line capability yet; 1-pixel-wide fill rects substitute cleanly.
   const int meterX = 10, meterY = 110, meterW = 220, meterH = 14;
-  M5.Display.drawRect(meterX, meterY, meterW, meterH, WHITE);
+
+  // Frame: top, bottom, left, right edges (1px each)
+  DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
+      meterX, meterY,           meterW, 1,      WHITE});
+  DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
+      meterX, meterY + meterH-1, meterW, 1,      WHITE});
+  DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
+      meterX, meterY,           1,      meterH, WHITE});
+  DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
+      meterX + meterW-1, meterY, 1,     meterH, WHITE});
+
+  // Bar
   float ratio = (baselineFlux > 1.0f) ? currentFlux / baselineFlux : 0.0f;
-  int barW = constrain((int)(ratio * 50.0f), 0, meterW - 2);
-  M5.Display.fillRect(meterX + 1, meterY + 1, barW, meterH - 2, GREEN);
+  int   barW  = constrain((int)(ratio * 50.0f), 0, meterW - 2);
+  DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
+      meterX + 1, meterY + 1, barW, meterH - 2, GREEN});
+
+  // Threshold marker (1-pixel-wide vertical line, 4px taller than the meter)
   int thrX = meterX + (int)(BEAT_MULTIPLIER * 50.0f);
-  if (thrX < meterX + meterW)
-  {
-    M5.Display.drawFastVLine(thrX, meterY - 2, meterH + 4, RED);
+  if (thrX < meterX + meterW) {
+    DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
+        thrX, meterY - 2, 1, meterH + 4, RED});
   }
 }
 
@@ -408,57 +444,63 @@ void setup()
   M5.Display.setRotation(1);
   irsend.begin();
 
-  // Bring up the DAL. With the StickC HAL stub at zero declared capabilities,
-  // this composes an empty "local" host profile and registers it - enough to
-  // prove the wiring. As HAL backends land, capabilities will appear here.
+  // Bring up the DAL. The StickC HAL backend now declares Display + Buttons
+  // + IMU + Battery; the LocalDriver translates display events into HAL
+  // calls and bridges HAL button events up to subscribers.
   nocturnation::dal::DAL::begin();
 
+  // Subscribe to button events from the host. The handler dispatches by
+  // (id, kind) to the same logic the old M5.BtnX.wasPressed/wasClicked
+  // checks used to live in loop().
+  nocturnation::dal::DAL::subscribe_button_presses("local", &onButtonEvent);
+
   drawIdleUI();
+}
+
+void onButtonEvent(const char*, const nocturnation::dal::ButtonPressEvent& ev) {
+  using namespace nocturnation::hal;
+
+  // Btn2 (side button): cycle colour mode.
+  if (ev.id == ButtonId::Btn2 && ev.kind == ButtonEvent::Pressed) {
+    currentMode = static_cast<Mode>((currentMode + 1) % MODE_COUNT);
+    if (beatModeActive) drawBeatUI();
+    else                drawIdleUI();
+    return;
+  }
+
+  // Btn1 (front "fire" button): test pulse when idle, mute toggle in beat mode.
+  if (ev.id == ButtonId::Btn1 && ev.kind == ButtonEvent::Pressed) {
+    if (beatModeActive) {
+      beatModePaused = !beatModePaused;
+      sendCurrentIR();
+    } else {
+      sendCurrentIR();
+    }
+    delay(20);
+    return;
+  }
+
+  // Btn3 (power button): toggle beat mode on a click (press + release).
+  if (ev.id == ButtonId::Btn3 && ev.kind == ButtonEvent::Clicked) {
+    setBeatMode(!beatModeActive);
+    return;
+  }
 }
 
 void loop()
 {
   M5.update();
 
-  // Advance HAL/DAL state. With no orchestration subscribers yet, the
-  // HAL's button polling fires no callbacks and this is effectively a
-  // no-op. Wiring it up now means orchestration can subscribe later
-  // without touching the loop structure.
+  // Advance HAL/DAL state. The HAL polls buttons and the LocalDriver's
+  // bridge fires our onButtonEvent() handler from inside this call.
   nocturnation::dal::DAL::loop_tick();
-
-  if (M5.BtnB.wasPressed())
-  {
-    currentMode = static_cast<Mode>((currentMode + 1) % MODE_COUNT);
-    if (beatModeActive)
-      drawBeatUI();
-    else
-      drawIdleUI();
-  }
-
-  if (M5.BtnA.wasPressed() && !beatModeActive)
-  {
-    sendCurrentIR();
-    //starlight(1000);
-    //smoothHueCycle(1.0f, 10000);
-    delay(20);
-  }
-  if (M5.BtnA.wasPressed() && beatModeActive)
-  {
-    beatModePaused = !beatModePaused;
-    sendCurrentIR();
-    delay(20);
-  }
-
-  if (M5.BtnPWR.wasClicked())
-  {
-    setBeatMode(!beatModeActive);
-  }
 
   if (beatModeActive)
   {
     if (detectBeat())
     {
-      M5.Display.fillScreen(modeColour());
+      nocturnation::dal::DAL::fire_display_clear("local",
+          nocturnation::dal::DisplayClearEvent{modeColour()});
       if (!beatModePaused)
         sendCurrentIR();
       delay(30);
