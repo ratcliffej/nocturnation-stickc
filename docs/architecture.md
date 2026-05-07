@@ -35,22 +35,24 @@ Original prototyping work: <mention-page url="https://www.notion.so/358bd0677405
 ┌──────────────────────────────────────────────────────────────────┐
 │  Orchestration (event consumer → light command producer)         │
 └──────────────────────────────────────────────────────────────────┘
-               ↑                                  ↕
-┌─────────────────────────────┐   ┌──────────────────────────────┐
-│  Event sources              │   │  Device abstraction layer    │
-│  - Audio analysis           │   │  (DAL)                       │
-│  - Operator inputs (buttons)│   │  - Device-type profiles      │
-│  - Internal clock           │   │    (JSON: capabilities +     │
-│                             │   │     params + fallbacks)      │
-│                             │   │  - Active-device registry    │
-│                             │   │    (profile + group ID;      │
-│                             │   │     group 0 = all of type)   │
-│                             │   │  - fire_event(target, ...)   │
-│                             │   │  - Per-protocol drivers:     │
-│                             │   │     PixMob IR, ESP-NOW,      │
-│                             │   │     DMX/Art-Net, ...         │
-└─────────────────────────────┘   └──────────────────────────────┘
-               ↑                                  ↕
+                              ↕
+┌──────────────────────────────────────────────────────────────────┐
+│  Device abstraction layer (DAL)                                  │
+│  - Device-type profiles (JSON: capabilities + params + fallbacks)│
+│      Input capabilities:  mic-with-FFT, buttons, IMU, network-in │
+│      Output capabilities: RGB/RGBW LEDs, IR transmit, DMX out    │
+│  - Active-device registry (profile + group ID; 0 = all of type)  │
+│  - The host itself is a registered device. The StickC profile    │
+│    declares its mic, buttons, display and IR LED transport;      │
+│    PixMob and Tildagon profiles declare their own capabilities.  │
+│  - Bidirectional API:                                            │
+│      fire_event(target, ...)        - send a command             │
+│      subscribe_events(target, ...)  - receive typed events       │
+│  - Per-protocol drivers: PixMob IR, ESP-NOW, DMX/Art-Net, ...    │
+│    Each driver translates the DAL's typed events and commands    │
+│    into / out of its wire protocol.                              │
+└──────────────────────────────────────────────────────────────────┘
+                              ↕
 ┌──────────────────────────────────────────────────────────────────┐
 │  Hardware abstraction layer (HAL)                                │
 │  - Mic, buttons, display, IR LED, radios, GPIO, battery, clock   │
@@ -61,13 +63,12 @@ Original prototyping work: <mention-page url="https://www.notion.so/358bd0677405
 │  Hardware (board-specific peripherals)                           │
 └──────────────────────────────────────────────────────────────────┘
 ```
-The system is a single conceptual pipeline: events flow in, light commands flow out. Different deployments populate different combinations of inputs and outputs.
+The system is a single conceptual pipeline: events flow in, light commands flow out, both through the DAL. Different deployments populate different combinations of inputs and outputs by registering different devices in the DAL with different capability profiles.
 ### Layer responsibilities
 **Application layer**: human intent. Show files, mode selections, user preferences, UI. Sits above orchestration and tells it what mood/show is currently active.
-**Orchestration layer**: the artistic decisions. Consumes typed events, produces typed light commands. Different "shows" are different orchestration configurations. The state machine that says "kick → red flash on group 1, snare → blue flash on group 2".
-**Event source layer**: produces typed events from various inputs. Audio analysis emits `BeatDetected`, `BPMUpdated`, `BandLevels`. Network emits `RemoteCommand`, `ClockSync`. Operator emits `ButtonPress`, `ModeChange`. All sources push onto the same conceptual event bus.
-**Device abstraction layer (DAL)**: a single uniform interface for commands to and events from any device, regardless of underlying protocol or hardware. The DAL holds two registries: a **device-type catalogue** (one JSON profile per type, declaring capabilities, parameters, and substitution fallbacks) and an **active-device registry** (named instances bound to a profile and a group ID; group 0 is the wildcard for all devices of that type). Orchestration calls `fire_event(target, ...)` against a logical name; the DAL resolves the target to its profile, checks the requested capability, and either dispatches via the appropriate protocol driver (PixMob IR, ESP-NOW, DMX/Art-Net, etc.) or fails silently. Substitution policy is the composer's responsibility, not the DAL's: the DAL gives a yes/no on each capability and the show files decide what to do with a 'no'. Events flow upward through the same layer: DMX instructions inbound when in master mode, ESP-NOW peer messages when in slave mode, command acks where the protocol supports them. Drivers reach the hardware through the HAL rather than against vendor SDKs directly.
-**Hardware abstraction layer (HAL)**: vendor-independent primitives for the peripherals every host needs - microphone, buttons, display, IR LED, radios, GPIO, battery, clock. Event sources read through the HAL; the DAL's per-protocol drivers read and write through it. Each supported host (M5StickC Plus2, Tildagon, generic ESP32 dev kit) provides a HAL implementation. The layers above never reference vendor libraries (M5Unified, Tildagon SDK, etc.) directly. The HAL is the unlock for every other layer being genuinely vendor-neutral.
+**Orchestration layer**: the artistic decisions. Subscribes to typed events from the DAL, produces typed commands back to the DAL. Different "shows" are different orchestration configurations. The state machine that says "kick → red flash on group 1, snare → blue flash on group 2".
+**Device abstraction layer (DAL)**: a single uniform, bidirectional interface for everything that produces events or accepts commands, regardless of underlying protocol or hardware. The DAL holds two registries: a **device-type catalogue** (one JSON profile per type, declaring input capabilities, output capabilities, parameters, and substitution fallbacks) and an **active-device registry** (named instances bound to a profile and a group ID; group 0 is the wildcard for all devices of that type). Crucially, **the host itself is a registered device**: the M5StickC's mic, buttons, display, and IR LED transport are declared as capabilities of the `NocturNationStickC` profile, the same way `PixMobX4Gen3_1` declares RGB/ASR/group-addressing as capabilities. Audio analysis (FFT beat detection on mic samples) is an input capability of the host's mic, emitting `BeatDetected` and `BPMUpdated` events; button presses are input capabilities of the buttons. Orchestration calls `fire_event(target, ...)` against a logical name to dispatch outputs; the DAL resolves the target to its profile, checks the requested capability, and either dispatches via the appropriate protocol driver or fails silently (substitution policy is the show file composer's responsibility, not the DAL's). Orchestration calls `subscribe_events(target, ...)` to receive inputs - whether those are FFT beat events from the local mic, button presses from local buttons, ESP-NOW peer messages, or DMX instructions when in master mode. Drivers translate between the DAL's typed events/commands and their respective wire protocols (PixMob IR, ESP-NOW, DMX/Art-Net, etc.), reaching the hardware through the HAL rather than against vendor SDKs directly.
+**Hardware abstraction layer (HAL)**: vendor-independent primitives for the peripherals every host needs - microphone samples, button GPIO, display framebuffer, IR LED carrier, radios, GPIO, battery state, clock ticks. The DAL's per-host profile handlers and per-protocol drivers read and write through the HAL. Each supported host (M5StickC Plus2, Tildagon, generic ESP32 dev kit) provides a HAL implementation. The layers above never reference vendor libraries (M5Unified, Tildagon SDK, etc.) directly. The HAL is the unlock for every other layer being genuinely vendor-neutral.
 **Hardware layer**: actual peripherals on the host board. Behind the HAL, this is where IR LEDs, ESP-NOW radios, serial UARTs, Ethernet sockets, microphones, and buttons physically live.
 ---
 ## 3. Hardware platforms
