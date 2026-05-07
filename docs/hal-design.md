@@ -226,8 +226,19 @@ Standard colour constants (`Display::Black`, `Red`, `Green`, etc.) can live as `
 
 Polled debouncing + click/long-press detection. Backend handles raw GPIO and debounce; consumer only sees semantic events.
 
+Button IDs are **generic and numeric** so application code stays host-independent. `Btn1` is conventionally **the primary / "main" button** on every host that declares the `Buttons` capability. Higher-numbered buttons are secondary; their semantics are up to the application. Each HAL backend documents its physical mapping (which physical button is `Btn1`, etc.) but layers above the HAL never need to know.
+
 ```cpp
-enum class ButtonId : uint8_t { A, B, PWR };
+enum class ButtonId : uint8_t {
+    Btn1 = 1,       // primary/main; always present if Buttons capability is declared
+    Btn2 = 2,
+    Btn3 = 3,
+    Btn4 = 4,
+    Btn5 = 5,
+    Btn6 = 6,
+    Btn7 = 7,
+    Btn8 = 8,
+};
 
 enum class ButtonEvent : uint8_t {
     Pressed,        // debounced press edge
@@ -243,6 +254,10 @@ public:
 
     virtual void begin() = 0;
 
+    // How many buttons this backend exposes (1..8). Buttons above this count
+    // simply do not fire events and is_pressed() returns false for them.
+    virtual uint8_t count() const = 0;
+
     using ButtonCallback = std::function<void(ButtonId id, ButtonEvent ev)>;
     virtual void set_callback(ButtonCallback cb) = 0;
 
@@ -255,6 +270,8 @@ public:
 ```
 
 `Buttons::poll()` is implicit - called from `HAL::loop_tick()`.
+
+Application code that wants "the main button" uses `Btn1` and stays portable. Application code that wants secondary functions either uses `Btn2`/`Btn3`/etc. directly (knowing it might no-op on hosts with fewer buttons) or queries `count()` and adapts.
 
 ### 3.7 IMU (capability declared if present)
 
@@ -336,7 +353,7 @@ Pin and peripheral assignments per the M5Stack Plus2 documentation. Backend cons
 | `Mic` | PDM mic via I2S, 16 kHz / 512-sample window. FFT via `kosme/arduinoFFT` (already a project dep). Emits frames at ~31 Hz. |
 | `IRTx` | GPIO 19 (built-in IR LED) via `crankyoldgit/IRremoteESP8266`'s `IRsend::sendRaw`. |
 | `Display` | 1.14" 240×135 ST7789V2 via LovyanGFX (bundled with M5Unified). |
-| `Buttons` | A=GPIO 37, B=GPIO 39 (front + side); PWR via AXP/PEK chip read. Backend does its own debounce. |
+| `Buttons` | `count() == 3`. Mapping: `Btn1` = front button (GPIO 37, the primary/main button you push to fire), `Btn2` = side button (GPIO 39), `Btn3` = power button (read via AXP/PEK chip). Backend does its own debounce. |
 | `IMU` | MPU6886 over I2C. |
 | `Battery` | AXP192 ADC for voltage; charge state from AXP status register. |
 
