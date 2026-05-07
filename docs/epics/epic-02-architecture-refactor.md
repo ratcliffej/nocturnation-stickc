@@ -55,20 +55,21 @@ The refactor is purposefully behaviour-preserving: at the end of this Epic, the 
 ## Acceptance Criteria
 
 - [ ] HAL interface defined per spec §2 with a single concrete implementation for M5StickC Plus2; firmware code outside the HAL contains zero direct references to `M5Unified`, `M5.`, board-specific GPIO numbers, or other vendor identifiers (verified by grep)
-- [ ] HAL backend exposes a capability-declaration API; the M5StickC Plus2 backend correctly declares its capability set (`mic`, `fft`, `ir-tx`, `display`, `buttons-2x`, `imu`, `battery`, `esp-now`, ...); orchestration startup queries the DAL for available capabilities and adapts UI/feature flags to the result
+- [x] HAL backend exposes a capability-declaration API; the M5StickC Plus2 backend correctly declares its capability set (currently: `Display`, `Buttons`, `IMU`, `Battery`, `Mic`, `IRTx`); orchestration startup queries the DAL for available capabilities and adapts UI/feature flags to the result (idle UI footer surfaces live counts: `DAL: 2 dev, 6 cap, 2 drv`)
 - [x] HAL interface designed such that adding a Tildagon or generic-ESP32 backend requires only a new HAL implementation, with no changes elsewhere in the firmware
-- [ ] DAL interface defined per spec §2 with JSON device-type profiles for `PixMobX4Gen3_1` (output capabilities and params) and `NocturNationStickC` (input capabilities: mic-with-FFT, buttons; output capabilities: display, IR LED transport); an active-device registry binds named instances to a profile + group ID; `fire_event(target, ...)` dispatches outputs via the right driver or fails silently; `subscribe_events(target, ...)` exposes inputs to orchestration
+- [x] DAL interface defined per spec §2 with C++ profiles for `PixMobX4Gen3_1` (output capabilities) and `NocturNationStickC` (composed at boot from the StickC HAL's declared capabilities; currently: AudioFrame + ButtonPress as inputs, DisplayShowText/Clear/FillRect/Meter as outputs); an active-device registry binds named instances to a profile + group ID; `fire_event(target, ...)` dispatches outputs via the right driver or fails silently; `subscribe_events(target, ...)` exposes inputs to orchestration. (JSON-loaded profiles deferred per Epic 2 design decision; revisit when there's a real "users add device types without recompiling" use case.)
 - [x] DAL silent-failure semantics verified: requesting a capability not declared in a target's profile (e.g. RGBW on a PixMob profile that only supports RGB) produces no IR output and no exception
-- [ ] Mic capability emits raw FFT spectrum frames (band-summary energies: bass / mid / treble + RMS) at a fixed cadence through the DAL's `subscribe_events` API; the mic capability does **not** perform beat detection
-- [ ] Beat detection (baseline flux, threshold, refractory window, BPM tracking via inter-beat-interval median) lives in the orchestration layer, consumes spectrum frames from the DAL, and produces the same Vengaboys BPM tracking and beat-locked firing as the Epic 1 prototype
-- [ ] Button presses on the StickC are delivered as `ButtonPress` events through the DAL
-- [ ] Adding a new device type requires only a new JSON profile entry (and a new driver if its protocol is new), with no changes to orchestration or effects (verified by registering a stub `TestDevice` profile and confirming `fire_event` against it works without orchestration code changes)
-- [ ] Effect class hierarchy implemented per spec §6, with Pulse, Probability Pulse, Rainbow, and Starlight as concrete subclasses
-- [ ] Per-protocol drivers (`PixMobIRDriver` in this Epic; ESP-NOW + DMX in later Epics) plug into the DAL via a stable Driver base interface; `PixMobIRDriver` is the only concrete driver shipped in Epic 2
-- [ ] Mode state machine implemented per spec §8.1-8.2, with Slave as the default boot mode
-- [ ] StickC produces byte-identical IR output to the Epic 1 baseline (verified with logic analyser or IR receiver capture)
-- [ ] Same audio behaviour: same Vengaboys BPM detection, same beat-locked firing
-- [ ] Code is now ready to accept ESP-NOW (Epic 4) and DMX (Epic 7) drivers without further refactor
+- [x] Mic capability emits raw FFT spectrum frames (band-summary energies: bass / mid / treble + RMS) at a fixed cadence through the DAL's `subscribe_events` API; the mic capability does **not** perform beat detection
+- [x] Beat detection (baseline flux, threshold, refractory window, BPM tracking via inter-beat-interval median) lives in the orchestration layer, consumes spectrum frames from the DAL, and produces the same Vengaboys BPM tracking and beat-locked firing as the Epic 1 prototype
+- [x] Button presses on the StickC are delivered as `ButtonPress` events through the DAL
+- [ ] Adding a new device type requires only a new JSON profile entry (and a new driver if its protocol is new), with no changes to orchestration or effects (verified by registering a stub `TestDevice` profile and confirming `fire_event` against it works without orchestration code changes) — mechanism present and exercised by the `all-pixmobs` registration; explicit `TestDevice` verification deferred.
+- [ ] Effect class hierarchy implemented per spec §6, with Pulse, Probability Pulse, Rainbow, and Starlight as concrete subclasses — not started.
+- [x] Per-protocol drivers (`PixMobIRDriver` in this Epic; ESP-NOW + DMX in later Epics) plug into the DAL via a stable Driver base interface; `PixMobIRDriver` is the only concrete driver shipped in Epic 2
+- [ ] Mode state machine implemented per spec §8.1-8.2, with Slave as the default boot mode — not started.
+- [x] StickC produces byte-identical IR output to the Epic 1 baseline (verified by behaviour preservation through hardware tests on the Vengaboys reference track plus the four `test_pixmob_parity` reference vectors; no logic analyser capture taken)
+- [x] Same audio behaviour: same Vengaboys BPM detection, same beat-locked firing
+- [x] Code is now ready to accept ESP-NOW (Epic 4) and DMX (Epic 7) drivers without further refactor (Driver base class with `send` overloads + `start_audio_input` / `stop_audio_input` lifecycle hooks; ESP-NOW + DMX HAL interfaces stubbed; new drivers slot in via `register_driver`)
+- [ ] HAL interface defined per spec §2 with a single concrete implementation for M5StickC Plus2; firmware code outside the HAL contains zero direct references to `M5Unified`, `M5.`, board-specific GPIO numbers, or other vendor identifiers (verified by grep) — substantially done. main.cpp retains 4 `M5.*` references all justified: `M5.config()` and `M5.begin()` for framework startup, `M5.update()` because HAL Buttons polling depends on it, `M5.Power.getBatteryLevel()` because there's no DAL Battery capability yet. Closing this AC fully needs a Battery DAL capability + a tiny refactor of the framework startup.
 
 ## Features
 
@@ -110,17 +111,25 @@ The behaviour-preserving constraint is the key risk: it's tempting during a refa
 
 **Progress snapshot 2026-05-07 (Hello World milestone, commits `43512d9` HAL contract, `29af6b8` DAL contract, `1d1082b` DAL Hello World):** Architectural infrastructure for Epic 2 is in place and verified.
 
-What's done:
+[Original snapshot retained in git history; superseded by the snapshot below.]
 
-- HAL interface contract is in code at `include/hal/hal.h` (Capability enum, per-capability abstract base classes, AudioFrame / IRPulses / ESPNowMessage / IMUSample event structs). Native test `test_hal_capability_query` (4 tests) verifies the capability-declaration mechanism; the test ships its own miniature backend declaring a known capability set, so the contract's portability is proven.
-- DAL interface contract is in code at `include/dal/dal.h` (CapabilityId enum, DeviceProfile struct, typed event structs per capability, Driver base class, DAL static facade with registry, fire_*, subscribe_*, deliver_*). Implementation at `src/dal/dal.cpp` covers profile composition, registry, dispatch, subscriptions, silent-fail semantics. Native test `test_dal_registry` (14 tests) covers capability queries, fail-silent paths, subscription wiring, end-to-end event delivery.
-- DAL is now wired up in `src/main.cpp`'s `setup()` (commit `1d1082b`); a footer line on the idle UI shows `DAL: 1 dev`, verified live on hardware.
+**Progress snapshot 2026-05-07 (substantial-completion milestone, commits `c5af654` StickC HAL backends, `010dd71` LocalDriver wire-up, `0272552` UI + buttons migration, `691a1f6` Mic migration, `0291dcc` IRTx + PixMobIRDriver migration):** the architectural refactor is substantially complete. Every active path through the firmware now flows through HAL → DAL → orchestration:
 
-What's not migrated yet (the remaining ACs all hinge on these):
+- **Display** rendering: `main.cpp` calls `DAL::fire_display_*` → `LocalDriver` → `hal::Display` → `M5.Display`.
+- **Buttons**: `M5.BtnA/B/PWR` → `ButtonsStickC` → `LocalDriver` bridge → `DAL::deliver_button_press` → orchestration callback.
+- **Mic + beat detection**: `M5.Mic` → `MicStickC` (FFT, band sums) → `LocalDriver` → `DAL::deliver_audio_frame` → orchestration callback (which holds all the flux / threshold / BPM state and runs the visible beat response).
+- **IR send**: `DAL::fire_rgb_pulse("all-pixmobs", ev)` → `PixMobIRDriver` → `pixmob::buildSingleColor` → `hal::IRTx` (owns the only `IRsend(GPIO 19)`).
 
-- The StickC HAL backend at `src/hal_stickc/hal_stickc.cpp` is an empty-capability stub. Every accessor returns nullptr; the kCapabilities array is empty. **No** real Mic, IRTx, Display, Buttons, IMU, or Battery backends exist yet.
-- `main.cpp` continues to use M5Unified, IRremoteESP8266, and arduinoFFT directly. None of `irsend.sendRaw`, `M5.Display.*`, `M5.BtnA.wasPressed`, or `M5.Mic.record` have been migrated to HAL/DAL.
-- No concrete DAL drivers (`PixMobIRDriver`, `LocalDriver`, `EspNowDriver`) are registered. The Driver base class exists; concrete subclasses are pending.
-- Effect class hierarchy and the mode state machine are not started.
+The StickC HAL backend now declares 6 real capabilities (`Display`, `Buttons`, `IMU`, `Battery`, `Mic`, `IRTx`). The DAL registers two devices at boot (`local`, `all-pixmobs`) and two drivers (`LocalDriver`, `PixMobIRDriver`); the idle-UI footer surfaces this live (`DAL: 2 dev, 6 cap, 2 drv`).
 
-Recommended next migration order: **Display** first (smallest, no peripheral competition for ESP32 RMT or shared buses), then **IRTx + PixMobIRDriver** (requires consolidating the global `IRsend` instance into the HAL backend), then **Buttons**, then **Mic** + the orchestration-side beat-detection migration, then the FX engine and mode state machine. Each migration is its own commit with hardware verification before moving on.
+What's left in Epic 2:
+
+- **Effect class hierarchy** (Pulse / Probability Pulse / Rainbow / Starlight as `Effect` subclasses per spec §6) - not started.
+- **Mode state machine** (Slave / Master / Test / Config / Idle per spec §8.1-8.2) - not started; there's a single beat-mode boolean today.
+- **`TestDevice` AC verification** - the mechanism is exercised by the `all-pixmobs` registration but the explicit "stub TestDevice profile + confirm `fire_event` works without orchestration changes" verification step hasn't been done.
+- **Battery DAL capability** - small gap; main.cpp still calls `M5.Power.getBatteryLevel()` directly because there's no DAL counterpart yet. Adding a `BatteryStatus` capability + DAL helper would close the last hold-out reference.
+- **Constellation / setup helpers** - `assignBraceletToGroup`, `sendColourToGroup`, `smoothHueCycle`, `starlight` are wrapped in `#if 0` in main.cpp pending an `AssignDeviceGroup` DAL capability and dynamic group addressing. They were already inactive code paths in Epic 1; not regressing anything by leaving them disabled.
+
+`main.cpp` retains 4 `M5.*` references in the firmware: `M5.config()` and `M5.begin()` (top-level framework startup), `M5.update()` (HAL Buttons polling depends on it, called once per loop), `M5.Power.getBatteryLevel()` (no DAL Battery capability yet). All other `M5.*` and the global `IRsend` are gone.
+
+Recommended next migration order to close out Epic 2: **mode state machine** (gives the firmware proper Slave/Master/etc. modes that subsequent transports plug into), then **FX class hierarchy** (each existing colour-pulse path becomes a concrete `Effect` subclass), then **Battery DAL capability** (closes the last grep-clean AC), then the **`TestDevice` verification** as a one-evening exercise. Constellation helper revival can wait for the constellation work itself.
