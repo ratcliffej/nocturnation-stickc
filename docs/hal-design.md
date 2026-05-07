@@ -311,21 +311,22 @@ public:
 
 ## 4. Initialisation lifecycle
 
+The HAL is owned by the DAL. The DAL is the only caller of `HAL::begin()` and `HAL::loop_tick()`; application code (`main.cpp`'s `setup()`/`loop()`) talks to the DAL, never directly to the HAL. This keeps the layering honest - replacing or refactoring the HAL doesn't require touching anything above the DAL.
+
 ```cpp
-void setup() {
-    HAL::begin();          // calls each declared capability's begin()
-    DAL::begin();          // queries HAL::capabilities(), composes profiles
-    Orchestration::begin();// queries DAL for active capabilities
+// dal/dal.cpp - inside DAL::begin() and DAL::loop_tick()
+void DAL::begin() {
+    hal::HAL::begin();           // initialise declared HAL backends first
+    // ...then DAL-level work: compose host profile, register drivers, etc.
 }
 
-void loop() {
-    HAL::loop_tick();      // polls Buttons, advances Mic FFT, drains queues
-    DAL::loop_tick();      // delivers events to subscribers, dispatches commands
-    Orchestration::loop_tick(); // runs the show state machine
+void DAL::loop_tick() {
+    hal::HAL::loop_tick();       // pull fresh hardware events
+    // ...then DAL-level work: deliver events to subscribers, advance drivers.
 }
 ```
 
-Order matters: HAL must initialise before DAL (DAL queries HAL on `begin()`); DAL before Orchestration. Same order in `loop_tick()` so events propagate up before commands fire down.
+Order matters: HAL must initialise before any DAL-level work in `begin()` because the DAL queries `HAL::capabilities()` to compose profiles. Same ordering in `loop_tick()` so hardware events propagate up before driver state advances.
 
 Each backend's `HAL::begin()` is responsible for ordering its own capability inits internally (e.g., I2C bus before IMU, AXP power-management before everything on the StickC Plus2).
 

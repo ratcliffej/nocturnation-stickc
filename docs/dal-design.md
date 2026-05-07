@@ -18,6 +18,7 @@ The DAL lands in Epic 2 alongside the HAL. The first concrete drivers - the Stic
 ## 1. Design goals
 
 - **One interface, all devices.** Whether a target is a PixMob bracelet over IR, a NocturNation peer over ESP-NOW, a DMX fixture, or the host itself - it's addressed the same way and dispatches through the same code path.
+- **DAL is the only thing above the HAL.** Orchestration calls only into the DAL; the DAL owns the HAL's lifecycle and is the only caller of `hal::HAL::*`. Application code (`main.cpp`'s `setup()`/`loop()`) talks to the DAL and does not include `hal/hal.h`. This keeps the layering honest and makes the HAL replaceable without touching anything above the DAL.
 - **Typed events.** Each capability is a C++ struct with explicit fields. Dispatch is by event type; no stringly-typed key-value bags. Compile-time safety, IDE autocomplete, no fat-finger keys.
 - **Capabilities, not promises.** A device profile declares what it supports. Calls to unsupported capabilities fail silently (return `false`) - substitution policy is the show file composer's responsibility, not the DAL's.
 - **Static registry, dynamic-friendly later.** Epic 2's active-device registry is hardcoded at boot. The interface is shaped so future Epics can add dynamic registration (peer discovery, pairing) without contract changes.
@@ -366,21 +367,48 @@ Host profile composition is one-shot at boot. Hot-pluggable HAL capabilities are
 
 ## 8. Lifecycle
 
+Application code calls only the DAL. The DAL drives the HAL underneath.
+
 ```cpp
+// main.cpp - the only place the application talks to the framework.
+// Note: only dal/dal.h is included here. hal/hal.h is not.
+
 void setup() {
-    HAL::begin();   // initialises declared HAL backends
-    DAL::begin();   // composes host profile, registers drivers, populates active-device registry
-    Orchestration::begin();
+    DAL::begin();              // DAL internally calls HAL::begin(),
+                               // then composes profiles, registers drivers,
+                               // populates the active-device registry.
+    show_setup();              // orchestration: subscribe to events, init state
 }
 
 void loop() {
-    HAL::loop_tick();   // polls HAL inputs (mic FFT, buttons), fires HAL callbacks
-    DAL::loop_tick();   // delivers input events to subscribers, advances drivers
-    Orchestration::loop_tick();
+    DAL::loop_tick();          // DAL internally calls HAL::loop_tick(),
+                               // then drains input events to subscribers and
+                               // advances driver state.
+    show_loop();               // orchestration: react to delivered events,
+                               // run the show state machine, fire commands.
 }
 ```
 
-HAL-level callbacks (e.g. `Mic::set_frame_callback`) are wired up internally by the DAL's host driver, which translates HAL `AudioFrame` to DAL `AudioFrameEvent` and dispatches to all subscribers. Application code never touches HAL callbacks directly.
+Inside `DAL::begin()` and `DAL::loop_tick()` the DAL is the sole caller of the HAL. HAL-level callbacks (e.g. `hal::Mic::set_frame_callback`) are wired up internally by the DAL's host-side driver, which translates the HAL's `AudioFrame` struct into the DAL's `AudioFrameEvent` and dispatches to subscribers. Application code never touches HAL callbacks, HAL types, or HAL accessors directly.
+
+```cpp
+// dal/dal.cpp - implementation
+void DAL::begin() {
+    hal::HAL::begin();                 // initialise hardware first
+    compose_host_profile();            // read hal::HAL::capabilities()
+    register_drivers();                // gated on hal::HAL::has(...)
+    populate_active_device_registry();
+    wire_hal_callbacks_to_dal_dispatch();
+}
+
+void DAL::loop_tick() {
+    hal::HAL::loop_tick();   // pulls fresh HAL events; fires HAL callbacks
+                             // which our wired-up handlers translate into
+                             // DAL events queued for subscriber delivery.
+    deliver_pending_events();
+    drivers_loop_tick();
+}
+```
 
 ---
 
