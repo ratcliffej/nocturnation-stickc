@@ -269,12 +269,16 @@ void drawIdleUI()
   M5.Display.printf("Batt: %d%%", M5.Power.getBatteryLevel());
 
   // Hello World from the DAL: prove begin() ran by surfacing the active
-  // device count. With the StickC HAL stub declaring no capabilities yet,
-  // we expect "DAL: 1 dev" (the host's own "local" entry).
+  // device count and the host profile's capability count.
+  const auto* host = nocturnation::dal::DAL::profile_of("local");
+  const unsigned caps = host
+      ? (unsigned)(host->input_capability_count + host->output_capability_count)
+      : 0;
   M5.Display.setCursor(10, 128);
   M5.Display.setTextSize(1);
-  M5.Display.printf("DAL: %u dev",
-                    (unsigned)nocturnation::dal::DAL::active_device_count());
+  M5.Display.printf("DAL: %u dev, %u cap",
+                    (unsigned)nocturnation::dal::DAL::active_device_count(),
+                    caps);
 }
 
 void drawBeatUI()
@@ -414,6 +418,12 @@ void setup()
 void loop()
 {
   M5.update();
+
+  // Advance HAL/DAL state. With no orchestration subscribers yet, the
+  // HAL's button polling fires no callbacks and this is effectively a
+  // no-op. Wiring it up now means orchestration can subscribe later
+  // without touching the loop structure.
+  nocturnation::dal::DAL::loop_tick();
 
   if (M5.BtnB.wasPressed())
   {
