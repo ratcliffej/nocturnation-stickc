@@ -381,11 +381,83 @@ The Plus2 backend may use M5Unified internally (it's already a dep, and saves bo
 
 ---
 
-## 9. Out-of-band notes for implementation (Epic 2)
+## 9. Implementation status + how to add a new HAL backend
 
-When Feature 2.0 (HAL implementation) starts:
+The HAL contract lives at `include/hal/hal.h`. The first concrete backend is the M5StickC Plus2 implementation at `src/hal_stickcplus2/` - one file per capability (`display_stickcplus2.{h,cpp}`, `buttons_stickcplus2.{h,cpp}`, etc.) plus a top-level `hal_stickcplus2.cpp` that holds the `HAL::*` static-facade definitions.
 
-1. Create `lib/hal/include/hal.h` with the interfaces above (one header per capability is fine, or one combined header for now).
-2. Create `lib/hal/stickcplus2/` for the Plus2 backend implementations.
-3. Use `build_src_filter` in `platformio.ini` to select which backend the firmware compiles against. Default in this repo: `stickcplus2`. Future backends (e.g. M5 StickS3) sit in `lib/hal/<host>/`.
-4. Add a native `test/test_hal_capability_query/` that links against a stub backend declaring a known capability set, verifies `HAL::has()` and `HAL::capabilities()` return the right list. This is the only HAL test that runs on the host without hardware; everything else is verified by Block 3-style hardware ritual.
+A native `test/test_hal_capability_query/` links against a stub backend declaring a known capability set and verifies `HAL::has()` / `HAL::capabilities()` return the right list. It's the only HAL test that runs on the host without hardware; the rest is hardware-verified.
+
+### 9.1 Why exactly one HAL backend per binary
+
+The `nocturnation::hal::HAL` class is a static facade - methods like `HAL::begin()`, `HAL::loop_tick()`, `HAL::display()` are declared in `include/hal/hal.h` and **defined** in the active backend's source files. Linking two backends into the same firmware binary causes duplicate-symbol errors: both define the same `HAL::*` symbols. So the choice of backend is fixed at build time, not runtime.
+
+### 9.2 How to swap backends (PlatformIO env + build_src_filter)
+
+Each host gets its own folder under `src/` (for example `src/hal_stickcplus2/` today, `src/hal_stickcs3/` when that backend lands) and its own PlatformIO firmware env. Each env extends a common `[env:firmware-base]` and pins exactly one backend folder via `build_src_filter`:
+
+```ini
+[env:firmware-base]
+platform = espressif32@6.7.0
+framework = arduino
+test_ignore = *
+build_flags = ...
+lib_deps   = M5Unified, IRremoteESP8266, arduinoFFT, ...
+
+[env:m5stack-stickcplus2]
+extends = env:firmware-base
+board   = m5stick-c
+build_src_filter = -<*> +<main.cpp> +<dal/> +<effects/> +<modes/> +<hal_stickcplus2/>
+
+[env:m5stack-stickcs3]                  ; example future backend
+extends = env:firmware-base
+board   = m5stack-stickcs3              ; whatever PlatformIO board id applies
+build_src_filter = -<*> +<main.cpp> +<dal/> +<effects/> +<modes/> +<hal_stickcs3/>
+```
+
+The whitelist (`-<*>` then explicit `+<...>`) means adding a new HAL folder doesn't accidentally link into existing envs.
+
+Build / flash a specific host:
+
+```sh
+pio run -e m5stack-stickcs3
+pio run -e m5stack-stickcs3 -t upload
+```
+
+`platformio.ini`'s `default_envs` controls which env `pio run` (with no `-e`) builds. If you have a primary deployment target, set it there.
+
+### 9.3 Adding a new HAL backend - checklist
+
+1. Create `src/hal_<host>/` (e.g. `src/hal_stickcs3/`). Implement one file per capability that this host supports, plus a top-level `hal_<host>.cpp` that defines:
+   - `HAL::capabilities()`, `HAL::capability_count()`, `HAL::has()`
+   - `HAL::begin()`, `HAL::loop_tick()`
+   - One accessor per capability (`HAL::display()`, etc.) returning a backend instance, or `nullptr` for capabilities the host doesn't support.
+2. Match the M5StickC Plus2 backend's class-naming convention: `DisplayStickCplus2` -> `Display<HostName>` for clarity. Each capability class inherits the matching abstract from `include/hal/hal.h`.
+3. Add a sibling env to `platformio.ini`:
+   ```ini
+   [env:m5stack-<host>]
+   extends = env:firmware-base
+   board   = <pio-board-id>
+   build_src_filter = -<*> +<main.cpp> +<dal/> +<effects/> +<modes/> +<hal_<host>/>
+   ```
+4. Build to confirm the symbols resolve (`pio run -e m5stack-<host>`).
+5. Hardware-verify against the same checks the existing backend passes: byte-identical IR output for the parity vectors, mode FSM works, beat detection responds.
+6. Don't touch anything in `src/dal/`, `src/effects/`, `src/modes/`, or `src/main.cpp` - the abstraction is doing its job if those compile and run unchanged on the new host.
+
+### 9.4 What stays shared, what diverges
+
+Shared across all backends:
+- `include/hal/hal.h` (the contract)
+- `include/dal/dal.h`, `src/dal/` (orchestration interface, dispatcher, drivers)
+- `include/effects/effects.h`, `src/effects/` (Effect class hierarchy)
+- `include/modes/mode_machine.h`, `src/modes/` (Mode FSM, all six modes)
+- `src/main.cpp` (host-agnostic entry point)
+- `include/pixmob_protocol.h` (wire-protocol encoder)
+- All `test/` directories
+
+Per-host (lives only in `src/hal_<host>/`):
+- M5Unified / vendor-SDK calls
+- GPIO pin assignments
+- Sample-rate / FFT-size choices if they differ
+- M5.config() / M5.begin() flow
+
+If a vendor library (M5Unified, etc.) is only needed by one HAL backend, list it in that env's `lib_deps` rather than the shared `firmware-base`. Today both `lib_deps` entries are also used by drivers (`pixmob_ir_driver` uses IRremoteESP8266 directly), so they live in the base.

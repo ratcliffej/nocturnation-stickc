@@ -5,7 +5,7 @@ notion_url: https://www.notion.so/358bd06774058156ac2adcf079243661
 notion_id: 358bd06774058156ac2adcf079243661
 notion_status: Done
 complexity: 13+ (must be split into Features before dispatch)
-last_synced: 2026-05-08
+last_synced: 2026-05-09
 sync_direction: bidirectional
 ---
 

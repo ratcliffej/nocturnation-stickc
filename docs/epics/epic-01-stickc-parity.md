@@ -4,7 +4,7 @@ status: cross-project (will move to umbrella repo when Tildagon work begins)
 notion_url: https://www.notion.so/358bd0677405814f9491df2ee822e342
 notion_id: 358bd0677405814f9491df2ee822e342
 notion_status: Done
-last_synced: 2026-05-07
+last_synced: 2026-05-09
 sync_direction: bidirectional
 ---
 
@@ -36,7 +36,7 @@ This is the right shape for the work. AGP Cloud's autonomous-Ada pattern shines 
 Three practical layers, with honest sign-off ownership:
 
 1. **Native unit tests on Jason's laptop** (`pio test -e native`). For pure logic with deterministic outputs: PixMob byte encoder against reference vectors, FFT post-processing functions, mode state machine transitions, frame format encoder/decoder when added in later Epics. Jason runs these locally; failures are hard fails.
-2. **PlatformIO build validation** (`pio run -e stickc -Wformat -Wformat-security`). Compiler warnings treated as errors. Catches the 80% of "obvious" mistakes before flashing.
+2. **PlatformIO build validation** (`pio run -e m5stack-stickcplus2 -Wformat -Wformat-security`). Compiler warnings treated as errors. Catches the 80% of "obvious" mistakes before flashing.
 3. **Hardware verification on the StickC + PixMob bracelet**. Done physically by Jason. Covers everything visual, audio-driven, timing-feel-related, or usability-related. The fact that this can't be automated is not a problem to solve - it's a property of the work.
 
 No Wokwi, no autonomous Ada, no headless simulation pipeline. If something turns out to genuinely need cycle-time-saving simulation later, we add it then. Premature tooling is its own kind of waste.
@@ -45,7 +45,7 @@ No Wokwi, no autonomous Ada, no headless simulation pipeline. If something turns
 
 **Included:**
 
-- **Establish a new PlatformIO project in VS Code** following NocturNation conventions (project structure, `platformio.ini` config with both `[env:stickc]` and `[env:native]` defined, libraries declared explicitly). Confirm PlatformIO extension is installed and working - first build of the empty skeleton must succeed before any code is migrated.
+- **Establish a new PlatformIO project in VS Code** following NocturNation conventions (project structure, `platformio.ini` config with both `[env:m5stack-stickcplus2]` and `[env:native]` defined, libraries declared explicitly). Confirm PlatformIO extension is installed and working - first build of the empty skeleton must succeed before any code is migrated.
 - **Create the canonical NocturNation GitHub repository** under a personal or organisation account. Public visibility, MIT licence per spec §13, sensible `.gitignore` covering `.pio/`, `build/`, IDE-specific cruft.
 - **Author a [README.md](http://README.md)** at the repo root covering: project tagline, what NocturNation is in 2-3 sentences, link to the architecture spec, hardware requirements (StickC Plus2 + PixMob bracelet), build instructions (`pio run`, `pio run -t upload`), brief usage notes, links to related documentation. Aim: a stranger can go from `git clone` to working device in under 15 minutes.
 - Migrate existing FFT beat-detection code into the new project, preserved bit-for-bit
@@ -68,7 +68,7 @@ No Wokwi, no autonomous Ada, no headless simulation pipeline. If something turns
 
 Verification ownership in brackets - **(L)** = laptop / native test, **(B)** = build-time check, **(H)** = hardware verification by Jason.
 
-- [x] **(L)** PlatformIO project skeleton exists under VS Code; `pio run -e stickc` builds successfully on an empty `setup() / loop()` skeleton (proves toolchain works before code migration)
+- [x] **(L)** PlatformIO project skeleton exists under VS Code; `pio run -e m5stack-stickcplus2` builds successfully on an empty `setup() / loop()` skeleton (proves toolchain works before code migration)
 - [x] **(L)** `pio test -e native` runs successfully against a one-liner test (proves native test environment is set up)
 - [x] **(B)** PlatformIO build succeeds without warnings under `-Wformat -Wformat-security` flags
 - [x] **(H)** Existing prototype code migrated into the new structure; firmware built from the new repo flashes to a StickC and produces visible behaviour matching the existing prototype: same Vengaboys BPM tracking, same beat-locked IR transmission, same UI
@@ -84,13 +84,13 @@ A pragmatic ordering of work, not a formal SDLC decomposition. Each block is rou
 
 ### 1. Project foundation (one evening)
 
-Create the GitHub repo, establish the PlatformIO project, get an empty `setup()/loop()` skeleton building cleanly under both the `[env:stickc]` and `[env:native]` environments, verify the native test environment runs, push the initial commit.
+Create the GitHub repo, establish the PlatformIO project, get an empty `setup()/loop()` skeleton building cleanly under both the `[env:m5stack-stickcplus2]` and `[env:native]` environments, verify the native test environment runs, push the initial commit.
 
 - New GitHub repo at `nocturnation/nocturnation-firmware` (or similar). Public, MIT-licenced, sensible `.gitignore`
 - VS Code workspace with PlatformIO extension confirmed working
-- `platformio.ini` with both `[env:stickc]` (target hardware) and `[env:native]` (laptop unit tests) defined
+- `platformio.ini` with both `[env:m5stack-stickcplus2]` (target hardware) and `[env:native]` (laptop unit tests) defined
 - One trivial native unit test (`TEST_ASSERT_EQUAL(2, 1+1)`) confirming `pio test -e native` works
-- One trivial firmware build (blink the screen backlight) confirming `pio run -e stickc -t upload` works on actual StickC
+- One trivial firmware build (blink the screen backlight) confirming `pio run -e m5stack-stickcplus2 -t upload` works on actual StickC
 - Initial commit pushed: "Project foundation: PlatformIO + native test env + empty firmware skeleton"
 
 Deliverable: a buildable, flashable, testable empty project. The next two blocks just add code into this skeleton.
