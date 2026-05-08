@@ -1,10 +1,10 @@
 ---
 title: NocturNation DAL design
 status: cross-project (interface contract is shared; backend specifics are per-host)
-notion_url: null
-notion_id: null
-last_synced: 2026-05-07
-sync_direction: not synced (design doc, lives in repo only for now)
+notion_url: https://www.notion.so/35abd0677405814cb1a9f97caee4179e
+notion_id: 35abd0677405814cb1a9f97caee4179e
+last_synced: 2026-05-08
+sync_direction: bidirectional
 ---
 
 # NocturNation DAL design
