@@ -87,14 +87,26 @@ static void test_local_profile_reflects_hal_capabilities(void) {
     TEST_ASSERT_FALSE(dal::DAL::supports("local", CapabilityId::EspNowInbound));
     TEST_ASSERT_FALSE(dal::DAL::supports("local", CapabilityId::DmxInbound));
     TEST_ASSERT_FALSE(dal::DAL::supports("local", CapabilityId::RgbPulse));
+    // HAL didn't declare Battery, so BatteryLevel must NOT appear as an output.
+    TEST_ASSERT_FALSE(dal::DAL::supports("local", CapabilityId::BatteryLevel));
+}
+
+static void test_battery_level_returns_minus_one_when_unsupported(void) {
+    // No Battery in the test HAL backend, so DAL::battery_level("local")
+    // should fail the capability check and return the not-available sentinel.
+    TEST_ASSERT_EQUAL_INT(-1, dal::DAL::battery_level("local"));
+}
+
+static void test_battery_level_returns_minus_one_for_unknown_target(void) {
+    TEST_ASSERT_EQUAL_INT(-1, dal::DAL::battery_level("ghost"));
 }
 
 static void test_register_pixmob_device(void) {
-    TEST_ASSERT_TRUE(dal::DAL::register_device("group-5",
+    TEST_ASSERT_TRUE(dal::DAL::register_device("custom-pixmob",
                                                &dal::profiles::PixMobX4Gen3_1, 5));
-    TEST_ASSERT_TRUE(dal::DAL::has_device("group-5"));
-    TEST_ASSERT_TRUE(dal::DAL::supports("group-5", dal::CapabilityId::RgbPulse));
-    TEST_ASSERT_FALSE(dal::DAL::supports("group-5", dal::CapabilityId::AudioFrame));
+    TEST_ASSERT_TRUE(dal::DAL::has_device("custom-pixmob"));
+    TEST_ASSERT_TRUE(dal::DAL::supports("custom-pixmob", dal::CapabilityId::RgbPulse));
+    TEST_ASSERT_FALSE(dal::DAL::supports("custom-pixmob", dal::CapabilityId::AudioFrame));
 }
 
 static void test_duplicate_registration_rejected(void) {
@@ -116,10 +128,10 @@ static void test_fire_returns_false_when_no_driver_registered(void) {
     // passes; dispatch then fails because there's no driver. This is the
     // silent-fail path callers see when a transport prerequisite (here,
     // hal::IRTx + a registered PixMobIRDriver) is absent.
-    dal::DAL::register_device("group-5", &dal::profiles::PixMobX4Gen3_1, 5);
+    dal::DAL::register_device("custom-pixmob", &dal::profiles::PixMobX4Gen3_1, 5);
     dal::RgbPulseEvent ev{255, 0, 0, pixmob::T_32_MS, pixmob::T_96_MS,
                           pixmob::T_96_MS, pixmob::CHANCE_100};
-    TEST_ASSERT_FALSE(dal::DAL::fire_rgb_pulse("group-5", ev));
+    TEST_ASSERT_FALSE(dal::DAL::fire_rgb_pulse("custom-pixmob", ev));
 }
 
 static void test_fire_returns_false_for_unknown_target(void) {
@@ -130,9 +142,9 @@ static void test_fire_returns_false_for_unknown_target(void) {
 static void test_fire_returns_false_for_unsupported_capability(void) {
     // PixMob doesn't have the DisplayShowText output capability, so even
     // if a driver existed for "ir-pixmob", this dispatch would fail.
-    dal::DAL::register_device("group-5", &dal::profiles::PixMobX4Gen3_1, 5);
+    dal::DAL::register_device("custom-pixmob", &dal::profiles::PixMobX4Gen3_1, 5);
     dal::DisplayShowTextEvent ev{0, 0, "hello", 0xFFFF, 0x0000, 1};
-    TEST_ASSERT_FALSE(dal::DAL::fire_display_show_text("group-5", ev));
+    TEST_ASSERT_FALSE(dal::DAL::fire_display_show_text("custom-pixmob", ev));
 }
 
 static void test_subscribe_to_supported_input(void) {
@@ -184,20 +196,25 @@ static void test_button_press_delivered_to_subscriber(void) {
 static void test_active_device_listing(void) {
     dal::DAL::register_device("a", &dal::profiles::PixMobX4Gen3_1, 1);
     dal::DAL::register_device("b", &dal::profiles::PixMobX4Gen3_1, 2);
-    // DAL::begin() registers "local" then "all-pixmobs"; this test then
-    // adds "a" + "b". Total = 4, in registration order.
-    TEST_ASSERT_EQUAL_size_t(4, dal::DAL::active_device_count());
+    // DAL::begin() registers "local", "all-pixmobs", then "group-1".."group-5"
+    // (added 2026-05-08 to support the §8.5 Group Targeting Test). This test
+    // then adds "a" + "b". Total = 9, in registration order.
+    TEST_ASSERT_EQUAL_size_t(9, dal::DAL::active_device_count());
     TEST_ASSERT_EQUAL_STRING("local",       dal::DAL::active_device_name(0));
     TEST_ASSERT_EQUAL_STRING("all-pixmobs", dal::DAL::active_device_name(1));
-    TEST_ASSERT_EQUAL_STRING("a",           dal::DAL::active_device_name(2));
-    TEST_ASSERT_EQUAL_STRING("b",           dal::DAL::active_device_name(3));
-    TEST_ASSERT_NULL(dal::DAL::active_device_name(4));
+    TEST_ASSERT_EQUAL_STRING("group-1",     dal::DAL::active_device_name(2));
+    TEST_ASSERT_EQUAL_STRING("group-5",     dal::DAL::active_device_name(6));
+    TEST_ASSERT_EQUAL_STRING("a",           dal::DAL::active_device_name(7));
+    TEST_ASSERT_EQUAL_STRING("b",           dal::DAL::active_device_name(8));
+    TEST_ASSERT_NULL(dal::DAL::active_device_name(9));
 }
 
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_local_device_registered_after_begin);
     RUN_TEST(test_local_profile_reflects_hal_capabilities);
+    RUN_TEST(test_battery_level_returns_minus_one_when_unsupported);
+    RUN_TEST(test_battery_level_returns_minus_one_for_unknown_target);
     RUN_TEST(test_register_pixmob_device);
     RUN_TEST(test_duplicate_registration_rejected);
     RUN_TEST(test_unknown_device_queries);

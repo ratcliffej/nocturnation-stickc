@@ -23,10 +23,11 @@ docs/
 ├── architecture.md                           # cross-project architecture spec
 └── epics/
     ├── epic-01-stickc-parity.md              # closed
-    └── epic-02-architecture-refactor.md      # in planning
+    ├── epic-02-architecture-refactor.md      # closed
+    └── epic-03-stickc-ui.md                  # in planning
 ```
 
-More Epics (3 onward) will land here as they become active.
+More Epics (4 onward) will land here as they become active.
 
 ## Notion sync convention
 

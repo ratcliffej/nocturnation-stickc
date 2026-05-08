@@ -119,6 +119,9 @@ void compose_host_profile() {
         s_host_outputs[s_host_output_count++] = CapabilityId::DisplayFillRect;
         s_host_outputs[s_host_output_count++] = CapabilityId::DisplayMeter;
     }
+    if (hal::HAL::has(hal::Capability::Battery)) {
+        s_host_outputs[s_host_output_count++] = CapabilityId::BatteryLevel;
+    }
 
     s_host_profile = DeviceProfile{
         /* type_id                  = */ "NocturNationHost",
@@ -166,10 +169,16 @@ void DAL::begin() {
     // Register the host as the "local" device.
     register_device("local", &s_host_profile, 0);
 
-    // Register PixMob bracelets as broadcast target. Specific groups can be
-    // added by callers via DAL::register_device("group-N", &profiles::PixMobX4Gen3_1, N)
-    // once the constellation work needs them.
+    // Register PixMob bracelets. "all-pixmobs" is broadcast (group 0). The
+    // numbered groups 1-5 cover the §8.5 Group Targeting Test cycle plus the
+    // bracelet-setup flow (Set Group ID writes 1-5 today; range can extend
+    // to the protocol's 1-31 maximum when constellation work needs more).
     register_device("all-pixmobs", &profiles::PixMobX4Gen3_1, 0);
+    register_device("group-1",     &profiles::PixMobX4Gen3_1, 1);
+    register_device("group-2",     &profiles::PixMobX4Gen3_1, 2);
+    register_device("group-3",     &profiles::PixMobX4Gen3_1, 3);
+    register_device("group-4",     &profiles::PixMobX4Gen3_1, 4);
+    register_device("group-5",     &profiles::PixMobX4Gen3_1, 5);
 
     // Register concrete drivers. Each refuses registration when its HAL
     // prerequisite is absent (e.g. no IRTx -> PixMob driver doesn't register).
@@ -256,6 +265,9 @@ bool DAL::fire_display_fill_rect(const char* t, const DisplayFillRectEvent& ev) 
 bool DAL::fire_display_meter(const char* t, const DisplayMeterEvent& ev) {
     return dispatch_output(t, CapabilityId::DisplayMeter, ev);
 }
+bool DAL::fire_assign_device_group(const char* t, const AssignDeviceGroupEvent& ev) {
+    return dispatch_output(t, CapabilityId::AssignDeviceGroup, ev);
+}
 
 // =============================================================================
 // Subscriptions
@@ -322,6 +334,19 @@ bool DAL::stop_audio_input(const char* target) {
 }
 
 // =============================================================================
+// Synchronous queries
+// =============================================================================
+
+int DAL::battery_level(const char* target) {
+    const ActiveDevice* device = find_device(target);
+    if (!device || !device->profile) return -1;
+    if (!device->profile->has_output(CapabilityId::BatteryLevel)) return -1;
+    Driver* driver = find_driver_for_transport(device->profile->transport);
+    if (!driver) return -1;
+    return driver->battery_level();
+}
+
+// =============================================================================
 // Event delivery (called by drivers, also exposed for tests)
 // =============================================================================
 
@@ -370,6 +395,7 @@ namespace profiles {
 namespace {
 constexpr CapabilityId pixmob_x4_outputs[] = {
     CapabilityId::RgbPulse,
+    CapabilityId::AssignDeviceGroup,
 };
 }  // anonymous namespace
 

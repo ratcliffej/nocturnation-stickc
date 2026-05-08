@@ -22,6 +22,7 @@
 //   ESPNow  - Epic 4.
 
 #include "hal/hal.h"
+#include "M5Unified.h"
 
 #include "display_stickc.h"
 #include "buttons_stickc.h"
@@ -76,10 +77,13 @@ IRTxStickC    s_ir_tx;
 // -----------------------------------------------------------------------------
 
 void HAL::begin() {
-    // M5.begin() in main.cpp performs the bulk of hardware init; backend
-    // begin() methods are no-ops on this host (every M5Unified-managed
-    // peripheral is already up by the time we get here). The calls remain
-    // for symmetry and to give per-capability backends a hook.
+    // Framework startup: bring up the M5Unified runtime before any backend
+    // begin() runs. The bulk of peripheral init (display panel, AXP192 power,
+    // BtnA/BtnB/BtnPWR) happens inside M5.begin() so subsequent backend
+    // begin() calls can rely on hardware being live.
+    auto cfg = M5.config();
+    M5.begin(cfg);
+
     s_display.begin();
     s_buttons.begin();
     s_imu.begin();
@@ -93,6 +97,11 @@ void HAL::begin() {
 }
 
 void HAL::loop_tick() {
+    // Refresh M5Unified per-frame state (button edges, etc.) before any
+    // polled backend reads from it. ButtonsStickC::poll() depends on this
+    // having been called.
+    M5.update();
+
     // Polled capabilities advance here. Buttons emits events to subscribers
     // when M5Unified's edge state shows a transition. Mic produces an
     // AudioFrame on each successful M5.Mic.record() call (~32 ms blocking

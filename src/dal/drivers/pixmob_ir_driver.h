@@ -23,6 +23,7 @@ public:
     void loop_tick() override {}
 
     bool send(uint8_t group_id, const RgbPulseEvent&) override;
+    bool send(uint8_t group_id, const AssignDeviceGroupEvent&) override;
 };
 
 PixMobIRDriver* pixmob_ir_driver_instance();

@@ -102,6 +102,16 @@ bool LocalDriver::stop_audio_input() {
     return true;
 }
 
+// -----------------------------------------------------------------------------
+// Synchronous queries
+// -----------------------------------------------------------------------------
+
+int LocalDriver::battery_level() {
+    auto* batt = hal::HAL::battery();
+    if (!batt) return -1;
+    return batt->level_percent();
+}
+
 bool LocalDriver::send(uint8_t /*group_id*/, const DisplayMeterEvent& ev) {
     auto* d = hal::HAL::display();
     if (!d) return false;

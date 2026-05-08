@@ -32,6 +32,8 @@ public:
 
     bool start_audio_input(uint16_t sample_rate_hz, uint16_t fft_size) override;
     bool stop_audio_input() override;
+
+    int  battery_level() override;
 };
 
 // Singleton accessor used by DAL::begin() to register the driver.

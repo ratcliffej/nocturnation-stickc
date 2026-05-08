@@ -26,6 +26,21 @@ namespace nocturnation {
 namespace dal {
 
 // =============================================================================
+// RGB565 colour constants
+// =============================================================================
+//
+// Provided here so orchestration code can pass colours into Display*Event
+// structs without pulling in M5Unified / LovyanGFX. Values match the standard
+// LovyanGFX names that the prototype used, so no on-screen colour drift.
+
+constexpr uint16_t BLACK   = 0x0000;
+constexpr uint16_t BLUE    = 0x001F;
+constexpr uint16_t GREEN   = 0x07E0;
+constexpr uint16_t RED     = 0xF800;
+constexpr uint16_t YELLOW  = 0xFFE0;
+constexpr uint16_t WHITE   = 0xFFFF;
+
+// =============================================================================
 // Capability identifiers (semantic, distinct from hal::Capability)
 // =============================================================================
 
@@ -37,6 +52,8 @@ enum class CapabilityId : uint16_t {
     DisplayClear,
     DisplayFillRect,
     DisplayMeter,
+    BatteryLevel,         // Synchronous query: host returns 0..100 or -1
+    AssignDeviceGroup,    // Bracelet-setup command: write a new group ID into the target's EEPROM
 
     // ----- Input -----
     AudioFrame,           // Spectrum frames from a host's mic
@@ -106,6 +123,10 @@ struct DisplayMeterEvent {
     float    threshold_ratio;  // <0 to skip the threshold marker
 };
 
+struct AssignDeviceGroupEvent {
+    uint8_t new_group_id;      // 1..31; 0 is reserved for broadcast
+};
+
 // =============================================================================
 // Input event types (delivered to subscribers)
 // =============================================================================
@@ -161,6 +182,7 @@ public:
     virtual bool send(uint8_t /*group_id*/, const DisplayClearEvent&)     { return false; }
     virtual bool send(uint8_t /*group_id*/, const DisplayFillRectEvent&)  { return false; }
     virtual bool send(uint8_t /*group_id*/, const DisplayMeterEvent&)     { return false; }
+    virtual bool send(uint8_t /*group_id*/, const AssignDeviceGroupEvent&){ return false; }
 
     // Input lifecycle hooks. Called by DAL::start_audio_input / stop_audio_input
     // on the driver registered for the target's transport. Drivers that do
@@ -168,6 +190,10 @@ public:
     virtual bool start_audio_input(uint16_t /*sample_rate_hz*/,
                                    uint16_t /*fft_size*/) { return false; }
     virtual bool stop_audio_input() { return false; }
+
+    // Synchronous queries. Default returns the "not available" sentinel so
+    // drivers without the capability get the right behaviour for free.
+    virtual int  battery_level() { return -1; }
 };
 
 // =============================================================================
@@ -218,6 +244,7 @@ public:
     static bool fire_display_clear    (const char* target, const DisplayClearEvent&);
     static bool fire_display_fill_rect(const char* target, const DisplayFillRectEvent&);
     static bool fire_display_meter    (const char* target, const DisplayMeterEvent&);
+    static bool fire_assign_device_group(const char* target, const AssignDeviceGroupEvent&);
 
     // -------------------------------------------------------------------------
     // Input subscription. Returns false on unknown target or capability not
@@ -244,6 +271,12 @@ public:
                                   uint16_t sample_rate_hz = 16000,
                                   uint16_t fft_size       = 512);
     static bool stop_audio_input (const char* target);
+
+    // -------------------------------------------------------------------------
+    // Synchronous queries. Returns -1 on unknown target, capability not
+    // declared on that target's profile, or no driver available.
+    // -------------------------------------------------------------------------
+    static int  battery_level(const char* target);
 
     // -------------------------------------------------------------------------
     // Internal: drivers and tests use these to deliver input events to

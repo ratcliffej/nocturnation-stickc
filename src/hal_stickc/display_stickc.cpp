@@ -5,7 +5,10 @@ namespace nocturnation {
 namespace hal {
 
 void DisplayStickC::begin() {
-    // No-op: M5.begin() in main.cpp's setup() initialises the panel.
+    // Panel itself is initialised by HAL::begin()'s M5.begin() call earlier.
+    // Apply the StickC Plus2's natural landscape orientation (BtnA on the
+    // right). All UI coordinates assume this rotation.
+    M5.Display.setRotation(1);
 }
 
 void DisplayStickC::set_rotation(uint8_t rotation) { M5.Display.setRotation(rotation); }
