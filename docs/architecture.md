@@ -19,6 +19,10 @@ The system has three deployment scales it must support cleanly:
 - **Distributed**: multiple master/repeater nodes covering a venue, optionally orchestrated from a laptop. Maker festivals, club nights.
 Across all three, the core experience is the same: ambient music drives synchronised, beautiful lighting on wearable or installed light points.
 Original prototyping work: <mention-page url="https://www.notion.so/358bd067740580bab876cd7c2b7ee6bf"/> 
+
+Pixmob Aurora Teardown: https://goughlui.com/2025/01/14/teardown-pixmob-led-wristband-aurora-v1-7/
+https://www.wsj.com/video/series/tech-behind/the-tech-behind-how-concert-led-light-wristbands-work/EAA54145-D07A-4100-8153-2EAF8D671921?mod=Searchresults_pos1&page=1
+
 ### Design principles
 - **Reuse over manufacture**: existing PixMob bracelets, existing EMF Tildagon badges, existing maker hardware. New devices only when necessary.
 - **Layered architecture**: hardware abstraction, audio analysis, device abstraction, orchestration, transport, and protocol are separate layers with clean interfaces. Any layer is swappable.

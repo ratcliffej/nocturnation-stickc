@@ -67,6 +67,16 @@ static const uint16_t REF_SET_GROUP_ID_SLOT0_GID22[] = {
 };
 static const size_t REF_SET_GROUP_ID_SLOT0_GID22_LEN = 39;
 
+// CommandSetGroupSel(group_sel=0)
+static const uint16_t REF_SET_GROUP_SEL_SLOT0[] = {
+    1388, 2776, 694, 2082, 694, 694, 694, 694,
+    694, 1388, 694, 2776, 694, 1388, 694, 2776,
+    694, 1388, 694, 2776, 694, 1388, 694, 2776,
+    694, 2082, 694, 1388, 1388, 1388, 694, 2776,
+    694
+};
+static const size_t REF_SET_GROUP_SEL_SLOT0_LEN = 33;
+
 // ---------------------------------------------------------------------------
 // Test helpers
 // ---------------------------------------------------------------------------
@@ -135,11 +145,20 @@ static void test_set_group_id_slot0_gid22(void) {
                    REF_SET_GROUP_ID_SLOT0_GID22_LEN);
 }
 
+static void test_set_group_sel_slot0(void) {
+    uint16_t out[80];
+    size_t n = pixmob::buildSetGroupSel(out, 80, /*groupSel=*/0);
+    assert_matches("SET_GROUP_SEL_SLOT0", out, n,
+                   REF_SET_GROUP_SEL_SLOT0,
+                   REF_SET_GROUP_SEL_SLOT0_LEN);
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_single_red_punchy);
     RUN_TEST(test_single_blue_group22_chance16);
     RUN_TEST(test_two_colors_red_then_green);
     RUN_TEST(test_set_group_id_slot0_gid22);
+    RUN_TEST(test_set_group_sel_slot0);
     return UNITY_END();
 }

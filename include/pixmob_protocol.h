@@ -178,6 +178,13 @@ static size_t buildSetColor(uint16_t* outBuf, size_t outBufCapacity,
 // other bracelets physically isolated.
 //   groupSel: which of 8 EEPROM slots to write into (0-7); slot 0 normally
 //   newGroupId: 1-31 (zero is reserved for broadcast)
+//
+// IMPORTANT: SetGroupId only writes the value into the slot. To make that
+// slot's value the bracelet's ACTIVE group ID (i.e. start filtering on it)
+// you must follow up with buildSetGroupSel(slot) - even if the slot was
+// already selected. The reference workflow is the two-command sequence:
+//   buildSetGroupId(slot, new_id);
+//   buildSetGroupSel(slot);
 static size_t buildSetGroupId(uint16_t* outBuf, size_t outBufCapacity,
                               uint8_t groupSel, uint8_t newGroupId,
                               uint8_t restrictGroupId = 0) {
@@ -190,6 +197,24 @@ static size_t buildSetGroupId(uint16_t* outBuf, size_t outBufCapacity,
   buf[5] = groupSel & 0x07;
   buf[6] = newGroupId & 0x1F;
   buf[7] = 2;                 // action_id
+  buf[8] = restrictGroupId & 0x1F;
+  return encodeBufferToUs(buf, 9, outBuf, outBufCapacity);
+}
+
+// Select which slot's stored group ID is the bracelet's active filter.
+// Pair with buildSetGroupId after writing a new value into a slot.
+static size_t buildSetGroupSel(uint16_t* outBuf, size_t outBufCapacity,
+                               uint8_t groupSel,
+                               uint8_t restrictGroupId = 0) {
+  uint8_t buf[9];
+  buf[0] = 0x80;
+  buf[1] = 0x00;
+  buf[2] = (0b111 << 1) | 1;
+  buf[3] = 0;
+  buf[4] = 0;
+  buf[5] = groupSel & 0x07;
+  buf[6] = 0;
+  buf[7] = 1;                 // action_id (SetGroupSel)
   buf[8] = restrictGroupId & 0x1F;
   return encodeBufferToUs(buf, 9, outBuf, outBufCapacity);
 }

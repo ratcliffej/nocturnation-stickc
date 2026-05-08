@@ -12,6 +12,7 @@
 #include "modes/mode_machine.h"
 #include "effects/effects.h"
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 
@@ -57,6 +58,25 @@ bool is_persisted_runtime_mode(ModeId m) {
         || m == ModeId::Test;
 }
 
+// Audio-Live calibration. Per-band log2 floor/ceiling for the spectrum
+// bars, plus an auto-calibrate flag. Defaults below are tuned from
+// Jason's StickC + Vengaboys reference; sound-check overrides them with
+// per-device values, and auto mode bypasses these in favour of rolling
+// min/max during AudioLive use (room/audience-adaptive).
+struct AudioCalibration {
+    float floor[4];        // B, M, T, R log2 floor
+    float ceil [4];        // B, M, T, R log2 ceiling
+    bool  auto_enabled;
+};
+
+constexpr AudioCalibration kCalibrationDefault = {
+    /*floor=*/ { 14.0f, 14.0f, 15.0f,  5.0f },
+    /*ceil =*/ { 19.0f, 20.0f, 21.0f, 10.0f },
+    /*auto =*/ false,
+};
+
+AudioCalibration s_calibration = kCalibrationDefault;
+
 #ifdef ARDUINO
 ModeId load_last_runtime_mode() {
     Preferences prefs;
@@ -74,9 +94,46 @@ void save_last_runtime_mode(ModeId m) {
     prefs.putUChar("last_mode", (uint8_t)m);
     prefs.end();
 }
+
+bool load_ir_enabled() {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/true);
+    bool e = prefs.getBool("ir_en", true);     // default ON
+    prefs.end();
+    return e;
+}
+
+void save_ir_enabled(bool e) {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/false);
+    prefs.putBool("ir_en", e);
+    prefs.end();
+}
+
+AudioCalibration load_calibration() {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/true);
+    AudioCalibration c = kCalibrationDefault;
+    if (prefs.getBytesLength("cal") == sizeof(AudioCalibration)) {
+        prefs.getBytes("cal", &c, sizeof(AudioCalibration));
+    }
+    prefs.end();
+    return c;
+}
+
+void save_calibration(const AudioCalibration& c) {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/false);
+    prefs.putBytes("cal", &c, sizeof(AudioCalibration));
+    prefs.end();
+}
 #else
-ModeId load_last_runtime_mode() { return kDefaultRuntimeMode; }
-void   save_last_runtime_mode(ModeId)  {}
+ModeId           load_last_runtime_mode() { return kDefaultRuntimeMode; }
+void             save_last_runtime_mode(ModeId)  {}
+bool             load_ir_enabled()        { return true; }
+void             save_ir_enabled(bool)    {}
+AudioCalibration load_calibration()       { return kCalibrationDefault; }
+void             save_calibration(const AudioCalibration&) {}
 #endif
 
 }  // namespace
@@ -187,13 +244,15 @@ public:
     const char* name() const override { return "Boot"; }
 
     void enter() override {
-        start_ms_ = millis();
-        last_drawn_seconds_ = 0xFF;     // force first draw
-        draw();
+        start_ms_           = millis();
+        last_drawn_seconds_ = 0xFF;
+        last_drawn_pulse_   = 0xFF;
+        draw_static();
     }
 
     void loop_tick() override {
-        const uint32_t elapsed = millis() - start_ms_;
+        const uint32_t now     = millis();
+        const uint32_t elapsed = now - start_ms_;
         if (elapsed >= kBootCountdownMs) {
             ModeMachine::switch_to(s_last_runtime);
             return;
@@ -201,7 +260,17 @@ public:
         const uint8_t remaining = (uint8_t)((kBootCountdownMs - elapsed) / 1000) + 1;
         if (remaining != last_drawn_seconds_) {
             last_drawn_seconds_ = remaining;
-            draw();
+            draw_countdown(remaining);
+        }
+        // Pulse the brand-mark N. 16 phases per cycle * 120 ms each gives
+        // a ~2 s breathe. Anchor to start_ms_ so phase 0 (full brightness)
+        // is always the first frame after entering Boot - the splash opens
+        // bright instead of mid-cycle. Redraw only the single character
+        // cell so there's no flicker on the rest of the splash.
+        const uint8_t step = (uint8_t)(((now - start_ms_) / 120) & 0x0F);
+        if (step != last_drawn_pulse_) {
+            last_drawn_pulse_ = step;
+            draw_pulsing_n(step);
         }
     }
 
@@ -214,25 +283,71 @@ public:
 private:
     uint32_t start_ms_           = 0;
     uint8_t  last_drawn_seconds_ = 0xFF;
+    uint8_t  last_drawn_pulse_   = 0xFF;
 
-    void draw() {
+    // Layout. Title is "Noctur" + pulsing "N" + "ation" at size 3 so the
+    // brand mark matches the website banner. Size-3 char cells are 18 px
+    // wide; 12 chars * 18 = 216 px, leaves ~12 px margin on each side of
+    // the 240 px display.
+    static constexpr int kTitleX  = 12;
+    static constexpr int kTitleY  = 20;
+    static constexpr int kCharW3  = 18;
+    static constexpr int kPulseNX = kTitleX + 6 * kCharW3;   // start of 2nd N
+
+    // Cosine-shaped brightness ramp over 16 phases, scaled to [178, 255]
+    // - peaks at 255 (full bright) on phase 0 and dips ~30% to 178 on
+    // phase 8. The N stays clearly visible the whole cycle; it never
+    // dims to black. Orange/yellow tone (full red, ~half green, no blue).
+    static uint16_t pulse_color(uint8_t step) {
+        static constexpr uint8_t kBrightness[16] = {
+            255, 252, 244, 231, 217, 202, 189, 181,
+            178, 181, 189, 202, 217, 231, 244, 252,
+        };
+        const uint8_t b  = kBrightness[step & 0x0F];
+        const uint8_t r5 = b >> 3;                          // 0..31
+        const uint8_t g6 = ((uint16_t)b * 50 / 100) >> 2;   // ~half intensity
+        return ((uint16_t)r5 << 11) | ((uint16_t)g6 << 5);
+    }
+
+    static const char* mode_label(ModeId m) {
+        switch (m) {
+            case ModeId::AutonomousMaster: return "Master";
+            case ModeId::Slave:            return "Slave";
+            case ModeId::Config:           return "Config";
+            case ModeId::Test:             return "Test";
+            default:                       return "?";
+        }
+    }
+
+    void draw_static() {
         DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
+        // Brand title. "Noctur" + (pulsing N drawn separately) + "ation".
         DAL::fire_display_show_text("local", DisplayShowTextEvent{
-            10, 10, "NocturNation", WHITE, BLACK, 3});
-
-        const uint32_t elapsed   = millis() - start_ms_;
-        const uint32_t remaining = (kBootCountdownMs > elapsed)
-                                       ? (kBootCountdownMs - elapsed) : 0;
-        const uint8_t  seconds   = (uint8_t)(remaining / 1000) + 1;
-        char buf[40];
-        std::snprintf(buf, sizeof(buf),
-                      "Default: %s\nin %u s",
-                      "Master", (unsigned)seconds);
+            kTitleX, kTitleY, "Noctur", WHITE, BLACK, 3});
         DAL::fire_display_show_text("local", DisplayShowTextEvent{
-            10, 50, buf, WHITE, BLACK, 2});
+            kTitleX + 7 * kCharW3, kTitleY, "ation", WHITE, BLACK, 3});
 
         DAL::fire_display_show_text("local", DisplayShowTextEvent{
-            10, 110, "press any btn for menu", WHITE, BLACK, 1});
+            kTitleX, kTitleY + 28, "Open-source crowd lighting.",
+            WHITE, BLACK, 1});
+
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            kTitleX, 115, "press any btn for menu", WHITE, BLACK, 1});
+    }
+
+    void draw_countdown(uint8_t seconds) {
+        // Fixed-width format ("X in N s" - one digit) so subsequent draws
+        // overwrite the previous text cell-for-cell with no flicker.
+        char buf[24];
+        std::snprintf(buf, sizeof(buf), "%s in %u s",
+                      mode_label(s_last_runtime), (unsigned)seconds);
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            kTitleX, 75, buf, WHITE, BLACK, 2});
+    }
+
+    void draw_pulsing_n(uint8_t step) {
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            kPulseNX, kTitleY, "N", pulse_color(step), BLACK, 3});
     }
 };
 
@@ -493,9 +608,20 @@ private:
         DAL::fire_display_show_text("local", DisplayShowTextEvent{
             10, 40, bpm, WHITE, BLACK, 2});
 
-        char batt[24];
-        std::snprintf(batt, sizeof(batt), " Batt: %d%%",
-                      DAL::battery_level("local"));
+        // Batt + IR fire counter on one line. The IR count is 4-char max
+        // (k/M suffix above 10000) so the whole line stays within 240 px
+        // at size 2.
+        const uint32_t ir = DAL::driver_send_count("ir-pixmob");
+        char ir_buf[8];
+        if      (ir >= 1000000) std::snprintf(ir_buf, sizeof(ir_buf), "%luM",
+                                              (unsigned long)(ir / 1000000));
+        else if (ir >=   10000) std::snprintf(ir_buf, sizeof(ir_buf), "%luk",
+                                              (unsigned long)(ir / 1000));
+        else                    std::snprintf(ir_buf, sizeof(ir_buf), "%lu",
+                                              (unsigned long)ir);
+        char batt[40];
+        std::snprintf(batt, sizeof(batt), "Batt: %d%% IR: %s",
+                      DAL::battery_level("local"), ir_buf);
         DAL::fire_display_show_text("local", DisplayShowTextEvent{
             10, 70, batt, WHITE, BLACK, 2});
 
@@ -557,7 +683,21 @@ public:
 };
 
 // =============================================================================
-// ConfigMode - stub. Full §8.4 config tree lands in Epic 3 UI.
+// ConfigMode - the §8.4 config tree.
+//
+// Two-level navigation: top-level submenu list -> submenu items. Btn2
+// cycles selection at either level. Btn1 enters a submenu from the top
+// level, and activates an item within a submenu (toggling, cycling, or
+// triggering depending on item type). PWR-hold pops one level (submenu
+// -> top, top -> mode menu).
+//
+// Pre-Epic-4 / pre-Epic-7 status: the menu *shape* is built out per spec
+// §8.4 so users can see what config will exist. Functional leaves at
+// this milestone live under System (firmware version, default boot mode
+// info, factory reset, battery status). Audio / IR / ESP-NOW / WiFi /
+// DMX submenus list their planned items as labels but are non-
+// interactive; they fill in when the relevant transport / capability
+// epics ship.
 // =============================================================================
 
 class ConfigMode : public Mode {
@@ -566,21 +706,523 @@ public:
     const char* name() const override { return "Config"; }
 
     void enter() override {
-        DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
-        DAL::fire_display_show_text("local", DisplayShowTextEvent{
-            10, 10, "Config", WHITE, BLACK, 3});
-        DAL::fire_display_show_text("local", DisplayShowTextEvent{
-            10, 50, "TBD (Epic 3 UI)", WHITE, BLACK, 2});
-        DAL::fire_display_show_text("local", DisplayShowTextEvent{
-            10, 128, "hold PWR for menu", WHITE, BLACK, 1});
+        level_         = Level::Top;
+        active_sub_    = SubMenu::None;
+        top_selected_  = 0;
+        sub_selected_  = 0;
+        confirm_until_ms_ = 0;
+        last_drawn_battery_ = -2;     // force first battery redraw
+        draw();
+    }
+
+    void loop_tick() override {
+        // System submenu has live read-outs (battery percent); refresh
+        // every ~500 ms when shown. Confirmation flash for factory reset
+        // also clears here.
+        const uint32_t now = millis();
+        if (confirm_until_ms_ != 0 && now >= confirm_until_ms_) {
+            confirm_until_ms_ = 0;
+            draw();
+            return;
+        }
+        if (level_ == Level::Sub && active_sub_ == SubMenu::System) {
+            const int batt = DAL::battery_level("local");
+            if (batt != last_drawn_battery_) {
+                last_drawn_battery_ = batt;
+                draw();
+            }
+        }
     }
 
     void on_button_event(const ButtonPressEvent& ev) override {
+        if (ev.kind != ButtonEvent::Pressed
+         && ev.kind != ButtonEvent::LongPressed) return;
+
+        // PWR-hold pops one level. PixMob's two-level structure (menu ->
+        // SetGroupId/GroupTarget workflow) gets an extra pop step before
+        // it returns to the Config top-level.
         if (ev.id == ButtonId::Btn3 && ev.kind == ButtonEvent::LongPressed) {
-            ModeMachine::switch_to(ModeId::Menu);
+            if (level_ == Level::Top) {
+                ModeMachine::switch_to(ModeId::Menu);
+            } else if (active_sub_ == SubMenu::PixMob
+                    && pixmob_state_ != PixMobState::Menu) {
+                pixmob_state_     = PixMobState::Menu;
+                confirm_until_ms_ = 0;
+                draw();
+            } else {
+                level_      = Level::Top;
+                active_sub_ = SubMenu::None;
+                draw();
+            }
+            return;
+        }
+
+        if (ev.kind != ButtonEvent::Pressed) return;
+        if (level_ == Level::Top) handle_top(ev);
+        else                       handle_sub(ev);
+    }
+
+private:
+    enum class Level   : uint8_t { Top, Sub };
+    enum class SubMenu : uint8_t {
+        None = 0, Audio, IR, EspNow, WiFi, Dmx, PixMob, System,
+    };
+
+    // Within the PixMob submenu, drilling into one of its items enters a
+    // workflow sub-state with its own button bindings. Menu = the list
+    // (Set Group ID / Group Target); SetGroupId / GroupTarget = the two
+    // workflow screens.
+    enum class PixMobState : uint8_t { Menu, SetGroupId, GroupTarget };
+
+    struct TopEntry {
+        SubMenu     target;
+        const char* label;
+    };
+    static constexpr TopEntry kTop[7] = {
+        { SubMenu::Audio,  "Audio"   },
+        { SubMenu::IR,     "IR"      },
+        { SubMenu::EspNow, "ESP-NOW" },
+        { SubMenu::WiFi,   "WiFi"    },
+        { SubMenu::Dmx,    "DMX"     },
+        { SubMenu::PixMob, "PixMob"  },
+        { SubMenu::System, "System"  },
+    };
+    static constexpr size_t kTopCount = sizeof(kTop) / sizeof(kTop[0]);
+
+    Level       level_              = Level::Top;
+    SubMenu     active_sub_         = SubMenu::None;
+    size_t      top_selected_       = 0;
+    size_t      sub_selected_       = 0;
+    uint32_t    confirm_until_ms_   = 0;
+    int         last_drawn_battery_ = -2;
+
+    PixMobState pixmob_state_       = PixMobState::Menu;
+    size_t      pixmob_selected_    = 0;
+    uint8_t     pixmob_target_group_ = 1;
+    static constexpr size_t kPixMobItemCount = 2;
+    static constexpr uint32_t kConfirmFlashMs = 800;     // "Sent!" linger
+
+    // -------------------------------------------------------------------------
+    // Top-level navigation
+    // -------------------------------------------------------------------------
+
+    void handle_top(const ButtonPressEvent& ev) {
+        if (ev.id == ButtonId::Btn2) {
+            top_selected_ = (top_selected_ + 1) % kTopCount;
+            draw();
+        } else if (ev.id == ButtonId::Btn1) {
+            level_         = Level::Sub;
+            active_sub_    = kTop[top_selected_].target;
+            sub_selected_  = 0;
+            last_drawn_battery_ = -2;
+            // Fresh entry into PixMob always lands on the menu screen
+            // (not in a previous workflow).
+            pixmob_state_     = PixMobState::Menu;
+            pixmob_selected_  = 0;
+            confirm_until_ms_ = 0;
+            draw();
         }
     }
+
+    void draw_top() {
+        DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 5, "Config", WHITE, BLACK, 2});
+        for (size_t i = 0; i < kTopCount; ++i) {
+            const bool sel = (i == top_selected_);
+            char buf[24];
+            std::snprintf(buf, sizeof(buf), "%s %s",
+                          sel ? ">" : " ", kTop[i].label);
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 22 + (int)i * 16, buf,
+                sel ? YELLOW : WHITE, BLACK, 2});
+        }
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 122, "B: cycle  A: enter  PWR: back",
+            WHITE, BLACK, 1});
+    }
+
+    // -------------------------------------------------------------------------
+    // Submenu dispatch
+    // -------------------------------------------------------------------------
+
+    void handle_sub(const ButtonPressEvent& ev) {
+        switch (active_sub_) {
+            case SubMenu::System: handle_system(ev); break;
+            case SubMenu::IR:     handle_ir(ev);     break;
+            case SubMenu::PixMob: handle_pixmob(ev); break;
+            case SubMenu::Audio:
+            case SubMenu::EspNow:
+            case SubMenu::WiFi:
+            case SubMenu::Dmx:
+                // Stub submenus accept Btn2 cycling for read-only browsing
+                // of their planned-items list, but Btn1 is a no-op until
+                // the relevant Epic wires real behaviour in.
+                if (ev.id == ButtonId::Btn2) {
+                    sub_selected_ = (sub_selected_ + 1) % stub_item_count();
+                    draw();
+                }
+                break;
+            default: break;
+        }
+    }
+
+    void draw_sub() {
+        switch (active_sub_) {
+            case SubMenu::Audio:  draw_stub("Audio",   kAudioItems,  kAudioItemCount,  "Epic 3"); break;
+            case SubMenu::IR:     draw_ir(); break;
+            case SubMenu::EspNow: draw_stub("ESP-NOW", kEspNowItems, kEspNowItemCount, "Epic 4"); break;
+            case SubMenu::WiFi:   draw_stub("WiFi",    kWifiItems,   kWifiItemCount,   "Epic 4"); break;
+            case SubMenu::Dmx:    draw_stub("DMX",     kDmxItems,    kDmxItemCount,    "Epic 7"); break;
+            case SubMenu::PixMob: draw_pixmob(); break;
+            case SubMenu::System: draw_system(); break;
+            default: break;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Stub-submenu data (planned items per spec §8.4; non-interactive)
+    // -------------------------------------------------------------------------
+
+    static constexpr const char* kAudioItems[] = {
+        "Enable / Disable", "Show FFT spectrum", "Show beat meter", "Tuning",
+    };
+    static constexpr size_t kAudioItemCount = sizeof(kAudioItems) / sizeof(kAudioItems[0]);
+
+    static constexpr const char* kIrItems[] = {
+        "Enable / Disable", "Protocol", "Group ID assignment",
+    };
+    static constexpr size_t kIrItemCount = sizeof(kIrItems) / sizeof(kIrItems[0]);
+
+    static constexpr const char* kEspNowItems[] = {
+        "Enable / Disable", "Channel number", "Source ID",
+    };
+    static constexpr size_t kEspNowItemCount = sizeof(kEspNowItems) / sizeof(kEspNowItems[0]);
+
+    static constexpr const char* kWifiItems[] = {
+        "Enable / Disable", "SSID", "Password", "Soft-AP mode",
+    };
+    static constexpr size_t kWifiItemCount = sizeof(kWifiItems) / sizeof(kWifiItems[0]);
+
+    static constexpr const char* kDmxItems[] = {
+        "Carrier", "Universe ID", "Channel mapping",
+    };
+    static constexpr size_t kDmxItemCount = sizeof(kDmxItems) / sizeof(kDmxItems[0]);
+
+    size_t stub_item_count() const {
+        switch (active_sub_) {
+            case SubMenu::Audio:  return kAudioItemCount;
+            case SubMenu::IR:     return kIrItemCount;
+            case SubMenu::EspNow: return kEspNowItemCount;
+            case SubMenu::WiFi:   return kWifiItemCount;
+            case SubMenu::Dmx:    return kDmxItemCount;
+            default:              return 1;
+        }
+    }
+
+    void draw_stub(const char* title,
+                   const char* const* items, size_t count,
+                   const char* epic_tag) {
+        DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 5, title, WHITE, BLACK, 2});
+        char banner[24];
+        std::snprintf(banner, sizeof(banner), "TBD %s", epic_tag);
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            150, 10, banner, YELLOW, BLACK, 1});
+
+        for (size_t i = 0; i < count; ++i) {
+            const bool sel = (i == sub_selected_);
+            char buf[40];
+            std::snprintf(buf, sizeof(buf), "%s %s",
+                          sel ? ">" : " ", items[i]);
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 30 + (int)i * 16, buf,
+                sel ? YELLOW : WHITE, BLACK, 2});
+        }
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 122, "B: cycle  PWR: back",
+            WHITE, BLACK, 1});
+    }
+
+    // -------------------------------------------------------------------------
+    // IR submenu (functional: Enable toggles + persists; Protocol/GroupID info)
+    // -------------------------------------------------------------------------
+
+    enum class IRItem : uint8_t {
+        EnableDisable = 0,
+        Protocol,
+        GroupIdAssignment,
+    };
+    static constexpr size_t kIrFunctionalItemCount = 3;
+
+    void handle_ir(const ButtonPressEvent& ev) {
+        if (ev.id == ButtonId::Btn2) {
+            sub_selected_ = (sub_selected_ + 1) % kIrFunctionalItemCount;
+            draw();
+            return;
+        }
+        if (ev.id == ButtonId::Btn1
+         && (IRItem)sub_selected_ == IRItem::EnableDisable) {
+            const bool next = !DAL::driver_enabled("ir-pixmob");
+            DAL::set_driver_enabled("ir-pixmob", next);
+            save_ir_enabled(next);
+            draw();
+        }
+        // Protocol and GroupIdAssignment are info-only - no Btn1 action.
+    }
+
+    void draw_ir() {
+        DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 5, "IR", WHITE, BLACK, 2});
+
+        char ena[24];
+        std::snprintf(ena, sizeof(ena), "Enable: %s",
+                      DAL::driver_enabled("ir-pixmob") ? "ON" : "OFF");
+        const char* lines[kIrFunctionalItemCount] = {
+            ena,
+            "Protocol: PixMob",
+            "Group: Test menu",
+        };
+
+        for (size_t i = 0; i < kIrFunctionalItemCount; ++i) {
+            const bool sel = (i == sub_selected_);
+            char buf[40];
+            std::snprintf(buf, sizeof(buf), "%s %s",
+                          sel ? ">" : " ", lines[i]);
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 30 + (int)i * 16, buf,
+                sel ? YELLOW : WHITE, BLACK, 2});
+        }
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 122, "B: cycle  A: act  PWR: back",
+            WHITE, BLACK, 1});
+    }
+
+    // -------------------------------------------------------------------------
+    // PixMob submenu (PixMob-protocol-specific commands moved out of Test):
+    //   Set Group ID    bracelet-setup helper, fires SetGroupId+SetGroupSel
+    //   Group Target    Btn1 advances + fires to groups 1..5 in turn
+    //
+    // Two-level navigation within the submenu: menu lists the items, Btn1
+    // drills into a workflow screen. PWR-hold pops one level (workflow ->
+    // menu -> Config top).
+    // -------------------------------------------------------------------------
+
+    void handle_pixmob(const ButtonPressEvent& ev) {
+        switch (pixmob_state_) {
+            case PixMobState::Menu:
+                if (ev.id == ButtonId::Btn2) {
+                    pixmob_selected_ = (pixmob_selected_ + 1) % kPixMobItemCount;
+                    draw();
+                } else if (ev.id == ButtonId::Btn1) {
+                    pixmob_state_ = (pixmob_selected_ == 0)
+                                        ? PixMobState::SetGroupId
+                                        : PixMobState::GroupTarget;
+                    confirm_until_ms_ = 0;
+                    draw();
+                }
+                break;
+            case PixMobState::SetGroupId:
+                if (ev.id == ButtonId::Btn2) {
+                    pixmob_target_group_ = (pixmob_target_group_ % 5) + 1;
+                    draw();
+                } else if (ev.id == ButtonId::Btn1) {
+                    // Target name is irrelevant - the AssignDeviceGroup
+                    // dispatch ignores device group_id and uses the event's
+                    // new_group_id payload.
+                    const bool ok = DAL::fire_assign_device_group(
+                        "all-pixmobs",
+                        AssignDeviceGroupEvent{pixmob_target_group_});
+                    if (ok) confirm_until_ms_ = millis() + kConfirmFlashMs;
+                    draw();
+                }
+                break;
+            case PixMobState::GroupTarget:
+                if (ev.id == ButtonId::Btn1) {
+                    char target[16];
+                    std::snprintf(target, sizeof(target),
+                                  "group-%u", (unsigned)pixmob_target_group_);
+                    DAL::fire_rgb_pulse(target, RgbPulseEvent{
+                        0xFF, 0xFF, 0xFF,
+                        pixmob::T_32_MS, pixmob::T_96_MS, pixmob::T_96_MS,
+                        pixmob::CHANCE_100});
+                    pixmob_target_group_ = (pixmob_target_group_ % 5) + 1;
+                    draw();
+                }
+                break;
+        }
+    }
+
+    void draw_pixmob() {
+        switch (pixmob_state_) {
+            case PixMobState::Menu:        draw_pixmob_menu();      break;
+            case PixMobState::SetGroupId:  draw_pixmob_set_group(); break;
+            case PixMobState::GroupTarget: draw_pixmob_group_tgt(); break;
+        }
+    }
+
+    void draw_pixmob_menu() {
+        DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 5, "PixMob", WHITE, BLACK, 2});
+
+        const char* items[kPixMobItemCount] = { "Set Group ID", "Group Test" };
+        for (size_t i = 0; i < kPixMobItemCount; ++i) {
+            const bool sel = (i == pixmob_selected_);
+            char buf[32];
+            std::snprintf(buf, sizeof(buf), "%s %s",
+                          sel ? ">" : " ", items[i]);
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 30 + (int)i * 16, buf,
+                sel ? YELLOW : WHITE, BLACK, 2});
+        }
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 122, "B: cycle  A: enter  PWR: back",
+            WHITE, BLACK, 1});
+    }
+
+    void draw_pixmob_set_group() {
+        DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 5, "Set Group ID", WHITE, BLACK, 2});
+        char buf[24];
+        std::snprintf(buf, sizeof(buf), "New group: %u",
+                      (unsigned)pixmob_target_group_);
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 40, buf, WHITE, BLACK, 2});
+        if (confirm_until_ms_ != 0) {
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 70, "Sent!", GREEN, BLACK, 2});
+        } else {
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 70, "isolate target!", YELLOW, BLACK, 1});
+        }
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 95, "B: cycle  A: send", WHITE, BLACK, 1});
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 128, "PWR-hold: back", WHITE, BLACK, 1});
+    }
+
+    void draw_pixmob_group_tgt() {
+        DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 5, "Group Test", WHITE, BLACK, 2});
+        char buf[24];
+        std::snprintf(buf, sizeof(buf), "Next: group %u",
+                      (unsigned)pixmob_target_group_);
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 50, buf, WHITE, BLACK, 2});
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 90, "A: fire + advance", WHITE, BLACK, 1});
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 128, "PWR-hold: back", WHITE, BLACK, 1});
+    }
+
+    // -------------------------------------------------------------------------
+    // System submenu (functional)
+    // -------------------------------------------------------------------------
+
+    enum class SystemItem : uint8_t {
+        FirmwareVersion = 0,
+        DefaultBootMode,
+        FactoryReset,
+        BatteryStatus,
+    };
+    static constexpr size_t kSystemItemCount = 4;
+
+    void handle_system(const ButtonPressEvent& ev) {
+        if (ev.id == ButtonId::Btn2) {
+            sub_selected_ = (sub_selected_ + 1) % kSystemItemCount;
+            draw();
+            return;
+        }
+        if (ev.id == ButtonId::Btn1) {
+            switch ((SystemItem)sub_selected_) {
+                case SystemItem::FactoryReset:
+                    factory_reset();
+                    confirm_until_ms_ = millis() + 800;   // "done" linger
+                    draw();
+                    break;
+                default:
+                    // Info-only items - no-op on Btn1.
+                    break;
+            }
+        }
+    }
+
+    void factory_reset() {
+#ifdef ARDUINO
+        Preferences prefs;
+        prefs.begin("noct", /*readOnly=*/false);
+        prefs.clear();
+        prefs.end();
+#endif
+        // s_last_runtime stays as in-memory state until reboot.
+    }
+
+    void draw_system() {
+        DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 5, "System", WHITE, BLACK, 2});
+
+        char fw[28]; std::snprintf(fw, sizeof(fw), "Firmware: %s", kFirmwareVersion);
+        char dm[28]; std::snprintf(dm, sizeof(dm), "Default: %s", mode_label_short(s_last_runtime));
+        char br[28];
+        const int batt = last_drawn_battery_ >= -1 ? last_drawn_battery_
+                                                    : DAL::battery_level("local");
+        if (batt < 0) std::snprintf(br, sizeof(br), "Batt: --");
+        else          std::snprintf(br, sizeof(br), "Batt: %d%%", batt);
+
+        const char* lines[kSystemItemCount] = {
+            fw,
+            dm,
+            confirm_until_ms_ != 0 ? "Reset complete" : "Factory reset",
+            br,
+        };
+        for (size_t i = 0; i < kSystemItemCount; ++i) {
+            const bool sel = (i == sub_selected_);
+            char buf[40];
+            std::snprintf(buf, sizeof(buf), "%s %s",
+                          sel ? ">" : " ", lines[i]);
+            const uint16_t fg = (i == (size_t)SystemItem::FactoryReset
+                                  && confirm_until_ms_ != 0) ? GREEN
+                              : sel                          ? YELLOW
+                              :                                WHITE;
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 30 + (int)i * 16, buf, fg, BLACK, 2});
+        }
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 122, "B: cycle  A: act  PWR: back",
+            WHITE, BLACK, 1});
+    }
+
+    static const char* mode_label_short(ModeId m) {
+        switch (m) {
+            case ModeId::AutonomousMaster: return "Master";
+            case ModeId::Slave:            return "Slave";
+            case ModeId::Config:           return "Config";
+            case ModeId::Test:             return "Test";
+            default:                       return "?";
+        }
+    }
+
+    static constexpr const char* kFirmwareVersion = "1.0.0";
+
+    void draw() {
+        if (level_ == Level::Top) draw_top();
+        else                       draw_sub();
+    }
 };
+
+constexpr ConfigMode::TopEntry ConfigMode::kTop[7];
+constexpr const char* ConfigMode::kAudioItems[];
+constexpr const char* ConfigMode::kIrItems[];
+constexpr const char* ConfigMode::kEspNowItems[];
+constexpr const char* ConfigMode::kWifiItems[];
+constexpr const char* ConfigMode::kDmxItems[];
+constexpr const char* ConfigMode::kFirmwareVersion;
 
 // =============================================================================
 // TestMode - the §8.5 test-mode catalogue plus a Set Group ID helper.
@@ -607,6 +1249,12 @@ public:
 namespace {
 
 struct PaletteColour { uint8_t r, g, b; const char* name; };
+
+// Pulse / Fade tests want explicit colour cycling including red. Sparkle
+// reads a separate palette that excludes pure red - aesthetically Sparkle
+// is meant to read as cool twinkles, and the bracelet's red LED also
+// runs slightly hotter than green/blue at the same drive level, so any
+// red-bearing colour reads warm during the fade tail.
 constexpr PaletteColour kTestPalette[] = {
     { 0xFF, 0x00, 0x00, "RED"   },
     { 0x00, 0xFF, 0x00, "GREEN" },
@@ -615,12 +1263,20 @@ constexpr PaletteColour kTestPalette[] = {
 };
 constexpr size_t kTestPaletteCount = sizeof(kTestPalette) / sizeof(kTestPalette[0]);
 
+constexpr PaletteColour kSparklePalette[] = {
+    { 0xFF, 0xFF, 0xFF, "WHITE" },
+    { 0x00, 0xFF, 0x00, "GREEN" },
+    { 0x00, 0x00, 0xFF, "BLUE"  },
+    { 0x00, 0xFF, 0xFF, "CYAN"  },
+};
+constexpr size_t kSparklePaletteCount =
+    sizeof(kSparklePalette) / sizeof(kSparklePalette[0]);
+
 constexpr uint32_t kPulseStepMs       = 1000;   // 1 Hz colour cycle
 constexpr uint32_t kFadeStepMs        = 1000;
 constexpr uint32_t kRainbowDurationMs = 6000;
 constexpr uint32_t kSparkleDurationMs = 10000;
 constexpr uint32_t kSparkleStepMs     = 200;
-constexpr uint32_t kConfirmFlashMs    = 800;    // "Sent!" linger time
 
 }  // namespace
 
@@ -630,11 +1286,15 @@ public:
     const char* name() const override { return "Test"; }
 
     void enter() override {
+        menu_selected_    = 0;
+        menu_view_offset_ = 0;
         return_to_menu();
     }
 
     void exit() override {
         if (active_test_ == SubTest::RainbowTest) rainbow_.exit();
+        if (active_test_ == SubTest::AudioLive
+         || active_test_ == SubTest::Calibrate)   DAL::stop_audio_input("local");
         active_test_ = SubTest::None;
     }
 
@@ -645,7 +1305,8 @@ public:
             case SubTest::FadeTest:    tick_pulse_or_fade(now, /*fade=*/true);  break;
             case SubTest::RainbowTest: tick_rainbow(now);                        break;
             case SubTest::SparkleTest: tick_sparkle(now);                        break;
-            case SubTest::SetGroupId:  tick_confirm_flash(now);                  break;
+            case SubTest::AudioLive:   tick_audio_live(now);                     break;
+            case SubTest::Calibrate:   tick_calibrate(now);                      break;
             default: break;
         }
     }
@@ -653,6 +1314,14 @@ public:
     void on_button_event(const ButtonPressEvent& ev) override {
         if (active_test_ == SubTest::None) handle_button_at_menu(ev);
         else                                handle_button_in_test(ev);
+    }
+
+    void on_audio_frame(const AudioFrameEvent& ev) override {
+        if (active_test_ == SubTest::AudioLive) {
+            process_audio_frame(ev);
+        } else if (active_test_ == SubTest::Calibrate) {
+            on_audio_frame_calibrate(ev);
+        }
     }
 
 private:
@@ -663,8 +1332,8 @@ private:
         RainbowTest,
         SparkleTest,
         WhiteOut,
-        GroupTarget,
-        SetGroupId,
+        AudioLive,
+        Calibrate,
     };
 
     struct MenuItem { SubTest test; const char* label; };
@@ -674,18 +1343,44 @@ private:
         { SubTest::RainbowTest, "Rainbow"      },
         { SubTest::SparkleTest, "Sparkle"      },
         { SubTest::WhiteOut,    "White Out"    },
-        { SubTest::GroupTarget, "Group Target" },
-        { SubTest::SetGroupId,  "Set Group ID" },
+        { SubTest::AudioLive,   "Audio Live"   },
+        { SubTest::Calibrate,   "Calibrate"    },
     };
     static constexpr size_t kSubTestCount = sizeof(kSubTests) / sizeof(kSubTests[0]);
 
-    SubTest  active_test_   = SubTest::None;
-    size_t   menu_selected_ = 0;
-    uint8_t  step_index_    = 0;
+    SubTest  active_test_      = SubTest::None;
+    size_t   menu_selected_    = 0;
+    size_t   menu_view_offset_ = 0;     // top of visible window for scrolling
+    uint8_t  step_index_       = 0;
     uint32_t test_start_ms_ = 0;
     uint32_t last_step_ms_  = 0;
-    uint32_t confirm_until_ms_ = 0;
-    uint8_t  target_group_  = 1;     // for GroupTarget + SetGroupId
+
+    // Audio Live state - mirror of AutonomousMaster's beat detection plus
+    // the latest band energies for the spectrum bar render. No IR fires
+    // from this view; it's purely for inspecting what the mic is picking
+    // up. Fields prefixed `audio_` to avoid clashing with the cycle-test
+    // step_index_ / last_step_ms_ above (those get reused per launch).
+    float    audio_bass_           = 0.0f;
+    float    audio_mid_            = 0.0f;
+    float    audio_treble_         = 0.0f;
+    float    audio_rms_            = 0.0f;
+    float    audio_baseline_flux_  = 100.0f;
+    float    audio_prev_bass_      = 0.0f;
+    float    audio_current_flux_   = 0.0f;
+    uint32_t audio_last_beat_ms_   = 0;
+    uint32_t audio_beat_flash_until_ = 0;
+    float    audio_bpm_            = 0.0f;
+    uint32_t audio_ibi_buffer_[8]  = {0};
+    size_t   audio_ibi_index_      = 0;
+    size_t   audio_ibi_count_      = 0;
+
+    // Auto-cal rolling per-band min/max with leak. Used by AudioLive when
+    // s_calibration.auto_enabled is true. Initialised wide (huge min, tiny
+    // max) so the first frame replaces them; thereafter min creeps up at
+    // ~0.5%/sec and max creeps down at ~0.5%/sec, so the bars adapt to
+    // the room over a few seconds without forgetting too quickly.
+    float    auto_min_[4]          = { 1.0e9f, 1.0e9f, 1.0e9f, 1.0e9f };
+    float    auto_max_[4]          = { 1.0f,   1.0f,   1.0f,   1.0f   };
 
     effects::Rainbow rainbow_{"all-pixmobs", 0.5f, 1.0f};
 
@@ -695,25 +1390,43 @@ private:
 
     void return_to_menu() {
         if (active_test_ == SubTest::RainbowTest) rainbow_.exit();
+        if (active_test_ == SubTest::AudioLive
+         || active_test_ == SubTest::Calibrate)   DAL::stop_audio_input("local");
         active_test_ = SubTest::None;
         draw_menu();
     }
 
+    static constexpr size_t kMenuVisible = 8;
+
     void draw_menu() {
         DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
-        DAL::fire_display_show_text("local", DisplayShowTextEvent{
-            10, 5, "Test Mode", WHITE, BLACK, 2});
-        for (size_t i = 0; i < kSubTestCount; ++i) {
+        // 8 items at size 2 + 16 px line spacing = 128 px content + 4 px
+        // top margin = 132 px, just inside the 135 px display. When the
+        // sub-test list grows past 8, the cursor scrolls the visible
+        // window via menu_view_offset_. Title and bottom hint dropped to
+        // make room; PWR-hold returns to the main mode menu, and B/A
+        // conventions match the other menus.
+        const size_t visible = (kSubTestCount < kMenuVisible)
+                                   ? kSubTestCount : kMenuVisible;
+        for (size_t row = 0; row < visible; ++row) {
+            const size_t i = row + menu_view_offset_;
+            if (i >= kSubTestCount) break;
             const bool sel = (i == menu_selected_);
             char buf[32];
             std::snprintf(buf, sizeof(buf), "%s %s",
                           sel ? ">" : " ", kSubTests[i].label);
             DAL::fire_display_show_text("local", DisplayShowTextEvent{
-                10, 30 + (int)i * 14, buf,
-                sel ? YELLOW : WHITE, BLACK, 1});
+                10, 4 + (int)row * 16, buf,
+                sel ? YELLOW : WHITE, BLACK, 2});
         }
-        DAL::fire_display_show_text("local", DisplayShowTextEvent{
-            10, 128, "B: cycle  A: launch", WHITE, BLACK, 1});
+    }
+
+    void update_menu_view_offset() {
+        if (menu_selected_ < menu_view_offset_) {
+            menu_view_offset_ = menu_selected_;
+        } else if (menu_selected_ >= menu_view_offset_ + kMenuVisible) {
+            menu_view_offset_ = menu_selected_ - kMenuVisible + 1;
+        }
     }
 
     void handle_button_at_menu(const ButtonPressEvent& ev) {
@@ -721,6 +1434,10 @@ private:
          && ev.kind != ButtonEvent::LongPressed) return;
         if (ev.id == ButtonId::Btn2 && ev.kind == ButtonEvent::Pressed) {
             menu_selected_ = (menu_selected_ + 1) % kSubTestCount;
+            // Wrapping past the bottom resets the scroll offset; otherwise
+            // shift the visible window so the cursor stays on screen.
+            if (menu_selected_ == 0) menu_view_offset_ = 0;
+            else                     update_menu_view_offset();
             draw_menu();
             return;
         }
@@ -741,8 +1458,6 @@ private:
     void launch_test(SubTest t) {
         active_test_     = t;
         step_index_      = 0;
-        target_group_    = 1;
-        confirm_until_ms_= 0;
         test_start_ms_   = millis();
         last_step_ms_    = 0;
         switch (t) {
@@ -751,8 +1466,8 @@ private:
             case SubTest::RainbowTest:  enter_rainbow();                      break;
             case SubTest::SparkleTest:  enter_sparkle();                      break;
             case SubTest::WhiteOut:     draw_whiteout();                      break;
-            case SubTest::GroupTarget:  draw_group_target();                  break;
-            case SubTest::SetGroupId:   draw_set_group_id();                  break;
+            case SubTest::AudioLive:    enter_audio_live();                   break;
+            case SubTest::Calibrate:    enter_calibrate();                    break;
             default: break;
         }
     }
@@ -770,17 +1485,12 @@ private:
         if (ev.kind != ButtonEvent::Pressed) return;
         switch (active_test_) {
             case SubTest::WhiteOut:    if (ev.id == ButtonId::Btn1) fire_whiteout(); break;
-            case SubTest::GroupTarget:
-                if (ev.id == ButtonId::Btn1) fire_group_target_advance();
-                break;
-            case SubTest::SetGroupId:
-                if (ev.id == ButtonId::Btn1) send_set_group_id();
-                else if (ev.id == ButtonId::Btn2) cycle_target_group();
+            case SubTest::Calibrate:
+                handle_button_calibrate(ev);
                 break;
             default:
-                // Continuous tests (Pulse/Fade/Rainbow/Sparkle) ignore button
-                // presses other than the back gesture. Btn1 could be wired to
-                // "skip to next colour" later if useful.
+                // Continuous tests (Pulse/Fade/Rainbow/Sparkle/AudioLive)
+                // ignore button presses other than the back gesture.
                 break;
         }
     }
@@ -880,7 +1590,7 @@ private:
             return;
         }
         if (now - last_step_ms_ < kSparkleStepMs) return;
-        const auto& c = kTestPalette[std::rand() % kTestPaletteCount];
+        const auto& c = kSparklePalette[std::rand() % kSparklePaletteCount];
         DAL::fire_rgb_pulse("all-pixmobs", RgbPulseEvent{
             c.r, c.g, c.b,
             pixmob::T_32_MS, pixmob::T_32_MS, pixmob::T_96_MS,
@@ -909,9 +1619,12 @@ private:
     // -------------------------------------------------------------------------
 
     void fire_whiteout() {
+        // Single command: instant attack, ~2.4 s sustain, ~0.96 s release.
+        // The PixMob protocol's Time enum has values up to T_3840_MS so
+        // we don't need a multi-command staircase to span 2 s + 1 s.
         DAL::fire_rgb_pulse("all-pixmobs", RgbPulseEvent{
             0xFF, 0xFF, 0xFF,
-            pixmob::T_32_MS, pixmob::T_192_MS, pixmob::T_192_MS,
+            pixmob::T_0_MS, pixmob::T_2400_MS, pixmob::T_960_MS,
             pixmob::CHANCE_100});
     }
 
@@ -926,78 +1639,446 @@ private:
     }
 
     // -------------------------------------------------------------------------
-    // Group Targeting Test (Btn1 fires + advances through groups 1-5)
+    // Audio Live (4 spectrum bars + flux/threshold + BPM + beat indicator)
     // -------------------------------------------------------------------------
 
-    void fire_group_target_advance() {
-        char target[16];
-        std::snprintf(target, sizeof(target), "group-%u", (unsigned)target_group_);
-        DAL::fire_rgb_pulse(target, RgbPulseEvent{
-            0xFF, 0xFF, 0xFF,
-            pixmob::T_32_MS, pixmob::T_96_MS, pixmob::T_96_MS,
-            pixmob::CHANCE_100});
-        target_group_ = (target_group_ % 5) + 1;
-        draw_group_target();
-    }
-
-    void draw_group_target() {
-        DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
-        DAL::fire_display_show_text("local", DisplayShowTextEvent{
-            10, 5, "Group Target", WHITE, BLACK, 2});
-        char buf[24];
-        std::snprintf(buf, sizeof(buf), "Next: group %u", (unsigned)target_group_);
-        DAL::fire_display_show_text("local", DisplayShowTextEvent{
-            10, 50, buf, WHITE, BLACK, 2});
-        DAL::fire_display_show_text("local", DisplayShowTextEvent{
-            10, 90, "A: fire + advance", WHITE, BLACK, 1});
-        DAL::fire_display_show_text("local", DisplayShowTextEvent{
-            10, 128, "PWR-hold: back", WHITE, BLACK, 1});
-    }
-
-    // -------------------------------------------------------------------------
-    // Set Group ID (bracelet setup helper)
-    // -------------------------------------------------------------------------
-
-    void cycle_target_group() {
-        target_group_ = (target_group_ % 5) + 1;
-        draw_set_group_id();
-    }
-
-    void send_set_group_id() {
-        // Target name is irrelevant - the AssignDeviceGroup dispatch ignores
-        // device group_id and uses the event's new_group_id payload.
-        const bool ok = DAL::fire_assign_device_group("all-pixmobs",
-                            AssignDeviceGroupEvent{target_group_});
-        if (ok) confirm_until_ms_ = millis() + kConfirmFlashMs;
-        draw_set_group_id();
-    }
-
-    void tick_confirm_flash(uint32_t now) {
-        if (confirm_until_ms_ != 0 && now >= confirm_until_ms_) {
-            confirm_until_ms_ = 0;
-            draw_set_group_id();
+    void enter_audio_live() {
+        audio_baseline_flux_     = 100.0f;
+        audio_prev_bass_         = 0.0f;
+        audio_current_flux_      = 0.0f;
+        audio_last_beat_ms_      = 0;
+        audio_beat_flash_until_  = 0;
+        audio_bpm_               = 0.0f;
+        audio_ibi_index_         = 0;
+        audio_ibi_count_         = 0;
+        audio_bass_ = audio_mid_ = audio_treble_ = audio_rms_ = 0.0f;
+        for (int i = 0; i < 4; ++i) {
+            auto_min_[i] = 1.0e9f;
+            auto_max_[i] = 1.0f;
         }
+        last_step_ms_            = 0;
+        DAL::start_audio_input("local", 16000, 512);
+        draw_audio_live_static();
+        draw_audio_live_dynamic();
     }
 
-    void draw_set_group_id() {
+    void process_audio_frame(const AudioFrameEvent& ev) {
+        audio_bass_   = ev.bass_energy;
+        audio_mid_    = ev.mid_energy;
+        audio_treble_ = ev.treble_energy;
+        audio_rms_    = ev.overall_rms;
+
+        // Auto-cal: adapt per-band min/max with a slow leak so the bars
+        // track room dynamics. Frame rate ~30 Hz; 1.0001/0.9999 per frame
+        // leaks ~0.3%/sec.
+        if (s_calibration.auto_enabled) {
+            const float bands[4] = {
+                ev.bass_energy, ev.mid_energy, ev.treble_energy, ev.overall_rms
+            };
+            for (int i = 0; i < 4; ++i) {
+                if (bands[i] > 0.0f && bands[i] < auto_min_[i]) auto_min_[i] = bands[i];
+                else                                            auto_min_[i] *= 1.0001f;
+                if (bands[i] > auto_max_[i])                    auto_max_[i] = bands[i];
+                else                                            auto_max_[i] *= 0.9999f;
+                if (auto_min_[i] < 1.0f) auto_min_[i] = 1.0f;
+                if (auto_max_[i] < auto_min_[i] * 4.0f) {
+                    auto_max_[i] = auto_min_[i] * 4.0f;
+                }
+            }
+        }
+
+        // Beat detection - same constants as AutonomousMaster so what you
+        // see here matches what would fire in Master mode. No IR fires.
+        constexpr float kVolumeGate     = 500.0f;
+        constexpr float kBaselineAlpha  = 0.02f;
+        constexpr float kBeatMultiplier = 2.5f;
+        constexpr float kFluxFloor      = 2000.0f;
+        constexpr uint32_t kRefractoryMs = 200;
+
+        if (ev.overall_rms < kVolumeGate) {
+            audio_prev_bass_ = 0.0f;
+            return;
+        }
+        float flux = ev.bass_energy - audio_prev_bass_;
+        if (flux < 0) flux = 0;
+        audio_prev_bass_    = ev.bass_energy;
+        audio_current_flux_ = flux;
+        audio_baseline_flux_ = audio_baseline_flux_ * (1.0f - kBaselineAlpha)
+                             + flux * kBaselineAlpha;
+
+        const uint32_t now = millis();
+        const bool is_beat = flux > audio_baseline_flux_ * kBeatMultiplier
+                          && flux > kFluxFloor
+                          && (now - audio_last_beat_ms_) > kRefractoryMs;
+        if (!is_beat) return;
+
+        if (audio_last_beat_ms_ > 0) {
+            const uint32_t ibi = now - audio_last_beat_ms_;
+            if (ibi >= 300 && ibi <= 1200) {
+                audio_ibi_buffer_[audio_ibi_index_] = ibi;
+                audio_ibi_index_ = (audio_ibi_index_ + 1) % 8;
+                if (audio_ibi_count_ < 8) audio_ibi_count_++;
+                update_audio_bpm();
+            }
+        }
+        audio_last_beat_ms_     = now;
+        audio_beat_flash_until_ = now + 120;
+    }
+
+    void update_audio_bpm() {
+        if (audio_ibi_count_ < 3) return;
+        uint32_t sorted[8];
+        for (size_t i = 0; i < audio_ibi_count_; ++i) sorted[i] = audio_ibi_buffer_[i];
+        for (size_t i = 1; i < audio_ibi_count_; ++i) {
+            uint32_t key = sorted[i];
+            size_t j = i;
+            while (j > 0 && sorted[j-1] > key) { sorted[j] = sorted[j-1]; --j; }
+            sorted[j] = key;
+        }
+        const uint32_t med = (audio_ibi_count_ % 2 == 1)
+            ? sorted[audio_ibi_count_ / 2]
+            : (sorted[audio_ibi_count_ / 2 - 1] + sorted[audio_ibi_count_ / 2]) / 2;
+        if (med > 50) audio_bpm_ = 60000.0f / (float)med;
+    }
+
+    void tick_audio_live(uint32_t now) {
+        // Refresh dynamic elements at ~20 Hz to keep bars smooth without
+        // saturating IR-bus or display refresh.
+        if (now - last_step_ms_ < 50) return;
+        last_step_ms_ = now;
+        draw_audio_live_dynamic();
+    }
+
+    void draw_audio_live_static() {
         DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
         DAL::fire_display_show_text("local", DisplayShowTextEvent{
-            10, 5, "Set Group ID", WHITE, BLACK, 2});
-        char buf[24];
-        std::snprintf(buf, sizeof(buf), "New group: %u", (unsigned)target_group_);
+            10, 2, "Audio Live", WHITE, BLACK, 1});
+        // Bar baselines (top + bottom outline lines). Per-band labels are
+        // drawn alongside the dynamic numeric readout so they live in
+        // draw_audio_live_dynamic, not here.
+        const int bar_y_top    = 14;
+        const int bar_y_bottom = 84;
+        const int bar_w        = 42;
+        for (int i = 0; i < 4; ++i) {
+            const int x = 10 + i * 56;
+            DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
+                x, bar_y_top,    bar_w, 1, WHITE});
+            DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
+                x, bar_y_bottom, bar_w, 1, WHITE});
+        }
         DAL::fire_display_show_text("local", DisplayShowTextEvent{
-            10, 40, buf, WHITE, BLACK, 2});
-        if (confirm_until_ms_ != 0) {
-            DAL::fire_display_show_text("local", DisplayShowTextEvent{
-                10, 70, "Sent!", GREEN, BLACK, 2});
+            10, 128, "PWR: back", WHITE, BLACK, 1});
+    }
+
+    void draw_audio_live_dynamic() {
+        // Bar fills. Log2 scaling - bass/mid/treble band sums span several
+        // decades (mid sums 57 FFT bins, treble 191). Per-band floor/
+        // ceiling come from s_calibration (set via Calibrate sub-test) or
+        // from the rolling auto-cal min/max when auto mode is on (live
+        // audience use, where the room's noise floor moves mid-show).
+        const int   bar_y_top    = 14;
+        const int   bar_y_bottom = 84;
+        const int   bar_w        = 42;
+        const int   bar_h_max    = bar_y_bottom - bar_y_top - 2;
+        float floors[4];
+        float ceils[4];
+        if (s_calibration.auto_enabled) {
+            for (int i = 0; i < 4; ++i) {
+                floors[i] = std::log2f(auto_min_[i]);
+                ceils[i]  = std::log2f(auto_max_[i]);
+                if (ceils[i] - floors[i] < 2.0f) ceils[i] = floors[i] + 2.0f;
+            }
         } else {
+            for (int i = 0; i < 4; ++i) {
+                floors[i] = s_calibration.floor[i];
+                ceils[i]  = s_calibration.ceil[i];
+            }
+        }
+        const char  band_labels[4] = { 'B', 'M', 'T', 'R' };
+        const float values[4]    = { audio_bass_, audio_mid_, audio_treble_, audio_rms_ };
+        for (int i = 0; i < 4; ++i) {
+            const int x = 10 + i * 56;
+            // Clear the inner area (between the top/bottom outline lines).
+            DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
+                x, bar_y_top + 1, bar_w, bar_h_max, BLACK});
+            float v = values[i];
+            if (v < 1.0f) v = 1.0f;
+            const float lg    = std::log2f(v);
+            float ratio = (lg - floors[i]) / (ceils[i] - floors[i]);
+            if (ratio < 0)   ratio = 0;
+            if (ratio > 1.f) ratio = 1.f;
+            const int h = (int)(ratio * (float)bar_h_max);
+            if (h > 0) {
+                DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
+                    x, bar_y_bottom - h, bar_w, h, GREEN});
+            }
+            // Diagnostic readout below each bar: "B 12k" / "M 568k" / etc.
+            // Right-padded with spaces in snprintf to overwrite previous
+            // longer strings cleanly.
+            char vb[10];
+            if (values[i] >= 1000000.0f) {
+                std::snprintf(vb, sizeof(vb), "%c %.0fM   ",
+                              band_labels[i], (double)(values[i] / 1.0e6f));
+            } else if (values[i] >= 10000.0f) {
+                std::snprintf(vb, sizeof(vb), "%c %.0fk   ",
+                              band_labels[i], (double)(values[i] / 1.0e3f));
+            } else {
+                std::snprintf(vb, sizeof(vb), "%c %4.0f  ",
+                              band_labels[i], (double)values[i]);
+            }
             DAL::fire_display_show_text("local", DisplayShowTextEvent{
-                10, 70, "isolate target!", YELLOW, BLACK, 1});
+                x, bar_y_bottom + 4, vb, WHITE, BLACK, 1});
+        }
+
+        // Flux + threshold + BPM lines (overwrite with bg=BLACK).
+        char info[40];
+        std::snprintf(info, sizeof(info), "Flux:%5.0f Thr:%5.0f",
+                      (double)audio_current_flux_,
+                      (double)(audio_baseline_flux_ * 2.5f));
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 100, info, WHITE, BLACK, 1});
+
+        char bpm_buf[24];
+        if (audio_bpm_ > 0.0f) {
+            std::snprintf(bpm_buf, sizeof(bpm_buf), "BPM: %3.0f",
+                          (double)audio_bpm_);
+        } else {
+            std::snprintf(bpm_buf, sizeof(bpm_buf), "BPM: ---");
         }
         DAL::fire_display_show_text("local", DisplayShowTextEvent{
-            10, 95, "B: cycle  A: send", WHITE, BLACK, 1});
+            10, 114, bpm_buf, WHITE, BLACK, 1});
+
+        // Beat indicator: lit briefly after each detected beat.
+        const bool active = audio_beat_flash_until_ > millis();
         DAL::fire_display_show_text("local", DisplayShowTextEvent{
-            10, 128, "PWR-hold: back", WHITE, BLACK, 1});
+            120, 114, active ? "BEAT!" : "     ",
+            active ? YELLOW : BLACK, BLACK, 1});
+    }
+
+    // -------------------------------------------------------------------------
+    // Calibrate (sound-check workflow + auto-cal toggle, persists to NVS)
+    // -------------------------------------------------------------------------
+    //
+    // Manual sound check is two phases: 3 s of silence (captures rolling
+    // min into floors), then 10 s of music (captures rolling max into
+    // ceilings). Both pass through the AudioLive process_audio_frame path
+    // so the bracelet still hears nothing - this view doesn't fire IR.
+    //
+    // Auto mode is for live-audience use, where the room's noise floor
+    // shifts mid-show as the crowd builds and the sound system warms up;
+    // the AudioLive bars fall back to rolling per-band min/max instead
+    // of the saved floors/ceilings so they stay readable.
+
+    enum class CalState : uint8_t {
+        Menu = 0,
+        BaselinePrompt,
+        BaselineCapture,
+        PeakPrompt,
+        PeakCapture,
+        Done,
+    };
+
+    static constexpr uint32_t kCalBaselineMs = 3000;
+    static constexpr uint32_t kCalPeakMs     = 10000;
+    static constexpr uint32_t kCalDoneMs     = 1500;
+
+    CalState  cal_state_           = CalState::Menu;
+    uint32_t  cal_phase_start_ms_  = 0;
+    uint32_t  cal_last_redraw_ms_  = 0;
+    float     cal_min_[4]          = {0.0f, 0.0f, 0.0f, 0.0f};
+    float     cal_max_[4]          = {0.0f, 0.0f, 0.0f, 0.0f};
+
+    void enter_calibrate() {
+        cal_state_           = CalState::Menu;
+        cal_phase_start_ms_  = 0;
+        cal_last_redraw_ms_  = 0;
+        DAL::start_audio_input("local", 16000, 512);
+        draw_calibrate();
+    }
+
+    void on_audio_frame_calibrate(const AudioFrameEvent& ev) {
+        const float bands[4] = {
+            ev.bass_energy, ev.mid_energy, ev.treble_energy, ev.overall_rms
+        };
+        if (cal_state_ == CalState::BaselineCapture) {
+            for (int i = 0; i < 4; ++i) {
+                if (bands[i] > 0.0f
+                 && (cal_min_[i] == 0.0f || bands[i] < cal_min_[i])) {
+                    cal_min_[i] = bands[i];
+                }
+            }
+        } else if (cal_state_ == CalState::PeakCapture) {
+            for (int i = 0; i < 4; ++i) {
+                if (bands[i] > cal_max_[i]) cal_max_[i] = bands[i];
+            }
+        }
+    }
+
+    void tick_calibrate(uint32_t now) {
+        switch (cal_state_) {
+            case CalState::BaselineCapture:
+                if (now - cal_phase_start_ms_ >= kCalBaselineMs) {
+                    // Convert min energies to log2 floors with a small
+                    // headroom so quiet readings settle just above 0%.
+                    for (int i = 0; i < 4; ++i) {
+                        if (cal_min_[i] > 0.0f) {
+                            s_calibration.floor[i] = std::log2f(cal_min_[i]) + 0.3f;
+                        }
+                    }
+                    cal_state_ = CalState::PeakPrompt;
+                    draw_calibrate();
+                } else if (now - cal_last_redraw_ms_ > 250) {
+                    draw_calibrate();
+                }
+                break;
+            case CalState::PeakCapture:
+                if (now - cal_phase_start_ms_ >= kCalPeakMs) {
+                    for (int i = 0; i < 4; ++i) {
+                        if (cal_max_[i] > 0.0f) {
+                            s_calibration.ceil[i] = std::log2f(cal_max_[i]);
+                        }
+                    }
+                    save_calibration(s_calibration);
+                    cal_state_          = CalState::Done;
+                    cal_phase_start_ms_ = now;
+                    draw_calibrate();
+                } else if (now - cal_last_redraw_ms_ > 250) {
+                    draw_calibrate();
+                }
+                break;
+            case CalState::Done:
+                if (now - cal_phase_start_ms_ >= kCalDoneMs) {
+                    cal_state_ = CalState::Menu;
+                    draw_calibrate();
+                }
+                break;
+            default:
+                break;
+        }
+    }
+
+    void handle_button_calibrate(const ButtonPressEvent& ev) {
+        if (ev.kind != ButtonEvent::Pressed) return;
+        if (ev.id == ButtonId::Btn1) {
+            switch (cal_state_) {
+                case CalState::Menu:
+                    cal_state_ = CalState::BaselinePrompt;
+                    draw_calibrate();
+                    break;
+                case CalState::BaselinePrompt:
+                    cal_state_          = CalState::BaselineCapture;
+                    cal_phase_start_ms_ = millis();
+                    for (int i = 0; i < 4; ++i) cal_min_[i] = 0.0f;
+                    draw_calibrate();
+                    break;
+                case CalState::PeakPrompt:
+                    cal_state_          = CalState::PeakCapture;
+                    cal_phase_start_ms_ = millis();
+                    for (int i = 0; i < 4; ++i) cal_max_[i] = 0.0f;
+                    draw_calibrate();
+                    break;
+                default:
+                    break;
+            }
+            return;
+        }
+        if (ev.id == ButtonId::Btn2 && cal_state_ == CalState::Menu) {
+            s_calibration.auto_enabled = !s_calibration.auto_enabled;
+            save_calibration(s_calibration);
+            draw_calibrate();
+        }
+    }
+
+    void draw_calibrate() {
+        DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 5, "Calibrate", WHITE, BLACK, 2});
+        cal_last_redraw_ms_ = millis();
+
+        switch (cal_state_) {
+            case CalState::Menu: {
+                char auto_buf[24];
+                std::snprintf(auto_buf, sizeof(auto_buf), "Auto: %s",
+                              s_calibration.auto_enabled ? "ON" : "OFF");
+                DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                    10, 28, auto_buf,
+                    s_calibration.auto_enabled ? GREEN : WHITE, BLACK, 2});
+
+                char fl[40], cl[40];
+                std::snprintf(fl, sizeof(fl), "F: %2.0f %2.0f %2.0f %2.0f",
+                              (double)s_calibration.floor[0],
+                              (double)s_calibration.floor[1],
+                              (double)s_calibration.floor[2],
+                              (double)s_calibration.floor[3]);
+                std::snprintf(cl, sizeof(cl), "C: %2.0f %2.0f %2.0f %2.0f",
+                              (double)s_calibration.ceil[0],
+                              (double)s_calibration.ceil[1],
+                              (double)s_calibration.ceil[2],
+                              (double)s_calibration.ceil[3]);
+                DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                    10, 56, fl, WHITE, BLACK, 1});
+                DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                    10, 70, cl, WHITE, BLACK, 1});
+
+                DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                    10, 92, "A: sound check", WHITE, BLACK, 1});
+                DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                    10, 105, "B: toggle auto", WHITE, BLACK, 1});
+                DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                    10, 128, "PWR: back", WHITE, BLACK, 1});
+                break;
+            }
+            case CalState::BaselinePrompt:
+                DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                    10, 36, "Stay quiet", WHITE, BLACK, 2});
+                DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                    10, 64, "for 3 seconds", WHITE, BLACK, 1});
+                DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                    10, 88, "A: start", YELLOW, BLACK, 2});
+                DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                    10, 128, "PWR: back", WHITE, BLACK, 1});
+                break;
+            case CalState::BaselineCapture: {
+                const uint32_t elapsed   = millis() - cal_phase_start_ms_;
+                const uint32_t remaining = (kCalBaselineMs > elapsed)
+                                               ? (kCalBaselineMs - elapsed) : 0;
+                char buf[24];
+                std::snprintf(buf, sizeof(buf), "Recording.. %lu",
+                              (unsigned long)(remaining / 1000 + 1));
+                DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                    10, 50, buf, GREEN, BLACK, 2});
+                DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                    10, 88, "(silence)", WHITE, BLACK, 1});
+                break;
+            }
+            case CalState::PeakPrompt:
+                DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                    10, 36, "Play music!", WHITE, BLACK, 2});
+                DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                    10, 64, "loud + varied", WHITE, BLACK, 1});
+                DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                    10, 88, "A: start", YELLOW, BLACK, 2});
+                DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                    10, 128, "PWR: back", WHITE, BLACK, 1});
+                break;
+            case CalState::PeakCapture: {
+                const uint32_t elapsed   = millis() - cal_phase_start_ms_;
+                const uint32_t remaining = (kCalPeakMs > elapsed)
+                                               ? (kCalPeakMs - elapsed) : 0;
+                char buf[24];
+                std::snprintf(buf, sizeof(buf), "Recording.. %2lu",
+                              (unsigned long)(remaining / 1000 + 1));
+                DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                    10, 50, buf, GREEN, BLACK, 2});
+                DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                    10, 88, "(music)", WHITE, BLACK, 1});
+                break;
+            }
+            case CalState::Done:
+                DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                    10, 50, "Saved!", GREEN, BLACK, 3});
+                break;
+        }
     }
 };
 
@@ -1055,6 +2136,8 @@ void ModeMachine::begin() {
     DAL::subscribe_audio_frames  ("local", &on_dal_audio_frame);
 
     s_last_runtime = load_last_runtime_mode();
+    DAL::set_driver_enabled("ir-pixmob", load_ir_enabled());
+    s_calibration  = load_calibration();
     s_active_mode  = nullptr;          // force enter() in enter_mode()
     enter_mode(ModeId::Boot);
 }

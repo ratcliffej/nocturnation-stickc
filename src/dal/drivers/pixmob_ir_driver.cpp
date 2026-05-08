@@ -2,6 +2,10 @@
 #include "hal/hal.h"
 #include "pixmob_protocol.h"
 
+#ifdef ARDUINO
+#include <Arduino.h>
+#endif
+
 namespace nocturnation {
 namespace dal {
 
@@ -48,20 +52,42 @@ bool PixMobIRDriver::send(uint8_t group_id, const RgbPulseEvent& ev) {
 }
 
 bool PixMobIRDriver::send(uint8_t /*group_id*/, const AssignDeviceGroupEvent& ev) {
-    // PixMob's Set Group Id command writes new_group_id into EEPROM slot 0.
-    // The dispatch group_id is not used here - the command targets whichever
-    // bracelet physically receives the IR (the "physical isolation" caveat
-    // in pixmob_protocol.h).
+    // PixMob group assignment is a 2-command sequence:
+    //   1. SetGroupId(slot, new_id)  - writes the value into the EEPROM slot
+    //   2. SetGroupSel(slot)         - activates that slot's value as the
+    //                                  bracelet's current group filter
+    // The first command alone leaves the new value stored but unused.
+    // Reference: jamesw343/PixMob_IR pixmob_ir_protocol_examples.py "Group
+    // Id" example, where the comment on SetGroupSel reads "this changes
+    // the PixMob's group id to 22". The dispatch group_id is not used
+    // here - both commands fire as broadcast (restrictGroupId=0) so the
+    // target bracelet (physically isolated per protocol) receives them.
     auto* ir = hal::HAL::ir_tx();
     if (!ir) return false;
     if (ev.new_group_id < 1 || ev.new_group_id > 31) return false;
 
     uint16_t buf[kPulseBufSize];
-    const size_t n = pixmob::buildSetGroupId(
+
+    // Step 1: Write new_group_id into slot 0.
+    size_t n = pixmob::buildSetGroupId(
         buf, kPulseBufSize,
         /*groupSel=*/0, ev.new_group_id, /*restrictGroupId=*/0);
     if (n == 0) return false;
+    ir->send_raw(buf, n, 38);
 
+    // Brief gap so the bracelet finishes processing the first command
+    // before the second one starts arriving on the wire. 30 ms is well
+    // under any user-perceived delay and gives the IR receiver time to
+    // re-arm after the trailing pulse of the first transmission.
+#ifdef ARDUINO
+    ::delay(30);
+#endif
+
+    // Step 2: Activate slot 0 - commits new_group_id as the active filter.
+    n = pixmob::buildSetGroupSel(
+        buf, kPulseBufSize,
+        /*groupSel=*/0, /*restrictGroupId=*/0);
+    if (n == 0) return false;
     ir->send_raw(buf, n, 38);
     return true;
 }

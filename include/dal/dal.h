@@ -175,6 +175,19 @@ public:
     virtual bool        begin()                = 0;
     virtual void        loop_tick()            {}     // optional
 
+    // Generic enable flag. When false, DAL::dispatch_output silently skips
+    // every send for this driver - useful for "mute the IR" / "mute the
+    // ESP-NOW" toggles in Config without interleaving check logic into
+    // every send override. Default is enabled.
+    bool enabled() const            { return enabled_; }
+    void set_enabled(bool e)        { enabled_ = e; }
+
+    // Lifetime counter of successful sends through this driver. Bumped by
+    // DAL::dispatch_output after a send() override returns true; used by
+    // orchestration (AutonomousMaster status display) to surface activity.
+    uint32_t send_count() const     { return send_count_; }
+    void increment_send_count()     { ++send_count_; }
+
     // Output dispatch: one overload per output capability. Default = unsupported.
     virtual bool send(uint8_t /*group_id*/, const RgbPulseEvent&)         { return false; }
     virtual bool send(uint8_t /*group_id*/, const RgbStaticEvent&)        { return false; }
@@ -194,6 +207,10 @@ public:
     // Synchronous queries. Default returns the "not available" sentinel so
     // drivers without the capability get the right behaviour for free.
     virtual int  battery_level() { return -1; }
+
+private:
+    bool     enabled_     = true;
+    uint32_t send_count_  = 0;
 };
 
 // =============================================================================
@@ -232,6 +249,15 @@ public:
     // -------------------------------------------------------------------------
     static bool   register_driver(Driver* driver);
     static size_t registered_driver_count();
+
+    // Toggle a driver's enable flag by transport name. Returns false if no
+    // driver is registered for that transport. Generic across transports
+    // ("ir-pixmob", "local", and future "esp-now-nocturnation" / "dmx" /
+    // etc.); ConfigMode uses these to surface "Enable / Disable" leaves
+    // per spec §8.4.
+    static bool     set_driver_enabled (const char* transport_name, bool enabled);
+    static bool     driver_enabled     (const char* transport_name);
+    static uint32_t driver_send_count  (const char* transport_name);
 
     // -------------------------------------------------------------------------
     // Output dispatch. Returns false on unknown target, unsupported

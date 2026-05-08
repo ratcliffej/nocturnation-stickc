@@ -143,7 +143,10 @@ bool dispatch_output(const char* target, CapabilityId cap, const Event& ev) {
     if (!device->profile->has_output(cap)) return false;
     Driver* driver = find_driver_for_transport(device->profile->transport);
     if (!driver) return false;
-    return driver->send(device->group_id, ev);
+    if (!driver->enabled()) return false;     // muted by config
+    const bool ok = driver->send(device->group_id, ev);
+    if (ok) driver->increment_send_count();
+    return ok;
 }
 
 }  // anonymous namespace
@@ -241,6 +244,23 @@ bool DAL::register_driver(Driver* driver) {
 
 size_t DAL::registered_driver_count() {
     return s_driver_count;
+}
+
+bool DAL::set_driver_enabled(const char* transport_name, bool enabled) {
+    Driver* d = find_driver_for_transport(transport_name);
+    if (!d) return false;
+    d->set_enabled(enabled);
+    return true;
+}
+
+bool DAL::driver_enabled(const char* transport_name) {
+    Driver* d = find_driver_for_transport(transport_name);
+    return d ? d->enabled() : false;
+}
+
+uint32_t DAL::driver_send_count(const char* transport_name) {
+    Driver* d = find_driver_for_transport(transport_name);
+    return d ? d->send_count() : 0;
 }
 
 // =============================================================================
