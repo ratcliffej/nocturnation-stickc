@@ -6,9 +6,11 @@ namespace hal {
 
 void DisplayStickCS3::begin() {
     // Panel itself is initialised by HAL::begin()'s M5.begin() call earlier.
-    // Apply the StickS3's natural landscape orientation (BtnA on the right),
-    // matching the Plus2 convention so UI coordinates remain shared.
-    M5.Display.setRotation(1);
+    // The StickS3 mounts the same 1.14" ST7789 panel as the Plus2 but in the
+    // opposite physical orientation, so M5Unified's rotation 1 ends up 180
+    // degrees off from the Plus2. Use rotation 3 here to put the UI in the
+    // same buttons-on-right orientation orchestration code assumes.
+    M5.Display.setRotation(3);
 }
 
 void DisplayStickCS3::set_rotation(uint8_t rotation) { M5.Display.setRotation(rotation); }

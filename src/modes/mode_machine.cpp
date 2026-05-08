@@ -1684,8 +1684,16 @@ private:
                 if (bands[i] > auto_max_[i])                    auto_max_[i] = bands[i];
                 else                                            auto_max_[i] *= 0.9999f;
                 if (auto_min_[i] < 1.0f) auto_min_[i] = 1.0f;
-                if (auto_max_[i] < auto_min_[i] * 4.0f) {
-                    auto_max_[i] = auto_min_[i] * 4.0f;
+                // Floor the rolling dynamic range at 5 octaves (32x). The
+                // original 2-octave constraint worked on the Plus2's PDM mic
+                // because its noise floor was variable enough that auto_min
+                // and auto_max stayed naturally apart, but the StickS3's
+                // ES8311 codec has a much flatter noise floor and the bars
+                // would compress to a tiny range and then oscillate wildly
+                // with any input variance. 5 octaves comfortably accommodates
+                // music dynamics on either host.
+                if (auto_max_[i] < auto_min_[i] * 32.0f) {
+                    auto_max_[i] = auto_min_[i] * 32.0f;
                 }
             }
         }
