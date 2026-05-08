@@ -1,4 +1,4 @@
-#include "mic_stickc.h"
+#include "mic_stickcplus2.h"
 #include "M5Unified.h"
 #include <Arduino.h>
 #include <math.h>
@@ -6,10 +6,10 @@
 namespace nocturnation {
 namespace hal {
 
-MicStickC::MicStickC()
+MicStickCplus2::MicStickCplus2()
     : fft_(v_real_, v_imag_, kFftSize, (double)kSampleRate) {}
 
-void MicStickC::begin(uint16_t /*sample_rate_hz*/, uint16_t /*fft_size*/) {
+void MicStickCplus2::begin(uint16_t /*sample_rate_hz*/, uint16_t /*fft_size*/) {
     if (running_) return;
     // Sample rate / FFT size are fixed in this backend (see header). The
     // prototype's detectBeat hardcoded these values; honouring requested
@@ -19,22 +19,22 @@ void MicStickC::begin(uint16_t /*sample_rate_hz*/, uint16_t /*fft_size*/) {
     running_ = true;
 }
 
-void MicStickC::end() {
+void MicStickCplus2::end() {
     if (!running_) return;
     M5.Mic.end();
     running_ = false;
     // Speaker is left disabled, matching the prototype's setBeatMode flow.
 }
 
-bool MicStickC::is_running() const {
+bool MicStickCplus2::is_running() const {
     return running_;
 }
 
-void MicStickC::set_frame_callback(FrameCallback cb) {
+void MicStickCplus2::set_frame_callback(FrameCallback cb) {
     callback_ = cb;
 }
 
-void MicStickC::set_bass_band(uint16_t lo_hz, uint16_t hi_hz) {
+void MicStickCplus2::set_bass_band(uint16_t lo_hz, uint16_t hi_hz) {
     // Convert Hz to bin numbers: bin = freq * fft_size / sample_rate.
     // Round to nearest, clamp to [0, fft_size/2 - 1].
     auto hz_to_bin = [](uint16_t hz) -> uint16_t {
@@ -51,7 +51,7 @@ void MicStickC::set_bass_band(uint16_t lo_hz, uint16_t hi_hz) {
     bass_bin_hi_ = hi;
 }
 
-void MicStickC::poll() {
+void MicStickCplus2::poll() {
     if (!running_)            return;
     if (!M5.Mic.isEnabled())  return;
 

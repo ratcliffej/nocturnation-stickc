@@ -10,7 +10,7 @@
 // per-capability accessor to adapt to what's available.
 //
 // Capabilities defined here whose backend implementations are not yet in
-// place (IRRx, ESPNow on the Epic 2 StickC backend) ship with full interface
+// place (IRRx, ESPNow on the StickC Plus2 backend) ship with full interface
 // stubs so future Epics plug in without contract churn.
 
 #pragma once
@@ -84,7 +84,7 @@ public:
 };
 
 // =============================================================================
-// IRRx - receive raw IR pulse trains (stub; not declared by Epic 2 StickC)
+// IRRx - receive raw IR pulse trains (stub; not declared by the StickC Plus2 backend)
 // =============================================================================
 
 struct IRPulses {
@@ -105,7 +105,7 @@ public:
 };
 
 // =============================================================================
-// ESPNow - broadcast and peer messaging (stub; not declared by Epic 2 StickC)
+// ESPNow - broadcast and peer messaging (stub; not declared by the StickC Plus2 backend)
 // =============================================================================
 
 struct ESPNowMessage {

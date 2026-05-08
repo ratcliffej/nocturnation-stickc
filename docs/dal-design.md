@@ -11,7 +11,7 @@ sync_direction: not synced (design doc, lives in repo only for now)
 
 This document defines the interface contract for the Device Abstraction Layer (DAL). The DAL sits above the HAL (`docs/hal-design.md`) and below the Orchestration layer; it is the single uniform, bidirectional interface for everything that produces events or accepts commands - regardless of underlying protocol or hardware.
 
-The DAL lands in Epic 2 alongside the HAL. The first concrete drivers - the StickC's local input/output handlers and the PixMob IR driver - land in the same Epic. ESP-NOW driver stubs (interfaces only, no implementation) ship for Epic 4 to plug into.
+The DAL lands in Epic 2 alongside the HAL. The first concrete drivers - the StickC Plus2's local input/output handlers and the PixMob IR driver - land in the same Epic. ESP-NOW driver stubs (interfaces only, no implementation) ship for Epic 4 to plug into.
 
 ---
 
@@ -94,7 +94,7 @@ static constexpr DeviceProfile PixMobX4Gen3_1 = {
 }
 ```
 
-### Example: the NocturNationStickC (host) profile
+### Example: the NocturNationStickCplus2 (host) profile
 
 The host profile is **composed at boot** from the HAL's capability declarations plus protocol-layer additions. The composition rule: every HAL capability maps to one or more DAL capabilities; the DAL registers the host with whichever subset is currently lit up.
 
@@ -130,14 +130,14 @@ A logical name can refer to:
 - **A specific physical device** in a specific group: `"left-bracelet" -> (PixMobX4Gen3_1, group 5)`.
 - **A whole group** of devices of one type: `"group-5-pixmobs" -> (PixMobX4Gen3_1, group 5)` (same as above; group addressing means the IR command targets all devices in that group).
 - **All devices of one type**: `"all-pixmobs" -> (PixMobX4Gen3_1, group 0)`.
-- **The host itself**: `"local" -> (NocturNationStickC, 0)`.
+- **The host itself**: `"local" -> (NocturNationStickCplus2, 0)`.
 
 Group IDs are stored as `uint8_t` internally (PixMob uses 0-31; spec §4.5 carves up the range). The string in the public API is the device's logical name, not the group number - orchestration calls `fire_rgb_pulse("group-5-pixmobs", ...)` and the DAL resolves the name to (profile, group_id) and dispatches via the appropriate driver.
 
 For Epic 2, the registry is statically populated in `DAL::begin()`:
 
 ```cpp
-DAL::register_device("local",          &profiles::NocturNationStickC, 0);
+DAL::register_device("local",          &profiles::NocturNationStickCplus2, 0);
 DAL::register_device("all-pixmobs",    &profiles::PixMobX4Gen3_1,     0);  // group 0 = broadcast
 DAL::register_device("group-5",        &profiles::PixMobX4Gen3_1,     5);
 // More as the deployer wishes.
@@ -348,7 +348,7 @@ The transport string is the join key. Multiple profiles can share a transport (e
 
 ## 7. Capability composition
 
-When `DAL::begin()` runs, it builds the host profile (`NocturNationStickC`) by inspecting `hal::HAL`:
+When `DAL::begin()` runs, it builds the host profile (`NocturNationStickCplus2`) by inspecting `hal::HAL`:
 
 | HAL capability declared | DAL adds to host profile |
 | --- | --- |
@@ -412,22 +412,22 @@ void DAL::loop_tick() {
 
 ---
 
-## 9. StickC-specific: Epic 2 starting state
+## 9. StickC Plus2-specific: Epic 2 starting state
 
-The Epic 2 StickC HAL backend (`src/hal_stickc/`) declares: `Mic`, `IRTx`, `Display`, `Buttons`, `IMU`, `Battery`. It does **not** declare `IRRx` or `ESPNow` (interfaces exist but no implementation yet).
+The StickC Plus2 HAL backend (`src/hal_stickcplus2/`) declares: `Mic`, `IRTx`, `Display`, `Buttons`, `IMU`, `Battery`. It does **not** declare `IRRx` or `ESPNow` (interfaces exist but no implementation yet).
 
-Therefore at Epic 2 boot, the DAL on a StickC will:
+Therefore at Epic 2 boot, the DAL on a StickC Plus2 will:
 
-- Compose `NocturNationStickC` profile with inputs `[AudioFrame, ButtonPress]` and outputs `[DisplayShowText, DisplayClear, DisplayFillRect, DisplayMeter]`.
+- Compose `NocturNationStickCplus2` profile with inputs `[AudioFrame, ButtonPress]` and outputs `[DisplayShowText, DisplayClear, DisplayFillRect, DisplayMeter]`.
 - Register the `PixMobIRDriver` (because HAL has `IRTx`).
 - Register the `LocalDriver` (because HAL has `Display`).
 - **Not** register the `EspNowDriver` (because HAL doesn't declare `ESPNow`).
-- Populate the active-device registry with `"local"` (the StickC itself) and a small set of PixMob entries (see below).
+- Populate the active-device registry with `"local"` (the StickC Plus2 itself) and a small set of PixMob entries (see below).
 
 Initial active-device set in code:
 
 ```cpp
-DAL::register_device("local",       &profiles::NocturNationStickC, 0);
+DAL::register_device("local",       &profiles::NocturNationStickCplus2, 0);
 DAL::register_device("all-pixmobs", &profiles::PixMobX4Gen3_1,     0);
 DAL::register_device("group-1",     &profiles::PixMobX4Gen3_1,     1);
 DAL::register_device("group-2",     &profiles::PixMobX4Gen3_1,     2);
@@ -481,7 +481,7 @@ DAL::subscribe_button_presses("local", [](const char*, const ButtonPressEvent& e
 When Feature 2.1 (DAL implementation) starts, after the HAL is in place:
 
 1. Create `src/dal/dal.h` (public DAL interface) and `src/dal/dal.cpp` (registry, dispatch).
-2. Create `src/dal/profiles/` with one file per device type (`pixmob_x4.cpp`, `nocturnation_stickc.cpp`).
+2. Create `src/dal/profiles/` with one file per device type (`pixmob_x4.cpp`, `nocturnation_stickcplus2.cpp`).
 3. Create `src/dal/drivers/` with one file per driver (`pixmob_ir_driver.cpp`, `local_driver.cpp`, `esp_now_driver_stub.cpp`).
 4. Add a native test in `test/test_dal_dispatch/` that links a fake HAL backend declaring known capabilities, fires events at known device names, and verifies dispatch / silent-fail behaviour. The PixMob parity tests already cover the byte-encoding side; this DAL test covers the routing side.
 5. Refactor `src/main.cpp` incrementally to use DAL helpers where it currently uses `irsend.sendRaw` and `M5.Display.*`. Each migration is its own commit + Block 3-style hardware verification.

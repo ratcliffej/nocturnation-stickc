@@ -60,7 +60,7 @@ bool is_persisted_runtime_mode(ModeId m) {
 
 // Audio-Live calibration. Per-band log2 floor/ceiling for the spectrum
 // bars, plus an auto-calibrate flag. Defaults below are tuned from
-// Jason's StickC + Vengaboys reference; sound-check overrides them with
+// Jason's StickC Plus2 + Vengaboys reference; sound-check overrides them with
 // per-device values, and auto mode bypasses these in favour of rolling
 // min/max during AudioLive use (room/audience-adaptive).
 struct AudioCalibration {

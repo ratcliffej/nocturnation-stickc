@@ -1,15 +1,15 @@
-#include "ir_tx_stickc.h"
+#include "ir_tx_stickcplus2.h"
 
 namespace nocturnation {
 namespace hal {
 
-IRTxStickC::IRTxStickC() : irsend_(kIRPin) {}
+IRTxStickCplus2::IRTxStickCplus2() : irsend_(kIRPin) {}
 
-void IRTxStickC::begin() {
+void IRTxStickCplus2::begin() {
     irsend_.begin();
 }
 
-void IRTxStickC::send_raw(const uint16_t* pulses_us, size_t count,
+void IRTxStickCplus2::send_raw(const uint16_t* pulses_us, size_t count,
                           uint16_t carrier_khz) {
     if (!pulses_us || count == 0) return;
     irsend_.sendRaw(pulses_us, count, carrier_khz);

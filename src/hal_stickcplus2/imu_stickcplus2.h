@@ -9,7 +9,7 @@
 namespace nocturnation {
 namespace hal {
 
-class IMUStickC : public IMU {
+class IMUStickCplus2 : public IMU {
 public:
     void begin() override;
     bool read(IMUSample& out) override;

@@ -10,8 +10,8 @@
 // driver entirely within this translation unit, registers them through the
 // existing DAL public API, fires events at the new device, and asserts the
 // driver received them with the right payload. Crucially, src/dal/, src/
-// hal_stickc/, src/main.cpp, src/modes/ and the existing PixMob profile +
-// driver are all untouched.
+// hal_stickcplus2/, src/main.cpp, src/modes/ and the existing PixMob profile
+// + driver are all untouched.
 //
 // Note on the AC wording: it says "JSON profile entry". Per the Epic 2
 // design decision (project_hal_dal_architecture memory), JSON-loaded

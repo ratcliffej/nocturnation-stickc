@@ -8,7 +8,7 @@
 //   - Sample rate hardcoded to 16 kHz, FFT size to 512 samples (~32 ms window).
 //   - Bass band defaults to FFT bins 2..7 (the prototype's BASS_BIN_LO/HI).
 //   - begin() calls M5.Speaker.end() before M5.Mic.begin() because the StickC
-//     shares mic/speaker hardware; end() does not re-enable the speaker
+//     Plus2 shares mic/speaker hardware; end() does not re-enable the speaker
 //     (matches the prototype's setBeatMode flow).
 
 #pragma once
@@ -19,9 +19,9 @@
 namespace nocturnation {
 namespace hal {
 
-class MicStickC : public Mic {
+class MicStickCplus2 : public Mic {
 public:
-    MicStickC();
+    MicStickCplus2();
 
     void begin(uint16_t sample_rate_hz, uint16_t fft_size) override;
     void end() override;
@@ -29,7 +29,7 @@ public:
     void set_frame_callback(FrameCallback cb) override;
     void set_bass_band(uint16_t lo_hz, uint16_t hi_hz) override;
 
-    // Backend-specific - called from HAL::loop_tick() in hal_stickc.cpp.
+    // Backend-specific - called from HAL::loop_tick() in hal_stickcplus2.cpp.
     void poll();
 
 private:

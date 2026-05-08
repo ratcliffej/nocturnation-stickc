@@ -2,7 +2,7 @@
 // (silent-fail), subscription wiring, and event delivery to subscribers.
 //
 // Provides its own miniature HAL backend so the DAL has something to compose
-// the host profile from. The StickC HAL backend in src/hal_stickc/ is excluded
+// the host profile from. The StickC Plus2 HAL backend in src/hal_stickcplus2/ is excluded
 // from the native build (build_src_filter); the DAL's own src/dal/dal.cpp is
 // included via "+<dal/>". No drivers register here - the test exercises the
 // dispatch routing rather than any specific protocol behaviour.

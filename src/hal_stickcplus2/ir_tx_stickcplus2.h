@@ -15,9 +15,9 @@
 namespace nocturnation {
 namespace hal {
 
-class IRTxStickC : public IRTx {
+class IRTxStickCplus2 : public IRTx {
 public:
-    IRTxStickC();
+    IRTxStickCplus2();
 
     void begin() override;
     void send_raw(const uint16_t* pulses_us, size_t count,

@@ -9,7 +9,7 @@
 namespace nocturnation {
 namespace hal {
 
-class BatteryStickC : public Battery {
+class BatteryStickCplus2 : public Battery {
 public:
     int   level_percent() override;
     float voltage() override;

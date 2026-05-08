@@ -1,22 +1,22 @@
-#include "buttons_stickc.h"
+#include "buttons_stickcplus2.h"
 #include "M5Unified.h"
 
 namespace nocturnation {
 namespace hal {
 
-void ButtonsStickC::begin() {
+void ButtonsStickCplus2::begin() {
     // No-op: M5.begin() in main.cpp wires up the buttons.
 }
 
-uint8_t ButtonsStickC::count() const {
+uint8_t ButtonsStickCplus2::count() const {
     return 3;   // BtnA (Btn1), BtnB (Btn2), BtnPWR (Btn3)
 }
 
-void ButtonsStickC::set_callback(ButtonCallback cb) {
+void ButtonsStickCplus2::set_callback(ButtonCallback cb) {
     callback_ = cb;
 }
 
-bool ButtonsStickC::is_pressed(ButtonId id) {
+bool ButtonsStickCplus2::is_pressed(ButtonId id) {
     switch (id) {
         case ButtonId::Btn1: return M5.BtnA.isPressed();
         case ButtonId::Btn2: return M5.BtnB.isPressed();
@@ -25,7 +25,7 @@ bool ButtonsStickC::is_pressed(ButtonId id) {
     }
 }
 
-void ButtonsStickC::set_long_press_ms(uint16_t ms) {
+void ButtonsStickCplus2::set_long_press_ms(uint16_t ms) {
     long_press_ms_ = ms;
 }
 
@@ -36,7 +36,7 @@ namespace {
 // is safe for both this poll() and main.cpp's existing button checks to
 // observe the same edge events.
 template <typename Btn>
-void check_button(ButtonsStickC::ButtonCallback const& cb,
+void check_button(ButtonsStickCplus2::ButtonCallback const& cb,
                   ButtonId id, Btn& btn, uint16_t long_press_ms) {
     if (!cb) return;
     if (btn.wasPressed())                      cb(id, ButtonEvent::Pressed);
@@ -50,7 +50,7 @@ void check_button(ButtonsStickC::ButtonCallback const& cb,
 
 }  // namespace
 
-void ButtonsStickC::poll() {
+void ButtonsStickCplus2::poll() {
     if (!callback_) return;
     check_button(callback_, ButtonId::Btn1, M5.BtnA,   long_press_ms_);
     check_button(callback_, ButtonId::Btn2, M5.BtnB,   long_press_ms_);

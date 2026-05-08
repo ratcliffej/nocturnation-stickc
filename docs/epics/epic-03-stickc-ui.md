@@ -1,6 +1,6 @@
 ---
 title: "Epic 3: StickC UI implementation per spec §8"
-status: stickc-specific
+status: stickcplus2-specific
 notion_url: https://www.notion.so/358bd0677405817b8ba3dcd31a23bf50
 notion_id: 358bd0677405817b8ba3dcd31a23bf50
 notion_status: Done

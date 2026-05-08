@@ -16,7 +16,7 @@
 namespace nocturnation {
 namespace hal {
 
-class ButtonsStickC : public Buttons {
+class ButtonsStickCplus2 : public Buttons {
 public:
     void begin() override;
     uint8_t count() const override;
@@ -24,7 +24,7 @@ public:
     bool is_pressed(ButtonId id) override;
     void set_long_press_ms(uint16_t ms) override;
 
-    // Backend-specific - called from HAL::loop_tick() in hal_stickc.cpp.
+    // Backend-specific - called from HAL::loop_tick() in hal_stickcplus2.cpp.
     void poll();
 
 private:

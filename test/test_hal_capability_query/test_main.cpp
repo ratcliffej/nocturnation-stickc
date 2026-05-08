@@ -6,7 +6,7 @@
 // accessors for un-declared capabilities return nullptr.
 //
 // This test ships its own miniature HAL backend declaring three capabilities
-// (Mic, IRTx, Display); the StickC backend in src/hal_stickc/ is excluded
+// (Mic, IRTx, Display); the StickC Plus2 backend in src/hal_stickcplus2/ is excluded
 // from the native build (build_src_filter = -<*>) so there's no symbol
 // collision.
 

@@ -24,12 +24,12 @@
 #include "hal/hal.h"
 #include "M5Unified.h"
 
-#include "display_stickc.h"
-#include "buttons_stickc.h"
-#include "imu_stickc.h"
-#include "battery_stickc.h"
-#include "mic_stickc.h"
-#include "ir_tx_stickc.h"
+#include "display_stickcplus2.h"
+#include "buttons_stickcplus2.h"
+#include "imu_stickcplus2.h"
+#include "battery_stickcplus2.h"
+#include "mic_stickcplus2.h"
+#include "ir_tx_stickcplus2.h"
 
 namespace nocturnation {
 namespace hal {
@@ -64,12 +64,12 @@ bool HAL::has(Capability c) {
 // -----------------------------------------------------------------------------
 
 namespace {
-DisplayStickC s_display;
-ButtonsStickC s_buttons;
-IMUStickC     s_imu;
-BatteryStickC s_battery;
-MicStickC     s_mic;
-IRTxStickC    s_ir_tx;
+DisplayStickCplus2 s_display;
+ButtonsStickCplus2 s_buttons;
+IMUStickCplus2     s_imu;
+BatteryStickCplus2 s_battery;
+MicStickCplus2     s_mic;
+IRTxStickCplus2    s_ir_tx;
 }  // namespace
 
 // -----------------------------------------------------------------------------
@@ -88,7 +88,7 @@ void HAL::begin() {
     s_buttons.begin();
     s_imu.begin();
     // Battery has no begin() in the HAL interface - M5.Power is up after
-    // M5.begin() and the BatteryStickC backend is purely a query wrapper.
+    // M5.begin() and the BatteryStickCplus2 backend is purely a query wrapper.
     // Mic is NOT begun here. Orchestration enables it via the DAL
     // (DAL::start_audio_input) when entering beat mode and disables it
     // when leaving; the prototype's M5.Mic / M5.Speaker contention pattern
@@ -98,8 +98,8 @@ void HAL::begin() {
 
 void HAL::loop_tick() {
     // Refresh M5Unified per-frame state (button edges, etc.) before any
-    // polled backend reads from it. ButtonsStickC::poll() depends on this
-    // having been called.
+    // polled backend reads from it. ButtonsStickCplus2::poll() depends on
+    // this having been called.
     M5.update();
 
     // Polled capabilities advance here. Buttons emits events to subscribers

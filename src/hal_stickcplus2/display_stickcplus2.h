@@ -14,7 +14,7 @@
 namespace nocturnation {
 namespace hal {
 
-class DisplayStickC : public Display {
+class DisplayStickCplus2 : public Display {
 public:
     void begin() override;
     void set_rotation(uint8_t rotation) override;

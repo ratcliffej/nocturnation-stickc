@@ -33,7 +33,7 @@ namespace modes {
 //
 // Spec §8.2 lists Idle as a separate mode; in this implementation the Menu
 // serves as the long-press-PWR destination, since pre-Epic-4 there's no
-// behavioural difference between an "idle" StickC and one sitting at the
+// behavioural difference between an "idle" device and one sitting at the
 // menu screen. Idle can be reintroduced later if there's a real low-power
 // requirement.
 

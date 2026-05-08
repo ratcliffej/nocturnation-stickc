@@ -1,7 +1,9 @@
-// NocturNation StickC firmware - top-level entry point.
+// NocturNation M5StickC Plus2 firmware - top-level entry point.
 //
 // All operating behaviour now lives below this file:
-//   - Hardware access goes through hal::HAL (StickC backend in src/hal_stickc/)
+//   - Hardware access goes through hal::HAL (StickC Plus2 backend in
+//     src/hal_stickcplus2/; future host backends, e.g. M5 StickS3, slot in
+//     alongside as their own src/hal_<host>/ folder).
 //   - Devices, drivers, and event dispatch go through dal::DAL (src/dal/)
 //   - Mode FSM + per-mode UI/audio/IR handling goes through
 //     modes::ModeMachine (src/modes/), which subscribes to DAL events at

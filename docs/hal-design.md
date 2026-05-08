@@ -11,7 +11,7 @@ sync_direction: not synced (design doc, lives in repo only for now)
 
 This document defines the interface contract for the Hardware Abstraction Layer (HAL). Each supported host (M5StickC Plus2, Tildagon, generic ESP32 dev kits, future microcontrollers) provides one HAL backend that implements this contract. Layers above the HAL never call vendor SDKs directly.
 
-The interface lands in Epic 2 of the architecture refactor. The first concrete backend - M5StickC Plus2 - lands in the same Epic. ESP-NOW interface stubs are defined here, but the StickC backend does not declare the `esp-now` capability until Epic 4 ships the actual implementation.
+The interface lands in Epic 2 of the architecture refactor. The first concrete backend - M5StickC Plus2 - lands in the same Epic. ESP-NOW interface stubs are defined here, but the StickC Plus2 backend does not declare the `esp-now` capability until Epic 4 ships the actual implementation.
 
 ---
 
@@ -35,8 +35,8 @@ namespace nocturnation::hal {
 enum class Capability : uint8_t {
     Mic,        // microphone samples + on-board FFT, emits AudioFrames
     IRTx,       // IR LED transmitter (raw pulse send)
-    IRRx,       // IR receiver (Epic 4+; not declared by Epic 2 StickC backend)
-    ESPNow,     // ESP-NOW broadcast/peer (Epic 4+; not declared by Epic 2 StickC backend)
+    IRRx,       // IR receiver (Epic 4+; not declared by StickC Plus2 backend)
+    ESPNow,     // ESP-NOW broadcast/peer (Epic 4+; not declared by StickC Plus2 backend)
     Display,    // framebuffer + drawing primitives
     Buttons,    // discrete buttons with click/long-press semantics
     IMU,        // 3- or 6-axis accelerometer/gyro
@@ -74,7 +74,7 @@ public:
 }
 ```
 
-`HAL::has(Capability::ESPNow)` returns false on the Epic 2 StickC backend; it returns true once Epic 4 lands. Code that depends on a capability checks `has()` (or accepts the nullptr from the accessor) and degrades gracefully.
+`HAL::has(Capability::ESPNow)` returns false on the StickC Plus2 backend; it returns true once Epic 4 lands. Code that depends on a capability checks `has()` (or accepts the nullptr from the accessor) and degrades gracefully.
 
 There is no `Clock` capability. `millis()` and `micros()` are framework primitives every supported platform provides; they're imported directly where needed rather than wrapped.
 
@@ -377,7 +377,7 @@ The Plus2 backend may use M5Unified internally (it's already a dep, and saves bo
 - **Capability accessor pattern.** Static methods (current sketch) vs. an `HAL` singleton instance vs. a templated `HAL::get<Mic>()`. Static is simplest to read but couples capability names into the `HAL` class header. Consider revisiting once we have two backends.
 - **Display abstraction depth.** Wrapping LovyanGFX with primitives is enough for Epic 1's UIs but may not be enough for Epic 3's richer screens. Decide on extending `Display` (more primitives) vs. exposing a typed sub-interface (e.g. `Display::sprite()`) at Epic 3 time.
 - **ESP-NOW receive ordering.** ESP-NOW callbacks on ESP32 fire from a vendor task. The HAL will need to bridge that into the polled `loop_tick()` model via a small lock-free queue. Sketch the queue when Epic 4 starts; not a contract concern now.
-- **Tildagon constraints.** When the Tildagon backend drafts, the IMU/buttons/display interfaces may need optional fields the StickC didn't surface. Plan for backwards-compatible additions.
+- **Tildagon constraints.** When the Tildagon backend drafts, the IMU/buttons/display interfaces may need optional fields the StickC Plus2 didn't surface. Plan for backwards-compatible additions.
 
 ---
 
@@ -386,6 +386,6 @@ The Plus2 backend may use M5Unified internally (it's already a dep, and saves bo
 When Feature 2.0 (HAL implementation) starts:
 
 1. Create `lib/hal/include/hal.h` with the interfaces above (one header per capability is fine, or one combined header for now).
-2. Create `lib/hal/stickc/` for the Plus2 backend implementations.
-3. Use `build_src_filter` in `platformio.ini` to select which backend the firmware compiles against. Default in this repo: `stickc`. Future backends sit in `lib/hal/<host>/`.
+2. Create `lib/hal/stickcplus2/` for the Plus2 backend implementations.
+3. Use `build_src_filter` in `platformio.ini` to select which backend the firmware compiles against. Default in this repo: `stickcplus2`. Future backends (e.g. M5 StickS3) sit in `lib/hal/<host>/`.
 4. Add a native `test/test_hal_capability_query/` that links against a stub backend declaring a known capability set, verifies `HAL::has()` and `HAL::capabilities()` return the right list. This is the only HAL test that runs on the host without hardware; everything else is verified by Block 3-style hardware ritual.

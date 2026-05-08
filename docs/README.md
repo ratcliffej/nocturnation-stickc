@@ -11,9 +11,9 @@ This directory holds the project's design documentation as Markdown files. Markd
 
 ## Multi-app context
 
-This is currently the StickC firmware repo, but it's an ESP32-family project that will grow to cover additional host boards (e.g. generic ESP32 dev kits). A separate repo for the **Tildagon** receiver firmware is planned, and a third **umbrella** repo may emerge for cross-project docs.
+This is currently the StickC Plus2 firmware repo, but it's an ESP32-family project that will grow to cover additional host boards (M5 StickS3, generic ESP32 dev kits, etc.). A separate repo for the **Tildagon** receiver firmware is planned, and a third **umbrella** repo may emerge for cross-project docs.
 
-Each file in this directory is tagged in its frontmatter with `status: cross-project` (for project-wide docs that will eventually move to the umbrella repo) or `status: stickc-specific` / `status: esp32-specific` (for docs that stay here). When the umbrella repo exists, cross-project files migrate; the rest stay.
+Each file in this directory is tagged in its frontmatter with `status: cross-project` (for project-wide docs that will eventually move to the umbrella repo) or `status: stickcplus2-specific` / `status: esp32-specific` (for docs that stay here). When the umbrella repo exists, cross-project files migrate; the rest stay.
 
 ## File layout
 
