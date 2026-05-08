@@ -128,27 +128,27 @@ static void test_menu_cycle_wraps(void) {
                           (int)ModeMachine::current());
 }
 
-static void test_long_press_pwr_returns_to_menu_from_each_runtime_mode(void) {
+static void test_long_press_btnb_returns_to_menu_from_each_runtime_mode(void) {
     // From AutonomousMaster
     ModeMachine::switch_to(ModeId::AutonomousMaster);
     TEST_ASSERT_EQUAL_INT((int)ModeId::AutonomousMaster,
                           (int)ModeMachine::current());
-    inject_button_press(hal::ButtonId::Btn3, hal::ButtonEvent::LongPressed);
+    inject_button_press(hal::ButtonId::Btn2, hal::ButtonEvent::LongPressed);
     TEST_ASSERT_EQUAL_INT((int)ModeId::Menu, (int)ModeMachine::current());
 
     // From Slave
     ModeMachine::switch_to(ModeId::Slave);
-    inject_button_press(hal::ButtonId::Btn3, hal::ButtonEvent::LongPressed);
+    inject_button_press(hal::ButtonId::Btn2, hal::ButtonEvent::LongPressed);
     TEST_ASSERT_EQUAL_INT((int)ModeId::Menu, (int)ModeMachine::current());
 
     // From Config
     ModeMachine::switch_to(ModeId::Config);
-    inject_button_press(hal::ButtonId::Btn3, hal::ButtonEvent::LongPressed);
+    inject_button_press(hal::ButtonId::Btn2, hal::ButtonEvent::LongPressed);
     TEST_ASSERT_EQUAL_INT((int)ModeId::Menu, (int)ModeMachine::current());
 
     // From Test
     ModeMachine::switch_to(ModeId::Test);
-    inject_button_press(hal::ButtonId::Btn3, hal::ButtonEvent::LongPressed);
+    inject_button_press(hal::ButtonId::Btn2, hal::ButtonEvent::LongPressed);
     TEST_ASSERT_EQUAL_INT((int)ModeId::Menu, (int)ModeMachine::current());
 }
 
@@ -173,7 +173,7 @@ int main(int, char**) {
     RUN_TEST(test_menu_btn1_selects_default_first_item);
     RUN_TEST(test_menu_btn2_cycles_then_btn1_selects_slave);
     RUN_TEST(test_menu_cycle_wraps);
-    RUN_TEST(test_long_press_pwr_returns_to_menu_from_each_runtime_mode);
+    RUN_TEST(test_long_press_btnb_returns_to_menu_from_each_runtime_mode);
     RUN_TEST(test_test_mode_short_press_does_not_leave_mode);
     return UNITY_END();
 }

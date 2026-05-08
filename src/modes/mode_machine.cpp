@@ -536,8 +536,10 @@ public:
             pulse_.on_beat(millis(), estimated_bpm_);
             return;
         }
-        // Btn3 (PWR) long-press: back to menu.
-        if (ev.id == ButtonId::Btn3 && ev.kind == ButtonEvent::LongPressed) {
+        // BtnB long-press: back to menu. Two-button UI on both Plus2 and
+        // S3 - BtnPWR is hardware-managed on the S3 (PMIC owns reset/off),
+        // so the firmware UI is consistently BtnA + BtnB across hosts.
+        if (ev.id == ButtonId::Btn2 && ev.kind == ButtonEvent::LongPressed) {
             ModeMachine::switch_to(ModeId::Menu);
             return;
         }
@@ -672,11 +674,11 @@ public:
         DAL::fire_display_show_text("local", DisplayShowTextEvent{
             10, 80, "(ESP-NOW: Epic 4)", WHITE, BLACK, 1});
         DAL::fire_display_show_text("local", DisplayShowTextEvent{
-            10, 128, "hold PWR for menu", WHITE, BLACK, 1});
+            10, 128, "B-hold: menu", WHITE, BLACK, 1});
     }
 
     void on_button_event(const ButtonPressEvent& ev) override {
-        if (ev.id == ButtonId::Btn3 && ev.kind == ButtonEvent::LongPressed) {
+        if (ev.id == ButtonId::Btn2 && ev.kind == ButtonEvent::LongPressed) {
             ModeMachine::switch_to(ModeId::Menu);
         }
     }
@@ -738,10 +740,10 @@ public:
         if (ev.kind != ButtonEvent::Pressed
          && ev.kind != ButtonEvent::LongPressed) return;
 
-        // PWR-hold pops one level. PixMob's two-level structure (menu ->
-        // SetGroupId/GroupTarget workflow) gets an extra pop step before
-        // it returns to the Config top-level.
-        if (ev.id == ButtonId::Btn3 && ev.kind == ButtonEvent::LongPressed) {
+        // BtnB long-press pops one level. PixMob's two-level structure
+        // (menu -> SetGroupId/GroupTarget workflow) gets an extra pop step
+        // before it returns to the Config top-level.
+        if (ev.id == ButtonId::Btn2 && ev.kind == ButtonEvent::LongPressed) {
             if (level_ == Level::Top) {
                 ModeMachine::switch_to(ModeId::Menu);
             } else if (active_sub_ == SubMenu::PixMob
@@ -1102,7 +1104,7 @@ private:
         DAL::fire_display_show_text("local", DisplayShowTextEvent{
             10, 95, "B: cycle  A: send", WHITE, BLACK, 1});
         DAL::fire_display_show_text("local", DisplayShowTextEvent{
-            10, 128, "PWR-hold: back", WHITE, BLACK, 1});
+            10, 128, "B-hold: back", WHITE, BLACK, 1});
     }
 
     void draw_pixmob_group_tgt() {
@@ -1117,7 +1119,7 @@ private:
         DAL::fire_display_show_text("local", DisplayShowTextEvent{
             10, 90, "A: fire + advance", WHITE, BLACK, 1});
         DAL::fire_display_show_text("local", DisplayShowTextEvent{
-            10, 128, "PWR-hold: back", WHITE, BLACK, 1});
+            10, 128, "B-hold: back", WHITE, BLACK, 1});
     }
 
     // -------------------------------------------------------------------------
@@ -1445,7 +1447,7 @@ private:
             launch_test(kSubTests[menu_selected_].test);
             return;
         }
-        if (ev.id == ButtonId::Btn3 && ev.kind == ButtonEvent::LongPressed) {
+        if (ev.id == ButtonId::Btn2 && ev.kind == ButtonEvent::LongPressed) {
             ModeMachine::switch_to(ModeId::Menu);
             return;
         }
@@ -1476,8 +1478,9 @@ private:
         if (ev.kind != ButtonEvent::Pressed
          && ev.kind != ButtonEvent::LongPressed) return;
 
-        // PWR-hold always goes back one level (sub-test -> sub-test menu).
-        if (ev.id == ButtonId::Btn3 && ev.kind == ButtonEvent::LongPressed) {
+        // BtnB long-press always goes back one level (sub-test -> sub-test
+        // menu).
+        if (ev.id == ButtonId::Btn2 && ev.kind == ButtonEvent::LongPressed) {
             return_to_menu();
             return;
         }
@@ -1535,7 +1538,7 @@ private:
         DAL::fire_display_show_text("local", DisplayShowTextEvent{
             10, 100, "1 Hz auto", WHITE, BLACK, 2});
         DAL::fire_display_show_text("local", DisplayShowTextEvent{
-            10, 128, "PWR-hold: back", WHITE, BLACK, 1});
+            10, 128, "B-hold: back", WHITE, BLACK, 1});
     }
 
     // -------------------------------------------------------------------------
@@ -1572,7 +1575,7 @@ private:
         DAL::fire_display_show_text("local", DisplayShowTextEvent{
             10, 60, buf, WHITE, BLACK, 2});
         DAL::fire_display_show_text("local", DisplayShowTextEvent{
-            10, 128, "PWR-hold: back", WHITE, BLACK, 1});
+            10, 128, "B-hold: back", WHITE, BLACK, 1});
     }
 
     // -------------------------------------------------------------------------
@@ -1611,7 +1614,7 @@ private:
         DAL::fire_display_show_text("local", DisplayShowTextEvent{
             10, 60, buf, WHITE, BLACK, 2});
         DAL::fire_display_show_text("local", DisplayShowTextEvent{
-            10, 128, "PWR-hold: back", WHITE, BLACK, 1});
+            10, 128, "B-hold: back", WHITE, BLACK, 1});
     }
 
     // -------------------------------------------------------------------------
@@ -1635,7 +1638,7 @@ private:
         DAL::fire_display_show_text("local", DisplayShowTextEvent{
             10, 60, "A: fire white", WHITE, BLACK, 2});
         DAL::fire_display_show_text("local", DisplayShowTextEvent{
-            10, 128, "PWR-hold: back", WHITE, BLACK, 1});
+            10, 128, "B-hold: back", WHITE, BLACK, 1});
     }
 
     // -------------------------------------------------------------------------
@@ -1767,7 +1770,7 @@ private:
                 x, bar_y_bottom, bar_w, 1, WHITE});
         }
         DAL::fire_display_show_text("local", DisplayShowTextEvent{
-            10, 128, "PWR: back", WHITE, BLACK, 1});
+            10, 128, "B-hold: back", WHITE, BLACK, 1});
     }
 
     void draw_audio_live_dynamic() {
@@ -2025,7 +2028,7 @@ private:
                 DAL::fire_display_show_text("local", DisplayShowTextEvent{
                     10, 105, "B: toggle auto", WHITE, BLACK, 1});
                 DAL::fire_display_show_text("local", DisplayShowTextEvent{
-                    10, 128, "PWR: back", WHITE, BLACK, 1});
+                    10, 128, "B-hold: back", WHITE, BLACK, 1});
                 break;
             }
             case CalState::BaselinePrompt:
@@ -2036,7 +2039,7 @@ private:
                 DAL::fire_display_show_text("local", DisplayShowTextEvent{
                     10, 88, "A: start", YELLOW, BLACK, 2});
                 DAL::fire_display_show_text("local", DisplayShowTextEvent{
-                    10, 128, "PWR: back", WHITE, BLACK, 1});
+                    10, 128, "B-hold: back", WHITE, BLACK, 1});
                 break;
             case CalState::BaselineCapture: {
                 const uint32_t elapsed   = millis() - cal_phase_start_ms_;
@@ -2059,7 +2062,7 @@ private:
                 DAL::fire_display_show_text("local", DisplayShowTextEvent{
                     10, 88, "A: start", YELLOW, BLACK, 2});
                 DAL::fire_display_show_text("local", DisplayShowTextEvent{
-                    10, 128, "PWR: back", WHITE, BLACK, 1});
+                    10, 128, "B-hold: back", WHITE, BLACK, 1});
                 break;
             case CalState::PeakCapture: {
                 const uint32_t elapsed   = millis() - cal_phase_start_ms_;

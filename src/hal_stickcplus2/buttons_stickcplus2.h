@@ -1,9 +1,14 @@
 // M5StickC Plus2 Buttons backend.
 //
-// Wraps M5.BtnA, M5.BtnB, M5.BtnPWR. Mapping per docs/hal-design.md §6:
+// Wraps M5.BtnA and M5.BtnB only. The Plus2 has a third hardware button
+// (BtnPWR / left-side power button) but we deliberately do NOT surface it,
+// for cross-host UI consistency: the StickS3's PMIC owns the power button
+// in hardware (short press = reset, long press = power off, neither
+// reachable from firmware), so a two-button BtnA + BtnB UI is the only
+// option that works identically on both hosts.
+//
 //   Btn1 -> M5.BtnA   (front "fire" button)
 //   Btn2 -> M5.BtnB   (side button)
-//   Btn3 -> M5.BtnPWR (top power button)
 //
 // poll() is called from HAL::loop_tick(); it reads M5Unified's edge-detected
 // state (which assumes M5.update() has been called this frame, as main.cpp
