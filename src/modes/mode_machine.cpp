@@ -1162,14 +1162,16 @@ public:
             return;
         }
 
-        // Dual-channel scan during NO SIGNAL when the operator hasn't
-        // locked us to a specific channel. Spec §4.5: alternate channel
-        // 11 (show) and channel 1 (hobby), 2 s dwell each, show priority
-        // (we already started on 11 at enter()). Any inbound frame
-        // clears no_signal_ in on_recv so the scan stops automatically
-        // once a master is found.
-        if (no_signal_ && slave_channel_pref_ == 0
-            && (now - last_chan_switch_ms_) >= kChannelDwellMs) {
+        // Dual-channel scan in auto mode. Spec §4.5: alternate channel
+        // 11 (show priority) and channel 1 (hobby), 2 s dwell each.
+        // Scans on cold start (no frames received yet, master could be
+        // on either channel) AND on master-loss (no_signal_). Any
+        // inbound frame in on_recv stops the scan implicitly because
+        // it locks us to whichever channel we were on when the frame
+        // arrived.
+        const bool scanning = (slave_channel_pref_ == 0)
+                           && (rx_count_ == 0 || no_signal_);
+        if (scanning && (now - last_chan_switch_ms_) >= kChannelDwellMs) {
             current_listen_chan_ = (current_listen_chan_ == 11) ? 1 : 11;
             last_chan_switch_ms_ = now;
             if (auto* radio = hal::HAL::esp_now()) {
