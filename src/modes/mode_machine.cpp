@@ -1147,13 +1147,22 @@ public:
         // discipline, a slave that loses the master should fail subtle
         // (NO SIGNAL text only) so a brief outage doesn't visually
         // fragment the show.
-        if (rx_count_ > 0 && !no_signal_
-            && (now - last_rx_ms_) > kNoSignalMs) {
+        //
+        // last_rx_ms_ is written from the WiFi-task callback (on_recv),
+        // read here from main task. If on_recv fires between this
+        // function's `now = millis()` sample and the comparison below,
+        // last_rx_ms_ can briefly be one or two ms ahead of `now`.
+        // Without the saturating subtract that 1-2 ms turns into
+        // ~UINT32_MAX, trips the > kNoSignalMs threshold, and we get
+        // a spurious NO SIGNAL flicker every pulse cycle.
+        const uint32_t age_since_rx =
+            (now >= last_rx_ms_) ? (now - last_rx_ms_) : 0;
+        if (rx_count_ > 0 && !no_signal_ && age_since_rx > kNoSignalMs) {
             no_signal_ = true;
             last_chan_switch_ms_ = now;   // reset scan timer
 #ifdef ARDUINO
             Serial.printf("[espnow] slave NO SIGNAL: %lu ms since last RX\n",
-                          (unsigned long)(now - last_rx_ms_));
+                          (unsigned long)age_since_rx);
 #endif
             DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
             draw_status_strip();
@@ -1477,7 +1486,11 @@ private:
     // is gone entirely).
     int signal_bars_from_age() const {
         if (rx_count_ == 0)              return 0;
-        const uint32_t age = millis() - last_rx_ms_;
+        // Saturating subtract: handle the WiFi-task / main-task race where
+        // last_rx_ms_ can briefly be slightly ahead of millis() because
+        // on_recv fired between the caller's millis() sample and this read.
+        const uint32_t now = millis();
+        const uint32_t age = (now >= last_rx_ms_) ? (now - last_rx_ms_) : 0;
         if (age < 500)                   return 4;
         if (age < 1000)                  return 3;
         if (age < 2000)                  return 2;
@@ -1587,7 +1600,8 @@ private:
             10, 84, line, WHITE, BLACK, 1});
 
         if (rx_count_ > 0) {
-            const uint32_t age = millis() - last_rx_ms_;
+            const uint32_t now = millis();
+            const uint32_t age = (now >= last_rx_ms_) ? (now - last_rx_ms_) : 0;
             std::snprintf(line, sizeof(line), "last rx: %lu ms ago    ",
                           (unsigned long)age);
             DAL::fire_display_show_text("local", DisplayShowTextEvent{
