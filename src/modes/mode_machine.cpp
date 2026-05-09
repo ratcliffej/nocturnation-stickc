@@ -2419,6 +2419,13 @@ public:
         // Drain any pending redundant retransmits scheduled by the test's
         // initial fire (per spec §4.3 master reliability redundancy).
         broadcaster_.pump_retransmits();
+        // Heartbeat the master-alive signal at 1 Hz throughout Test mode -
+        // not just during a sub-test fire. Without this, sitting in the
+        // test menu (or in gaps between pulse-test steps longer than the
+        // slave's 3 s no-signal threshold) makes the slave declare
+        // NO SIGNAL even though we're actively running. Skip-if-recent
+        // means the actual bandwidth cost during music is roughly nil.
+        broadcaster_.maybe_send_heartbeat();
         // Post-pulse status redraw. While a pulse is animating the screen is
         // the light surface (LocalDriver paints frame-by-frame). When the
         // pulse terminates LocalDriver paints a final BLACK frame; we then
