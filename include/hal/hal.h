@@ -126,6 +126,11 @@ public:
     virtual bool begin(uint8_t wifi_channel) = 0;
     virtual void end() = 0;
 
+    // Switch the radio to a different WiFi channel without tearing down
+    // ESP-NOW. Required for slave dual-channel scanning per spec §4.5.
+    // Returns false if the radio isn't running or the channel switch fails.
+    virtual bool set_channel(uint8_t wifi_channel) = 0;
+
     virtual bool send_broadcast(const uint8_t* data, size_t len) = 0;
     virtual bool send_to(const uint8_t mac[6], const uint8_t* data, size_t len) = 0;
 

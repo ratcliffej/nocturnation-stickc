@@ -21,6 +21,7 @@ public:
 
     bool begin(uint8_t wifi_channel) override;
     void end() override;
+    bool set_channel(uint8_t wifi_channel) override;
 
     bool send_broadcast(const uint8_t* data, size_t len) override;
     bool send_to(const uint8_t mac[6], const uint8_t* data, size_t len) override;

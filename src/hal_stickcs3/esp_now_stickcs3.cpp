@@ -63,6 +63,20 @@ void ESPNowStickCS3::end() {
     running_ = false;
 }
 
+bool ESPNowStickCS3::set_channel(uint8_t wifi_channel) {
+    if (!running_) return false;
+    if (esp_wifi_set_channel(wifi_channel, WIFI_SECOND_CHAN_NONE) != ESP_OK) {
+        return false;
+    }
+    channel_ = wifi_channel;
+    esp_now_peer_info_t peer{};
+    std::memcpy(peer.peer_addr, kBroadcastMac, sizeof(peer.peer_addr));
+    peer.channel = wifi_channel;
+    peer.encrypt = false;
+    esp_now_mod_peer(&peer);
+    return true;
+}
+
 bool ESPNowStickCS3::send_broadcast(const uint8_t* data, size_t len) {
     if (!running_ || data == nullptr || len == 0) return false;
     return esp_now_send(kBroadcastMac, data, len) == ESP_OK;

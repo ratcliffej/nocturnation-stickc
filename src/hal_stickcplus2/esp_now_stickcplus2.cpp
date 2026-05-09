@@ -85,6 +85,25 @@ void ESPNowStickCplus2::end() {
     running_ = false;
 }
 
+bool ESPNowStickCplus2::set_channel(uint8_t wifi_channel) {
+    if (!running_) return false;
+    if (esp_wifi_set_channel(wifi_channel, WIFI_SECOND_CHAN_NONE) != ESP_OK) {
+        return false;
+    }
+    channel_ = wifi_channel;
+    // Update the broadcast peer's channel to match - some ESP-IDF
+    // builds tie peer dispatch to the peer's stored channel rather
+    // than the radio's current channel. Modifying it keeps everything
+    // consistent regardless.
+    esp_now_peer_info_t peer{};
+    std::memcpy(peer.peer_addr, kBroadcastMac, sizeof(peer.peer_addr));
+    peer.channel = wifi_channel;
+    peer.encrypt = false;
+    esp_now_mod_peer(&peer);     // ignore return - some IDFs return error
+                                 // codes for already-correct state
+    return true;
+}
+
 bool ESPNowStickCplus2::send_broadcast(const uint8_t* data, size_t len) {
     if (!running_ || data == nullptr || len == 0) return false;
     return esp_now_send(kBroadcastMac, data, len) == ESP_OK;

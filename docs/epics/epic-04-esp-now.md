@@ -368,7 +368,18 @@ The Plus2 EOL situation creates a small additional task: at the end of this Epic
 
 Processing Type stays Hybrid because most of this is laptop-driven coding work where Claude Code is genuinely a useful pair. The exception is Block 8's stress test, which is genuinely Manual - Jason and a deliberately-noisy environment.
 
-**Block 3 hardware-verification update (2026-05-09)**: ESP-NOW transmit + receive HAL backends landed on both Plus2 and S3. AutonomousMaster broadcasts BEAT_DETECTED + LIGHT_COMMAND on each detected beat. Slave mode receives, decodes header, defers payload work to main-loop (essential - calling IRsend::sendRaw from the WiFi callback context crashes the S3). Slave's screen renders the broadcast colour with attack/sustain/release fade through a new `LocalDriver` RgbPulse handler; orchestration just calls `DAL::render_fx("local", ev)` and the driver owns the per-frame paint at ~30 Hz.
+**Block 3 + Block 4 + Block 6 progress update (2026-05-09)**: ESP-NOW transmit + receive HAL backends landed on both Plus2 and S3. AutonomousMaster broadcasts BEAT_DETECTED + LIGHT_COMMAND on each detected beat. Slave mode receives, decodes header, defers payload work to main-loop (essential - calling IRsend::sendRaw from the WiFi callback context crashes the S3). Slave's screen renders the broadcast colour with attack/sustain/release fade through a new `LocalDriver` RgbPulse handler; orchestration just calls `DAL::render_fx("local", ev)` and the driver owns the per-frame paint at ~30 Hz.
+
+**Block 4 close (2026-05-09)**: deduplication ring buffer (16-entry `(source_id, sequence_number)` tuple, per spec §4.3) added to SlaveMode's `on_recv` so master's planned 2-3x redundant TX (Block 5) doesn't double-fire IR or paint twice per logical beat. Alive-signal updates run on every received frame including duplicates so master-loss detection isn't fooled by the redundancy. Slave-mode no-signal behaviour deliberately does NOT run any autonomous idle effect: a "subtle hue cycle" - which the original Block 4 plan called for - is too visible during a brief master-loss in a live show and risks visually fragmenting the deployment. Black + small "NO SIGNAL" status text only.
+
+**Slave own-group IR routing (2026-05-09)**: slave's IR forward target now configurable via `Config → IR → Slave Group`, persisted to NVS as `slv_ir_grp`. Group 0 = broadcast to all-pixmobs (default, preserves historical behaviour); 1..5 = specific group. Solves the "two slaves at opposite ends of a venue both bombarding all bracelets in IR range" problem by letting the operator partition bracelets into groups and configure each slave to its own group. Bracelets get their group ID via the existing PixMob > Set Group ID workflow.
+
+**Block 6 (two-channel architecture, 2026-05-09)**: implemented per spec §4.5. Master channel and slave channel both NVS-backed and configurable via `Config → ESP-NOW`:
+
+- **Master Channel**: cycles 1 (hobby, default) → 6 (custom override) → 11 (show). Persisted as `mst_chan`. AutonomousMaster + Test mode both pick this up at mode entry.
+- **Slave Channel**: cycles auto (default) → 1 → 6 → 11. Persisted as `slv_chan`. When set to auto, slave starts on channel 11 (show priority per spec) and dual-channel scans (channel 11 ↔ channel 1, 2 s dwell each) during NO SIGNAL state until a master is found. When locked to a specific channel, stays there. Channel switching during scan goes through the new `HAL::ESPNow::set_channel()` method (added on both Plus2 and S3 backends, mods the broadcast peer's stored channel alongside `esp_wifi_set_channel`).
+
+Two-channel architecture is the key deployability piece - hobby (channel 1) and show (channel 11) traffic now operate without interference, and an operator at a festival can configure their show on channel 11 knowing channel 1 is reserved for community / hobby experimenters in the same venue.
 
 Several architectural clarifications adopted during Block 3 (now in spec §4.3, §4.7-Bluetooth, §7.4):
 
@@ -380,10 +391,14 @@ Several architectural clarifications adopted during Block 3 (now in spec §4.3, 
 6. **Per-capability driver gates**: `Config → Display → Pulse Enable` (NVS-backed) gates the LocalDriver's `RgbPulse` handler only - status text and other display events stay unaffected. Finer-grained than driver-level enable.
 7. **Test mode joins the broadcast**: Test sub-tests (Pulse / Fade / Rainbow / Sparkle / WhiteOut) now `render_fx("local", ev)` for the screen AND call a shared `EspNowBroadcaster` helper to broadcast LIGHT_COMMAND, so any slave on the channel renders the same colour during a test the same way it does during a real show.
 
-Outstanding follow-ups carried into Block 4 / Block 5 / Block 6:
+Outstanding follow-ups carried into Block 5 / Block 7 / Block 8:
 
-- Replace the `EspNowBroadcaster` helper struct with a proper `EspNowDriver` registered in the DAL behind `render_fx("esp-now-broadcast", ev)`. The struct is a stepping stone; once it lands, the per-mode radio lifecycle goes away.
-- Slave forwards IR to its **own configured group**, not `"all-pixmobs"` broadcast. Slave NVS-stores its group ID; target string built dynamically. Avoids two slaves at opposite ends of a venue both broadcast-firing into the same airspace.
-- Brand-independent target naming sweep (`"all-pixmobs"` etc.) - deferred until a second IR protocol or NocturNation-native bracelet code arrives so the abstraction has a real second consumer.
+- Block 5 strict: master's 2-3x redundant TX. Slave dedup ring buffer is already in place; this just adds the redundant transmits on the master side.
+- Block 5: Repeat mode (slave-also-rebroadcasts ESP-NOW) for venues larger than a single radio range.
+- Block 7: real RSSI capture for the slave's signal-strength indicator (currently using frame-age proxy). Need promiscuous-mode sniffer pattern for arduino-esp32's pre-IDF-v5.3 ESP-NOW callback signature - the legacy `esp_now_recv_cb_t` doesn't carry RSSI directly.
+- Block 8: range and stress testing.
+- Replace the `EspNowBroadcaster` helper struct with a proper `EspNowDriver` registered in the DAL behind `render_fx("esp-now-broadcast", ev)`. The struct is a stepping stone; once it lands, the per-mode radio lifecycle goes away. Block 5 / Block 7 work could fold into this.
+- Brand-independent target naming sweep (`"all-pixmobs"` → `IR_pixmob_groupN` etc.) - deferred until a second IR protocol or NocturNation-native bracelet code arrives so the abstraction has a real second consumer.
 - esp-dsp `_aes3` SIMD FFT path on S3 - currently using `_ansi` because `_aes3` produced erratic per-bin magnitudes for our packed-real-as-complex input layout. ANSI path is still meaningfully faster than arduinoFFT (float vs double, better cache behaviour); recovering the SIMD win is a focused investigation.
 - Empirical IR radiation patterns: Plus2 IR LED is omnidirectional, S3 is more focused. Useful for deployment planning - operator can stack a Plus2 + S3 in the same venue with the S3 aimed at the dance floor and the Plus2 doing general fill.
+- Epic 4.5 (sub-band adaptive-threshold beat detection) addresses the Plus2/S3 sensitivity divergence that surfaced during Block 3. Proposed but not yet started.

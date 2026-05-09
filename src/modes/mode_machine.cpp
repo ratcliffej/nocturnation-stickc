@@ -129,6 +129,66 @@ void save_screen_pulse_enabled(bool e) {
     prefs.end();
 }
 
+// Slave-mode IR forward group. 0 = broadcast (all-pixmobs), 1..5 = specific
+// PixMob group. Defaults to 0 to preserve the historical broadcast behaviour;
+// operators with multiple slaves in one venue should configure each one to a
+// different group via Config > IR > Slave Group to avoid IR airspace fights.
+uint8_t load_slave_ir_group() {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/true);
+    uint8_t g = prefs.getUChar("slv_ir_grp", 0);
+    prefs.end();
+    if (g > 5) g = 0;
+    return g;
+}
+
+void save_slave_ir_group(uint8_t g) {
+    if (g > 5) g = 0;
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/false);
+    prefs.putUChar("slv_ir_grp", g);
+    prefs.end();
+}
+
+// ESP-NOW radio channel preferences. Master uses one of {1, 6, 11}; slave
+// uses {0=Auto/scan, 1, 6, 11}. Defaults: master 1 (hobby), slave 0 (auto-
+// scan with show priority). Per architecture spec §4.5: channel 1 = hobby /
+// open community traffic, channel 11 = show / commercial; channel 6 is an
+// advanced operator override only.
+uint8_t load_master_channel() {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/true);
+    uint8_t c = prefs.getUChar("mst_chan", 1);
+    prefs.end();
+    if (c != 1 && c != 6 && c != 11) c = 1;
+    return c;
+}
+
+void save_master_channel(uint8_t c) {
+    if (c != 1 && c != 6 && c != 11) c = 1;
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/false);
+    prefs.putUChar("mst_chan", c);
+    prefs.end();
+}
+
+uint8_t load_slave_channel() {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/true);
+    uint8_t c = prefs.getUChar("slv_chan", 0);   // 0 = auto/scan
+    prefs.end();
+    if (c != 0 && c != 1 && c != 6 && c != 11) c = 0;
+    return c;
+}
+
+void save_slave_channel(uint8_t c) {
+    if (c != 0 && c != 1 && c != 6 && c != 11) c = 0;
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/false);
+    prefs.putUChar("slv_chan", c);
+    prefs.end();
+}
+
 AudioCalibration load_calibration() {
     Preferences prefs;
     prefs.begin("noct", /*readOnly=*/true);
@@ -153,6 +213,12 @@ bool             load_ir_enabled()             { return true; }
 void             save_ir_enabled(bool)         {}
 bool             load_screen_pulse_enabled()    { return true; }
 void             save_screen_pulse_enabled(bool) {}
+uint8_t          load_slave_ir_group()          { return 0; }
+void             save_slave_ir_group(uint8_t)  {}
+uint8_t          load_master_channel()          { return 1; }
+void             save_master_channel(uint8_t) {}
+uint8_t          load_slave_channel()           { return 0; }
+void             save_slave_channel(uint8_t)  {}
 AudioCalibration load_calibration()       { return kCalibrationDefault; }
 void             save_calibration(const AudioCalibration&) {}
 #endif
@@ -637,7 +703,10 @@ public:
         sync_pulse_colour();
         pulse_.enter();
         DAL::start_audio_input("local", 16000, 512);
-        broadcaster_.begin(kMasterChannel);
+        // Channel from NVS (Config > ESP-NOW > Master Channel). Default
+        // 1 (hobby); show deployments configure 11; 6 is an advanced
+        // operator override.
+        broadcaster_.begin(load_master_channel());
         draw();
     }
 
@@ -752,9 +821,8 @@ public:
     }
 
 private:
-    // Channel 1 is the hobby/community default per spec §4.5; show-mode
-    // (channel 11) and operator override land in Block 6.
-    static constexpr uint8_t kMasterChannel = 1;
+    // Channel comes from NVS (Config > ESP-NOW > Master Channel) per
+    // spec §4.5: 1 = hobby (default), 11 = show, 6 = advanced override.
 
     EspNowBroadcaster broadcaster_;
 
@@ -897,6 +965,20 @@ public:
         no_signal_        = false;
         last_strip_draw_ms_ = 0;
 
+        // Load operator-configured preferences from NVS. IR group lets
+        // multiple slaves in one venue avoid IR airspace fights; channel
+        // preference picks hobby (1) / show (11) / advanced (6) / auto-
+        // scan (0) per spec §4.5.
+        slave_ir_group_      = load_slave_ir_group();
+        slave_channel_pref_  = load_slave_channel();
+
+        // Auto-scan starts on channel 11 (show priority) per spec §4.5.
+        // Locked configs start on the configured channel.
+        current_listen_chan_  = (slave_channel_pref_ == 0)
+                                ? 11
+                                : slave_channel_pref_;
+        last_chan_switch_ms_  = millis();
+
         // Reserve a 12 px status strip at the top of the screen so the
         // battery + signal-strength icons stay visible while pulses paint
         // the rest of the screen. LocalDriver paints fill_rect within
@@ -911,13 +993,18 @@ public:
             radio->set_recv_callback([this](const hal::ESPNowMessage& m) {
                 this->on_recv(m);
             });
-            radio_active_ = radio->begin(kSlaveChannel);
+            radio_active_ = radio->begin(current_listen_chan_);
 #ifdef ARDUINO
             if (!radio_active_) {
                 Serial.println("[espnow] slave begin() failed");
             } else {
-                Serial.printf("[espnow] slave up: ch=%u\n",
-                              (unsigned)kSlaveChannel);
+                Serial.printf("[espnow] slave up: ch=%u (pref=%s, ir_grp=%u)\n",
+                              (unsigned)current_listen_chan_,
+                              slave_channel_pref_ == 0 ? "auto"
+                              : slave_channel_pref_ == 1 ? "1 hobby"
+                              : slave_channel_pref_ == 11 ? "11 show"
+                              : "6 custom",
+                              (unsigned)slave_ir_group_);
             }
 #endif
         }
@@ -945,10 +1032,15 @@ public:
 
         // Edge into NO SIGNAL: paint the status UI immediately (the rest
         // of the screen below the strip is dead space anyway since no
-        // pulses are arriving). Slave does NOT auto-promote.
+        // pulses are arriving). Slave does NOT auto-promote and does NOT
+        // run any visually distinctive idle effect - per show-coordination
+        // discipline, a slave that loses the master should fail subtle
+        // (NO SIGNAL text only) so a brief outage doesn't visually
+        // fragment the show.
         if (rx_count_ > 0 && !no_signal_
             && (now - last_rx_ms_) > kNoSignalMs) {
             no_signal_ = true;
+            last_chan_switch_ms_ = now;   // reset scan timer
 #ifdef ARDUINO
             Serial.printf("[espnow] slave NO SIGNAL: %lu ms since last RX\n",
                           (unsigned long)(now - last_rx_ms_));
@@ -958,6 +1050,25 @@ public:
             draw_no_signal_body();
             last_draw_ms_ = now;
             return;
+        }
+
+        // Dual-channel scan during NO SIGNAL when the operator hasn't
+        // locked us to a specific channel. Spec §4.5: alternate channel
+        // 11 (show) and channel 1 (hobby), 2 s dwell each, show priority
+        // (we already started on 11 at enter()). Any inbound frame
+        // clears no_signal_ in on_recv so the scan stops automatically
+        // once a master is found.
+        if (no_signal_ && slave_channel_pref_ == 0
+            && (now - last_chan_switch_ms_) >= kChannelDwellMs) {
+            current_listen_chan_ = (current_listen_chan_ == 11) ? 1 : 11;
+            last_chan_switch_ms_ = now;
+            if (auto* radio = hal::HAL::esp_now()) {
+                radio->set_channel(current_listen_chan_);
+#ifdef ARDUINO
+                Serial.printf("[espnow] slave scan -> ch=%u\n",
+                              (unsigned)current_listen_chan_);
+#endif
+            }
         }
 
         // Status strip refreshes ~2x per second; the icons read battery
@@ -984,7 +1095,6 @@ public:
     }
 
 private:
-    static constexpr uint8_t  kSlaveChannel        = 1;
     // No-signal threshold: 3x the master's heartbeat period (1 Hz). Three
     // missed heartbeats with no other traffic = master almost certainly
     // gone. Slaves do NOT auto-promote to master on this transition - the
@@ -1009,6 +1119,17 @@ private:
     uint8_t   last_msg_type_      = 0xFF;
     bool      no_signal_          = false;   // sticky once threshold crossed
 
+    // Slave IR forward group (0=broadcast/all-pixmobs, 1..5=specific).
+    // Loaded from NVS on enter() so the operator's choice survives reboot.
+    uint8_t   slave_ir_group_     = 0;
+
+    // Channel preference: 0 = auto (dual-channel scan with show priority),
+    // 1 / 6 / 11 = locked to that channel. Loaded from NVS on enter().
+    uint8_t   slave_channel_pref_   = 0;
+    uint8_t   current_listen_chan_  = 1;
+    uint32_t  last_chan_switch_ms_  = 0;
+    static constexpr uint32_t kChannelDwellMs = 2000;
+
     // Deferred LIGHT_COMMAND queue (single slot; new arrivals replace).
     // The ESP-NOW receive callback runs on the WiFi task; calling
     // IRsend::sendRaw (~30 ms blocking GPIO loop) from that context
@@ -1016,6 +1137,40 @@ private:
     // in loop_tick (main task context, safe for the IR send timing).
     volatile bool                            pending_light_ = false;
     transport::espnow::LightCommandPayload   pending_light_payload_{};
+
+    // Deduplication ring (architecture spec §4.3): receivers track the
+    // last 16 (source_id, sequence_number) tuples and drop repeats. The
+    // master sends each frame 2-3 times for airtime resilience (Block 5
+    // adds the redundant TX); without this gate the slave would paint
+    // and fire IR twice per logical beat.
+    //
+    // Sequence number 0 is reserved as "sequencing disabled" per spec -
+    // we treat those frames as always fresh (never deduped). All other
+    // values 1-255 wrap normally.
+    //
+    // Only the WiFi-task on_recv reads/writes this; loop_tick only
+    // observes pending_light_ + pending_light_payload_.
+    struct DedupEntry { uint8_t source_id; uint8_t sequence_number; };
+    static constexpr size_t kDedupRingSize = 16;
+    DedupEntry dedup_ring_[kDedupRingSize] = {};
+    size_t     dedup_head_ = 0;
+
+    bool seen_recently(uint8_t src, uint8_t seq) const {
+        if (seq == 0) return false;
+        for (size_t i = 0; i < kDedupRingSize; ++i) {
+            if (dedup_ring_[i].source_id == src
+             && dedup_ring_[i].sequence_number == seq) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void mark_seen(uint8_t src, uint8_t seq) {
+        if (seq == 0) return;
+        dedup_ring_[dedup_head_] = DedupEntry{src, seq};
+        dedup_head_ = (dedup_head_ + 1) % kDedupRingSize;
+    }
 
     // -------------------------------------------------------------------------
     // Slave-as-target-device: an inbound LIGHT_COMMAND fans out to every
@@ -1049,20 +1204,44 @@ private:
 
         // Local light surface (screen on the StickC).
         DAL::render_fx("local", ev);
-        // IR forward to nearby bracelets. No-op if IR mute is on or the
-        // host has no IR Tx capability; no special-case handling needed.
-        DAL::render_fx("all-pixmobs", ev);
+
+        // IR forward to bracelets in this slave's configured group.
+        // Group 0 = broadcast to all PixMobs (compatible with bracelets
+        // that haven't been programmed with a specific group); 1..5 =
+        // specific group, lets two slaves in the same venue avoid
+        // bombarding all bracelets in IR range. Operator picks via
+        // Config > IR > Slave Group; persisted to NVS as slv_ir_grp.
+        // Fail-silent if IR is muted (Config > IR > Enable) or this
+        // host has no IR Tx capability.
+        const char* ir_target = ir_target_name(slave_ir_group_);
+        DAL::render_fx(ir_target, ev);
+    }
+
+    // Map group id (0..5) -> registered DAL device name. Group 0 maps to
+    // "all-pixmobs" for full-broadcast behaviour; 1..5 map to the per-group
+    // devices DAL::begin() registers.
+    static const char* ir_target_name(uint8_t group_id) {
+        switch (group_id) {
+            case 0:  return "all-pixmobs";
+            case 1:  return "group-1";
+            case 2:  return "group-2";
+            case 3:  return "group-3";
+            case 4:  return "group-4";
+            case 5:  return "group-5";
+            default: return "all-pixmobs";
+        }
     }
 
     void on_recv(const hal::ESPNowMessage& m) {
         using namespace transport::espnow;
 
+        // Any frame received - including duplicates - counts as the
+        // master being alive. Update rx_count_ and last_rx_ms_ before
+        // the dedup gate so master-loss detection isn't fooled by
+        // redundant retransmissions.
         rx_count_++;
         last_rx_ms_ = millis();
 
-        // Recovery from no-signal: any fresh frame means the master is
-        // back. Clear the flag and let the next loop_tick redraw the
-        // status UI normally.
         const bool was_no_signal = no_signal_;
         no_signal_ = false;
         if (was_no_signal) {
@@ -1086,6 +1265,30 @@ private:
         last_source_id_ = hdr.source_id;
         last_msg_type_  = static_cast<uint8_t>(hdr.message_type);
 
+        // Deduplication gate: if we've already processed this exact
+        // (source_id, sequence_number) within the last 16 frames, log
+        // and drop. Prevents the master's 2-3x redundant TX (per spec
+        // §4.3 reliability strategy, lands in Block 5) from causing
+        // double IR fires / double screen paints per logical beat.
+        const bool is_dup = seen_recently(hdr.source_id, hdr.sequence_number);
+        if (!is_dup) {
+            mark_seen(hdr.source_id, hdr.sequence_number);
+        }
+
+#ifdef ARDUINO
+        Serial.printf("[espnow RX %s%02X src=%u seq=%u] ",
+                      is_dup ? "DUP " : "",
+                      (unsigned)last_msg_type_,
+                      (unsigned)hdr.source_id,
+                      (unsigned)hdr.sequence_number);
+        for (size_t i = 0; i < m.len && i < 32; ++i) {
+            Serial.printf("%02X ", m.data[i]);
+        }
+        Serial.println();
+#endif
+
+        if (is_dup) return;
+
         // Display-as-light: defer LIGHT_COMMAND rendering to loop_tick.
         // This callback runs on the ESP-NOW / WiFi task; render_light
         // fans out to render_fx("all-pixmobs"), which calls into
@@ -1105,17 +1308,6 @@ private:
                 pending_light_ = true;
             }
         }
-
-#ifdef ARDUINO
-        Serial.printf("[espnow RX %02X src=%u seq=%u] ",
-                      (unsigned)last_msg_type_,
-                      (unsigned)hdr.source_id,
-                      (unsigned)hdr.sequence_number);
-        for (size_t i = 0; i < m.len && i < 32; ++i) {
-            Serial.printf("%02X ", m.data[i]);
-        }
-        Serial.println();
-#endif
     }
 
     // ---------------------------------------------------------------------
@@ -1209,9 +1401,10 @@ private:
         DAL::fire_display_show_text("local", DisplayShowTextEvent{
             10, 30, "NO SIGNAL", RED, BLACK, 3});
 
-        std::snprintf(line, sizeof(line), "ch %u %s",
-                      (unsigned)kSlaveChannel,
-                      radio_active_ ? "listening" : "off");
+        std::snprintf(line, sizeof(line), "ch %u %s%s",
+                      (unsigned)current_listen_chan_,
+                      radio_active_ ? "listening" : "off",
+                      slave_channel_pref_ == 0 ? " (scan)" : "");
         DAL::fire_display_show_text("local", DisplayShowTextEvent{
             10, 70, line, WHITE, BLACK, 1});
 
@@ -1403,9 +1596,9 @@ private:
             case SubMenu::System:  handle_system(ev);  break;
             case SubMenu::IR:      handle_ir(ev);      break;
             case SubMenu::Display: handle_display(ev); break;
+            case SubMenu::EspNow:  handle_espnow(ev);  break;
             case SubMenu::PixMob:  handle_pixmob(ev);  break;
             case SubMenu::Audio:
-            case SubMenu::EspNow:
             case SubMenu::WiFi:
             case SubMenu::Dmx:
                 // Stub submenus accept Btn2 cycling for read-only browsing
@@ -1425,7 +1618,7 @@ private:
             case SubMenu::Audio:   draw_stub("Audio", kAudioItems, kAudioItemCount, "Epic 3"); break;
             case SubMenu::Display: draw_display(); break;
             case SubMenu::IR:      draw_ir(); break;
-            case SubMenu::EspNow: draw_stub("ESP-NOW", kEspNowItems, kEspNowItemCount, "Epic 4"); break;
+            case SubMenu::EspNow:  draw_espnow(); break;
             case SubMenu::WiFi:   draw_stub("WiFi",    kWifiItems,   kWifiItemCount,   "Epic 4"); break;
             case SubMenu::Dmx:    draw_stub("DMX",     kDmxItems,    kDmxItemCount,    "Epic 7"); break;
             case SubMenu::PixMob: draw_pixmob(); break;
@@ -1468,7 +1661,7 @@ private:
             case SubMenu::Audio:   return kAudioItemCount;
             case SubMenu::Display: return kDisplayFunctionalItemCount;
             case SubMenu::IR:      return kIrItemCount;
-            case SubMenu::EspNow:  return kEspNowItemCount;
+            case SubMenu::EspNow:  return kEspNowFunctionalItemCount;
             case SubMenu::WiFi:    return kWifiItemCount;
             case SubMenu::Dmx:     return kDmxItemCount;
             default:               return 1;
@@ -1561,7 +1754,7 @@ private:
     enum class IRItem : uint8_t {
         EnableDisable = 0,
         Protocol,
-        GroupIdAssignment,
+        SlaveGroup,
     };
     static constexpr size_t kIrFunctionalItemCount = 3;
 
@@ -1571,14 +1764,21 @@ private:
             draw();
             return;
         }
-        if (ev.id == ButtonId::Btn1
-         && (IRItem)sub_selected_ == IRItem::EnableDisable) {
-            const bool next = !DAL::driver_enabled("ir-pixmob");
-            DAL::set_driver_enabled("ir-pixmob", next);
-            save_ir_enabled(next);
-            draw();
+        if (ev.id == ButtonId::Btn1) {
+            if ((IRItem)sub_selected_ == IRItem::EnableDisable) {
+                const bool next = !DAL::driver_enabled("ir-pixmob");
+                DAL::set_driver_enabled("ir-pixmob", next);
+                save_ir_enabled(next);
+                draw();
+            } else if ((IRItem)sub_selected_ == IRItem::SlaveGroup) {
+                // Cycle 0 (broadcast / all-pixmobs) -> 1 .. 5 -> 0.
+                uint8_t g = load_slave_ir_group();
+                g = (g + 1) % 6;
+                save_slave_ir_group(g);
+                draw();
+            }
         }
-        // Protocol and GroupIdAssignment are info-only - no Btn1 action.
+        // Protocol is info-only - no Btn1 action.
     }
 
     void draw_ir() {
@@ -1589,10 +1789,17 @@ private:
         char ena[24];
         std::snprintf(ena, sizeof(ena), "Enable: %s",
                       DAL::driver_enabled("ir-pixmob") ? "ON" : "OFF");
+        char grp[24];
+        const uint8_t cur_grp = load_slave_ir_group();
+        if (cur_grp == 0) {
+            std::snprintf(grp, sizeof(grp), "Slave Grp: all");
+        } else {
+            std::snprintf(grp, sizeof(grp), "Slave Grp: %u", (unsigned)cur_grp);
+        }
         const char* lines[kIrFunctionalItemCount] = {
             ena,
             "Protocol: PixMob",
-            "Group: Test menu",
+            grp,
         };
 
         for (size_t i = 0; i < kIrFunctionalItemCount; ++i) {
@@ -1605,7 +1812,111 @@ private:
                 sel ? YELLOW : WHITE, BLACK, 2});
         }
         DAL::fire_display_show_text("local", DisplayShowTextEvent{
-            10, 122, "B: cycle  A: act  PWR: back",
+            10, 122, "B: cycle  A: act  B-hold: back",
+            WHITE, BLACK, 1});
+    }
+
+    // -------------------------------------------------------------------------
+    // ESP-NOW submenu (functional: Master Channel + Slave Channel)
+    //
+    // Per architecture spec §4.5 the project's two-channel social contract
+    // is channel 1 = hobby/community/open, channel 11 = show/commercial.
+    // Master picks 1, 11, or 6 (advanced override). Slave picks Auto (dual-
+    // channel scan with show priority) or locks to a specific channel.
+    // Both persist to NVS and survive reboot.
+    // -------------------------------------------------------------------------
+
+    enum class EspNowItem : uint8_t {
+        MasterChannel = 0,
+        SlaveChannel,
+    };
+    static constexpr size_t kEspNowFunctionalItemCount = 2;
+
+    static const char* master_channel_label(uint8_t c) {
+        switch (c) {
+            case 1:  return "1 hobby";
+            case 6:  return "6 custom";
+            case 11: return "11 show";
+            default: return "1 hobby";
+        }
+    }
+
+    static const char* slave_channel_label(uint8_t c) {
+        switch (c) {
+            case 0:  return "auto scan";
+            case 1:  return "1 hobby";
+            case 6:  return "6 custom";
+            case 11: return "11 show";
+            default: return "auto scan";
+        }
+    }
+
+    static uint8_t cycle_master_channel(uint8_t c) {
+        // 1 -> 6 -> 11 -> 1
+        switch (c) {
+            case 1:  return 6;
+            case 6:  return 11;
+            case 11: return 1;
+            default: return 1;
+        }
+    }
+
+    static uint8_t cycle_slave_channel(uint8_t c) {
+        // 0 (auto) -> 1 -> 6 -> 11 -> 0
+        switch (c) {
+            case 0:  return 1;
+            case 1:  return 6;
+            case 6:  return 11;
+            case 11: return 0;
+            default: return 0;
+        }
+    }
+
+    void handle_espnow(const ButtonPressEvent& ev) {
+        if (ev.id == ButtonId::Btn2) {
+            sub_selected_ = (sub_selected_ + 1) % kEspNowFunctionalItemCount;
+            draw();
+            return;
+        }
+        if (ev.id == ButtonId::Btn1) {
+            if ((EspNowItem)sub_selected_ == EspNowItem::MasterChannel) {
+                save_master_channel(cycle_master_channel(load_master_channel()));
+            } else if ((EspNowItem)sub_selected_ == EspNowItem::SlaveChannel) {
+                save_slave_channel(cycle_slave_channel(load_slave_channel()));
+            }
+            // New value applies on next AutonomousMaster / SlaveMode enter().
+            // Operator returns to Menu and re-enters the mode to pick it up.
+            draw();
+        }
+    }
+
+    void draw_espnow() {
+        DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 5, "ESP-NOW", WHITE, BLACK, 2});
+
+        char m_line[28];
+        char s_line[28];
+        std::snprintf(m_line, sizeof(m_line), "Master: %s",
+                      master_channel_label(load_master_channel()));
+        std::snprintf(s_line, sizeof(s_line), "Slave:  %s",
+                      slave_channel_label(load_slave_channel()));
+        const char* lines[kEspNowFunctionalItemCount] = { m_line, s_line };
+
+        for (size_t i = 0; i < kEspNowFunctionalItemCount; ++i) {
+            const bool sel = (i == sub_selected_);
+            char buf[40];
+            std::snprintf(buf, sizeof(buf), "%s %s",
+                          sel ? ">" : " ", lines[i]);
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 30 + (int)i * 16, buf,
+                sel ? YELLOW : WHITE, BLACK, 2});
+        }
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 80, "(applies on mode entry)",
+            WHITE, BLACK, 1});
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 122, "B: cycle  A: change  B-hold: back",
             WHITE, BLACK, 1});
     }
 
@@ -1897,10 +2208,11 @@ public:
     void enter() override {
         menu_selected_    = 0;
         menu_view_offset_ = 0;
-        // Same channel as AutonomousMaster - test fires broadcast over
-        // ESP-NOW so any slave on the channel renders the colour and
-        // forwards IR to its own bracelets, just like during a real show.
-        broadcaster_.begin(kTestChannel);
+        // Same channel as AutonomousMaster (NVS-configured). Test fires
+        // broadcast over ESP-NOW so any slave on the configured show
+        // channel renders the colour and forwards IR to its own bracelets,
+        // just like during a real show.
+        broadcaster_.begin(load_master_channel());
         return_to_menu();
     }
 
@@ -2021,10 +2333,8 @@ private:
     float    rainbow_hue_         = 0.0f;
     uint32_t rainbow_last_step_ms_ = 0;
 
-    // Channel 1 (hobby) for now; same default as AutonomousMaster. When
-    // Block 6 lands the channel-config (hobby 1 / show 11) it'll come
-    // from a single source.
-    static constexpr uint8_t kTestChannel = 1;
+    // Test mode broadcasts on the same channel AutonomousMaster uses
+    // (NVS-configured: 1 hobby / 11 show / 6 custom).
     EspNowBroadcaster broadcaster_;
 
     // Tracks the LocalDriver's pulse-active flag across loop_tick calls,
