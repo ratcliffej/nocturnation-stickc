@@ -391,13 +391,27 @@ Several architectural clarifications adopted during Block 3 (now in spec §4.3, 
 6. **Per-capability driver gates**: `Config → Display → Pulse Enable` (NVS-backed) gates the LocalDriver's `RgbPulse` handler only - status text and other display events stay unaffected. Finer-grained than driver-level enable.
 7. **Test mode joins the broadcast**: Test sub-tests (Pulse / Fade / Rainbow / Sparkle / WhiteOut) now `render_fx("local", ev)` for the screen AND call a shared `EspNowBroadcaster` helper to broadcast LIGHT_COMMAND, so any slave on the channel renders the same colour during a test the same way it does during a real show.
 
-Outstanding follow-ups carried into Block 5 / Block 7 / Block 8:
+**Block 5 (master 3× redundant TX + slave repeater, 2026-05-09)**:
 
-- Block 5 strict: master's 2-3x redundant TX. Slave dedup ring buffer is already in place; this just adds the redundant transmits on the master side.
-- Block 5: Repeat mode (slave-also-rebroadcasts ESP-NOW) for venues larger than a single radio range.
-- Block 7: real RSSI capture for the slave's signal-strength indicator (currently using frame-age proxy). Need promiscuous-mode sniffer pattern for arduino-esp32's pre-IDF-v5.3 ESP-NOW callback signature - the legacy `esp_now_recv_cb_t` doesn't carry RSSI directly.
+- *Master redundancy*: every frame goes out 3 times total (initial + 2 retransmits) with the SAME sequence number, separated by 5-15 ms of pseudo-random jitter. Implemented in `EspNowBroadcaster` as a small pending-retransmit queue drained by `pump_retransmits()` from the owning mode's `loop_tick` (so retransmit time never blocks beat detection). Slave dedup ring buffer (Block 4 close) handles the duplicates, so each logical frame produces exactly one IR fire / one screen paint at the receiver. New frame replaces any pending burst - if a beat lands while a heartbeat is mid-redundancy, the beat's redundancy takes priority.
+- *Slave-as-repeater*: `Config → ESP-NOW → Repeat` toggle (NVS-backed, default OFF). When enabled, each unique inbound frame is rebroadcast once with `hop_count` incremented by 1, capped at the spec §4.3 3-hop limit. Source ID + sequence number preserved exactly so dedup works mesh-wide - other slaves seeing both the original master frame and the repeat treat them as duplicates and act once. Repeat send is queued in `on_recv` and drained from `loop_tick` to keep `esp_now_send` off the WiFi callback context (same safety reasoning as the IR forward path).
+
+**Block 7 (signal quality, 2026-05-09)**: shipped as **sequence-loss-rate quality tracking** rather than RSSI. The transport-agnostic `transport::SignalQuality` class counts received-vs-expected frames per source from sequence numbers, maps the rolling 5-second loss percentage to 0-4 bars (<5% → 4 bars, <15% → 3, <30% → 2, <50% → 1, ≥50% → 0). Reflects **delivered fidelity** rather than radio strength - what an operator actually cares about for show coordination. Strong RSSI with 30% packet loss is a bad show; weak RSSI with 0% loss is fine.
+
+Why not RSSI:
+
+- arduino-esp32 v2.x (our current platform) uses the legacy ESP-NOW callback that doesn't carry RSSI; the only access path is a promiscuous-mode WiFi sniffer.
+- Promiscuous mode in dense WiFi venues (EMF, NullSector, festival fields) means receiving 100-500+ frames/sec and burning ~5-15% extra battery on filtering noise. Painful for battery-powered receivers like future bracelets / Tildagons.
+- Sequence-loss tracking gets us a metric closer to what operators care about (delivered fidelity) at zero airtime cost and minimal CPU overhead.
+
+The `SignalQuality` class is genuinely transport-agnostic - any sequenced protocol where the sender increments per-frame can use the same class. Future BLE / IR ack channels plug in identically.
+
+11 native unit tests in `test/test_signal_quality/` cover lossless / partial-loss / severe-loss bands, source-change resets, sequence-number wrap (255 → 1 with no phantom missed frames), `seq=0` "sequencing disabled" exclusion, and rolling-window decay. SlaveMode integrates the tracker by feeding it from `on_recv` after the dedup gate (only unique frames count); the status strip's signal bars come from `SignalQuality::bars()` with the existing frame-age proxy as a cold-start fallback.
+
+Outstanding follow-ups carried into Block 8 / future Epics:
+
 - Block 8: range and stress testing.
-- Replace the `EspNowBroadcaster` helper struct with a proper `EspNowDriver` registered in the DAL behind `render_fx("esp-now-broadcast", ev)`. The struct is a stepping stone; once it lands, the per-mode radio lifecycle goes away. Block 5 / Block 7 work could fold into this.
+- Replace the `EspNowBroadcaster` helper struct with a proper `EspNowDriver` registered in the DAL behind `render_fx("esp-now-broadcast", ev)`. The struct is a stepping stone; once it lands, the per-mode radio lifecycle goes away.
 - Brand-independent target naming sweep (`"all-pixmobs"` → `IR_pixmob_groupN` etc.) - deferred until a second IR protocol or NocturNation-native bracelet code arrives so the abstraction has a real second consumer.
 - esp-dsp `_aes3` SIMD FFT path on S3 - currently using `_ansi` because `_aes3` produced erratic per-bin magnitudes for our packed-real-as-complex input layout. ANSI path is still meaningfully faster than arduinoFFT (float vs double, better cache behaviour); recovering the SIMD win is a focused investigation.
 - Empirical IR radiation patterns: Plus2 IR LED is omnidirectional, S3 is more focused. Useful for deployment planning - operator can stack a Plus2 + S3 in the same venue with the S3 aimed at the dance floor and the Plus2 doing general fill.

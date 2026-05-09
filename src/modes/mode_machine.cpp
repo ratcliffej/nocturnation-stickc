@@ -13,10 +13,12 @@
 #include "effects/effects.h"
 #include "hal/hal.h"
 #include "transport/espnow/frame.h"
+#include "transport/quality.h"             // SignalQuality
 #include "../dal/drivers/local_driver.h"   // for set_pulse_enabled gating
 
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #ifdef ARDUINO
@@ -189,6 +191,25 @@ void save_slave_channel(uint8_t c) {
     prefs.end();
 }
 
+// Slave repeater mode: when enabled, slave rebroadcasts each unique
+// frame with hop_count + 1 (capped at spec §4.3's 3-hop limit). Off
+// by default - operator opts in for venue range extension. Persisted
+// as `slv_repeat`.
+bool load_slave_repeat_enabled() {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/true);
+    bool e = prefs.getBool("slv_repeat", false);   // default OFF
+    prefs.end();
+    return e;
+}
+
+void save_slave_repeat_enabled(bool e) {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/false);
+    prefs.putBool("slv_repeat", e);
+    prefs.end();
+}
+
 AudioCalibration load_calibration() {
     Preferences prefs;
     prefs.begin("noct", /*readOnly=*/true);
@@ -219,6 +240,8 @@ uint8_t          load_master_channel()          { return 1; }
 void             save_master_channel(uint8_t) {}
 uint8_t          load_slave_channel()           { return 0; }
 void             save_slave_channel(uint8_t)  {}
+bool             load_slave_repeat_enabled()    { return false; }
+void             save_slave_repeat_enabled(bool) {}
 AudioCalibration load_calibration()       { return kCalibrationDefault; }
 void             save_calibration(const AudioCalibration&) {}
 #endif
@@ -240,10 +263,33 @@ void             save_calibration(const AudioCalibration&) {}
 struct EspNowBroadcaster {
     static constexpr uint32_t kHeartbeatPeriodMs = 1000;   // 1 Hz alive signal
 
+    // Per spec §4.3 reliability strategy: each frame goes out 3 times
+    // total (initial + 2 retransmits) with the SAME sequence number,
+    // separated by 5-15 ms of pseudo-random jitter. Slave dedup catches
+    // the duplicates; the redundancy buys airtime resilience against
+    // collisions and brief interference. Total send burst is ~20-30 ms,
+    // well under the inter-beat interval at any musical tempo.
+    static constexpr uint8_t  kRedundantSends     = 3;
+    static constexpr uint8_t  kRedundantGapMinMs  = 5;
+    static constexpr uint8_t  kRedundantGapMaxMs  = 15;
+
+    // Maximum frame size we ever buffer for retransmit. Matches the
+    // transport-level cap so the LIGHT_COMMAND frame (largest at 14
+    // bytes including header) fits comfortably.
+    static constexpr size_t   kRetransmitBufSize  = 32;
+
     bool      active_      = false;
     uint8_t   source_id_   = 1;
     uint8_t   seq_num_     = 1;
     uint32_t  last_tx_ms_  = 0;
+
+    // Pending-retransmit state. When a frame is sent for the first time
+    // we copy its bytes here and schedule the next 2 sends; pump_retransmits()
+    // (called from the owning mode's loop_tick) drains them in order.
+    uint8_t   retransmit_buf_[kRetransmitBufSize] = {};
+    size_t    retransmit_len_       = 0;
+    uint8_t   retransmits_remaining_ = 0;
+    uint32_t  next_retransmit_ms_   = 0;
 
     bool begin(uint8_t channel) {
         if (active_) return true;
@@ -301,6 +347,48 @@ struct EspNowBroadcaster {
 #else
         (void)ok; (void)label;
 #endif
+
+        // Schedule the redundant retransmits per spec §4.3. New frame
+        // replaces any pending retransmit queue - if a beat lands while
+        // a heartbeat is still mid-burst, we'd rather get the beat out
+        // than complete the heartbeat's redundancy.
+        if (n <= kRetransmitBufSize) {
+            std::memcpy(retransmit_buf_, buf, n);
+            retransmit_len_        = n;
+            retransmits_remaining_ = kRedundantSends - 1;
+            next_retransmit_ms_    = millis() + redundant_gap_ms();
+        } else {
+            retransmits_remaining_ = 0;
+        }
+    }
+
+    // Drain any pending retransmits whose time has come. Called from the
+    // owning mode's loop_tick (so we run on the main task, never the
+    // ESP-NOW callback).
+    void pump_retransmits() {
+        if (!active_ || retransmits_remaining_ == 0) return;
+        const uint32_t now = millis();
+        if (now < next_retransmit_ms_) return;
+
+        auto* radio = hal::HAL::esp_now();
+        if (!radio) {
+            retransmits_remaining_ = 0;
+            return;
+        }
+        radio->send_broadcast(retransmit_buf_, retransmit_len_);
+        last_tx_ms_ = now;
+        retransmits_remaining_--;
+        if (retransmits_remaining_ > 0) {
+            next_retransmit_ms_ = now + redundant_gap_ms();
+        }
+    }
+
+    static uint32_t redundant_gap_ms() {
+        // Pseudo-random jitter in [kRedundantGapMinMs, kRedundantGapMaxMs].
+        // std::rand() is good enough - we want spread, not cryptographic
+        // unpredictability.
+        const uint32_t span = kRedundantGapMaxMs - kRedundantGapMinMs + 1;
+        return kRedundantGapMinMs + (std::rand() % span);
     }
 
     void send_beat(float strength_rms, float bpm) {
@@ -722,6 +810,8 @@ public:
             draw();
             last_draw_ms_ = now;
         }
+        // Drain any pending redundant retransmits (per spec §4.3).
+        broadcaster_.pump_retransmits();
         // Skip-if-recent heartbeat: keep master-alive flowing only when
         // BEAT_DETECTED traffic isn't already covering it.
         broadcaster_.maybe_send_heartbeat();
@@ -971,6 +1061,8 @@ public:
         // scan (0) per spec §4.5.
         slave_ir_group_      = load_slave_ir_group();
         slave_channel_pref_  = load_slave_channel();
+        slave_repeat_en_     = load_slave_repeat_enabled();
+        quality_.reset();
 
         // Auto-scan starts on channel 11 (show priority) per spec §4.5.
         // Locked configs start on the configured channel.
@@ -1028,6 +1120,24 @@ public:
         if (pending_light_) {
             pending_light_ = false;
             render_light(pending_light_payload_);
+        }
+
+        // Drain any pending repeater rebroadcast. Same deferred pattern -
+        // ESP-NOW send from the WiFi callback context is unsafe in our
+        // arduino-esp32 v2.x setup.
+        if (pending_repeat_) {
+            pending_repeat_ = false;
+            if (auto* radio = hal::HAL::esp_now()) {
+                radio->send_broadcast(pending_repeat_buf_, pending_repeat_len_);
+#ifdef ARDUINO
+                Serial.printf("[espnow REPEAT hop=%u] ",
+                              (unsigned)pending_repeat_buf_[3]);
+                for (size_t i = 0; i < pending_repeat_len_ && i < 32; ++i) {
+                    Serial.printf("%02X ", pending_repeat_buf_[i]);
+                }
+                Serial.println();
+#endif
+            }
         }
 
         // Edge into NO SIGNAL: paint the status UI immediately (the rest
@@ -1130,6 +1240,11 @@ private:
     uint32_t  last_chan_switch_ms_  = 0;
     static constexpr uint32_t kChannelDwellMs = 2000;
 
+    // Sequence-loss-rate signal quality. Transport-agnostic; could feed
+    // off any sequenced protocol (future BLE / IR ack channels) the same
+    // way it does ESP-NOW today.
+    transport::SignalQuality quality_;
+
     // Deferred LIGHT_COMMAND queue (single slot; new arrivals replace).
     // The ESP-NOW receive callback runs on the WiFi task; calling
     // IRsend::sendRaw (~30 ms blocking GPIO loop) from that context
@@ -1137,6 +1252,22 @@ private:
     // in loop_tick (main task context, safe for the IR send timing).
     volatile bool                            pending_light_ = false;
     transport::espnow::LightCommandPayload   pending_light_payload_{};
+
+    // Repeater mode (per spec §4.3, configurable per-slave via
+    // Config > ESP-NOW > Repeat). When enabled, each unique inbound
+    // frame is rebroadcast once with hop_count incremented by 1, up
+    // to a 3-hop ceiling. Source_id and sequence_number are preserved
+    // exactly so dedup works across the mesh - other slaves receiving
+    // both the original and the repeat see them as duplicates.
+    //
+    // Queue same shape as the LIGHT_COMMAND queue: copy in on_recv,
+    // drain in loop_tick (off the WiFi callback context).
+    bool          slave_repeat_en_      = false;
+    volatile bool pending_repeat_       = false;
+    size_t        pending_repeat_len_   = 0;
+    static constexpr size_t kRepeatBufSize  = 32;
+    static constexpr uint8_t kMaxHopCount   = 3;
+    uint8_t       pending_repeat_buf_[kRepeatBufSize] = {};
 
     // Deduplication ring (architecture spec §4.3): receivers track the
     // last 16 (source_id, sequence_number) tuples and drop repeats. The
@@ -1273,6 +1404,12 @@ private:
         const bool is_dup = seen_recently(hdr.source_id, hdr.sequence_number);
         if (!is_dup) {
             mark_seen(hdr.source_id, hdr.sequence_number);
+            // Quality tracker only counts unique frames - duplicates from
+            // the master's redundancy-for-reliability TX shouldn't make
+            // the signal look better than it actually is.
+            quality_.note_frame(hdr.source_id,
+                                hdr.sequence_number,
+                                last_rx_ms_);
         }
 
 #ifdef ARDUINO
@@ -1288,6 +1425,21 @@ private:
 #endif
 
         if (is_dup) return;
+
+        // Repeater mode (spec §4.3): rebroadcast each unique frame with
+        // hop_count incremented by 1, up to a 3-hop ceiling. Preserves
+        // source_id + sequence_number so dedup works mesh-wide. Defer
+        // the actual radio.send_broadcast to loop_tick (same WiFi-task
+        // safety reasoning as the IR forward path).
+        if (slave_repeat_en_
+            && hdr.hop_count < kMaxHopCount
+            && m.len <= kRepeatBufSize) {
+            std::memcpy(pending_repeat_buf_, m.data, m.len);
+            // hop_count is the 4th byte of the header per spec §4.3.
+            pending_repeat_buf_[3] = hdr.hop_count + 1;
+            pending_repeat_len_    = m.len;
+            pending_repeat_        = true;
+        }
 
         // Display-as-light: defer LIGHT_COMMAND rendering to loop_tick.
         // This callback runs on the ESP-NOW / WiFi task; render_light
@@ -1317,10 +1469,10 @@ private:
     // LocalDriver's pulse rect.
     // ---------------------------------------------------------------------
 
-    // Until Block 7's RSSI capture lands we use a simple frame-age proxy:
-    // recently-arrived frames -> strong signal, no-traffic-for-a-while ->
-    // weak. The thresholds approximate "frames within an expected window
-    // are healthy" rather than meaning anything in dB.
+    // Frame-age proxy. Used as a cold-start fallback before the quality
+    // tracker has accumulated enough data for a real estimate, and as the
+    // post-NO-SIGNAL killer (any bar count is meaningless if the master
+    // is gone entirely).
     int signal_bars_from_age() const {
         if (rx_count_ == 0)              return 0;
         const uint32_t age = millis() - last_rx_ms_;
@@ -1329,6 +1481,23 @@ private:
         if (age < 2000)                  return 2;
         if (age < kNoSignalMs)           return 1;
         return 0;
+    }
+
+    // Combined signal-bar count. Primary metric is sequence-loss-rate
+    // (transport::SignalQuality), which reflects delivered fidelity -
+    // what an operator actually cares about for show coordination.
+    // Falls back to the age proxy in two cases:
+    //   - Cold start: not enough frames received yet for a meaningful
+    //     loss percentage.
+    //   - NO SIGNAL: frame age beats whatever the loss tracker says,
+    //     because no recent frames means no current signal regardless
+    //     of historical fidelity.
+    int signal_bars() const {
+        if (no_signal_ || rx_count_ == 0)            return 0;
+        const int q = quality_.bars(millis());
+        if (q < 0)                                    return signal_bars_from_age();
+        const int a = signal_bars_from_age();
+        return (q < a) ? q : a;
     }
 
     void draw_status_strip() {
@@ -1344,10 +1513,12 @@ private:
 
         // Signal bars: 4 vertical bars at heights 2/4/6/8 px, 2 px wide
         // each, lit count = signal_bars. Anchored at the right of the
-        // strip just inside the battery icon.
+        // strip just inside the battery icon. Bar count comes from the
+        // sequence-loss-rate quality tracker (transport::SignalQuality)
+        // with a frame-age fallback for cold start.
         const int sig_x   = 198;   // top-left of the signal-bars region
         const int sig_top = 2;
-        const int bars    = signal_bars_from_age();
+        const int bars    = signal_bars();
         for (int i = 0; i < 4; ++i) {
             const int bar_h = 2 + i * 2;          // 2,4,6,8
             const int bar_y = sig_top + (8 - bar_h);
@@ -1829,8 +2000,9 @@ private:
     enum class EspNowItem : uint8_t {
         MasterChannel = 0,
         SlaveChannel,
+        SlaveRepeat,
     };
-    static constexpr size_t kEspNowFunctionalItemCount = 2;
+    static constexpr size_t kEspNowFunctionalItemCount = 3;
 
     static const char* master_channel_label(uint8_t c) {
         switch (c) {
@@ -1879,10 +2051,16 @@ private:
             return;
         }
         if (ev.id == ButtonId::Btn1) {
-            if ((EspNowItem)sub_selected_ == EspNowItem::MasterChannel) {
-                save_master_channel(cycle_master_channel(load_master_channel()));
-            } else if ((EspNowItem)sub_selected_ == EspNowItem::SlaveChannel) {
-                save_slave_channel(cycle_slave_channel(load_slave_channel()));
+            switch ((EspNowItem)sub_selected_) {
+                case EspNowItem::MasterChannel:
+                    save_master_channel(cycle_master_channel(load_master_channel()));
+                    break;
+                case EspNowItem::SlaveChannel:
+                    save_slave_channel(cycle_slave_channel(load_slave_channel()));
+                    break;
+                case EspNowItem::SlaveRepeat:
+                    save_slave_repeat_enabled(!load_slave_repeat_enabled());
+                    break;
             }
             // New value applies on next AutonomousMaster / SlaveMode enter().
             // Operator returns to Menu and re-enters the mode to pick it up.
@@ -1897,11 +2075,14 @@ private:
 
         char m_line[28];
         char s_line[28];
+        char r_line[28];
         std::snprintf(m_line, sizeof(m_line), "Master: %s",
                       master_channel_label(load_master_channel()));
         std::snprintf(s_line, sizeof(s_line), "Slave:  %s",
                       slave_channel_label(load_slave_channel()));
-        const char* lines[kEspNowFunctionalItemCount] = { m_line, s_line };
+        std::snprintf(r_line, sizeof(r_line), "Repeat: %s",
+                      load_slave_repeat_enabled() ? "ON" : "OFF");
+        const char* lines[kEspNowFunctionalItemCount] = { m_line, s_line, r_line };
 
         for (size_t i = 0; i < kEspNowFunctionalItemCount; ++i) {
             const bool sel = (i == sub_selected_);
@@ -2235,6 +2416,9 @@ public:
             case SubTest::Calibrate:   tick_calibrate(now);                      break;
             default: break;
         }
+        // Drain any pending redundant retransmits scheduled by the test's
+        // initial fire (per spec §4.3 master reliability redundancy).
+        broadcaster_.pump_retransmits();
         // Post-pulse status redraw. While a pulse is animating the screen is
         // the light surface (LocalDriver paints frame-by-frame). When the
         // pulse terminates LocalDriver paints a final BLACK frame; we then
