@@ -1516,6 +1516,15 @@ private:
     }
 
     void draw_status_strip() {
+        // Buffered paint session: the ~13 fill_rect + text ops that make
+        // up this strip refresh batch into a single sprite, then push to
+        // the panel as one SPI burst. Without this each op writes
+        // independently to the panel and a panel scan-out crossing one
+        // of those windows shows tear lines between elements.
+        auto* ld = dal::local_driver_instance();
+        const bool buffered =
+            ld->begin_buffered_paint(0, 0, 240, kStripHeight);
+
         // Wipe the strip black so we can repaint icons cleanly without
         // residue from whatever was there last refresh.
         DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
@@ -1575,6 +1584,10 @@ private:
                 DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
                     batt_x + 1, batt_y + 1, fill_w, batt_h - 2, fill_color});
             }
+        }
+
+        if (buffered) {
+            ld->end_buffered_paint();
         }
     }
 

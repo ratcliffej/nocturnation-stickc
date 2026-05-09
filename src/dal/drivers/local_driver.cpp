@@ -279,6 +279,18 @@ int LocalDriver::battery_level() {
     return batt->level_percent();
 }
 
+bool LocalDriver::begin_buffered_paint(int x, int y, int w, int h) {
+    auto* d = hal::HAL::display();
+    if (!d) return false;
+    return d->begin_buffered_paint(x, y, w, h);
+}
+
+void LocalDriver::end_buffered_paint() {
+    auto* d = hal::HAL::display();
+    if (!d) return;
+    d->end_buffered_paint();
+}
+
 bool LocalDriver::send(uint8_t /*group_id*/, const DisplayMeterEvent& ev) {
     auto* d = hal::HAL::display();
     if (!d) return false;

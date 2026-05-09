@@ -6,10 +6,19 @@
 //
 // All draw operations delegate directly to the LovyanGFX object - this
 // is the only thing in the firmware that's allowed to reference M5.Display.
+//
+// Buffered paint sessions (begin_buffered_paint / end_buffered_paint) use
+// an LGFX_Sprite as an off-screen scratch area; draws made between begin
+// and end accumulate into the sprite and end pushes the whole thing in
+// a single SPI burst. Reduces tearing on multi-element redraws (status
+// strip with multiple icons + text). For single solid-colour fills the
+// sprite buys nothing - same SPI work either way - but the API stays
+// uniform so callers don't need a fast-path.
 
 #pragma once
 
 #include "hal/hal.h"
+#include <M5Unified.h>
 
 namespace nocturnation {
 namespace hal {
@@ -32,6 +41,26 @@ public:
     void draw_text(int x, int y, const char* text) override;
 
     void flush() override;
+
+    bool begin_buffered_paint(int x, int y, int w, int h) override;
+    void end_buffered_paint() override;
+
+private:
+    // Off-screen scratch sprite, used between begin/end_buffered_paint.
+    // The sprite covers (buffer_x_, buffer_y_, buffer_w_, buffer_h_) in
+    // screen space; draws are translated to local sprite coordinates.
+    LGFX_Sprite buffer_sprite_{ &M5.Display };
+    bool        buffered_   = false;
+    int         buffer_x_   = 0;
+    int         buffer_y_   = 0;
+    int         buffer_w_   = 0;
+    int         buffer_h_   = 0;
+
+    // Text state propagated to the sprite when buffering is active so
+    // draw_text uses the operator-set fg/bg/size while in a session.
+    uint16_t    text_fg_    = 0xFFFF;
+    uint16_t    text_bg_    = 0x0000;
+    uint8_t     text_size_  = 1;
 };
 
 }  // namespace hal

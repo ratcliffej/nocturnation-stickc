@@ -10,6 +10,7 @@
 #pragma once
 
 #include "hal/hal.h"
+#include <M5Unified.h>
 
 namespace nocturnation {
 namespace hal {
@@ -32,6 +33,21 @@ public:
     void draw_text(int x, int y, const char* text) override;
 
     void flush() override;
+
+    bool begin_buffered_paint(int x, int y, int w, int h) override;
+    void end_buffered_paint() override;
+
+private:
+    LGFX_Sprite buffer_sprite_{ &M5.Display };
+    bool        buffered_   = false;
+    int         buffer_x_   = 0;
+    int         buffer_y_   = 0;
+    int         buffer_w_   = 0;
+    int         buffer_h_   = 0;
+
+    uint16_t    text_fg_    = 0xFFFF;
+    uint16_t    text_bg_    = 0x0000;
+    uint8_t     text_size_  = 1;
 };
 
 }  // namespace hal

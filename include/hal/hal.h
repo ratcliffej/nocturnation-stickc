@@ -163,6 +163,35 @@ public:
 
     // No-op on direct backends; meaningful on double-buffered ones.
     virtual void flush() = 0;
+
+    // -------------------------------------------------------------------------
+    // Buffered paint sessions
+    // -------------------------------------------------------------------------
+    //
+    // begin_buffered_paint() asks the backend to allocate an off-screen
+    // sprite covering the (x, y, w, h) screen-space rectangle. All
+    // subsequent draw operations (fill_rect, draw_rect, draw_text, etc.)
+    // route into the sprite using the same screen-space coordinates -
+    // the backend translates internally. end_buffered_paint() pushes
+    // the sprite to the panel as a single SPI burst and releases the
+    // sprite. Use case: batching many small draws (status strip with
+    // multiple icons + text) into one transfer to the panel, both
+    // reducing SPI overhead and shrinking the window for scan-out
+    // tearing.
+    //
+    // Backends that don't support buffering (or where the allocation
+    // failed - e.g. RAM tight) silently route draws directly to the
+    // panel; the begin call returns false in that case but draws still
+    // work. Nesting is not supported - calling begin twice without an
+    // intervening end ends the previous session first.
+    //
+    // Note: this won't eliminate tearing on smooth fades of a single
+    // solid-colour fill_rect, since that's already a one-shot SPI
+    // burst racing the panel scan. The win is for multi-element
+    // updates (the status strip's ~13 fill_rect + text ops collapse
+    // into one push).
+    virtual bool begin_buffered_paint(int x, int y, int w, int h) = 0;
+    virtual void end_buffered_paint() = 0;
 };
 
 // =============================================================================

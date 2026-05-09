@@ -53,6 +53,15 @@ public:
         pulse_terminated_ = true;
     }
 
+    // Pass-through to hal::Display's buffered paint session API. Wrap a
+    // multi-element draw (e.g. SlaveMode's status strip - icons + text)
+    // in begin/end and the backend batches all the intermediate
+    // fill_rect / draw_text calls into one SPI burst, eliminating the
+    // tearing that comes from the panel scanning out mid-burst between
+    // many small writes.
+    bool begin_buffered_paint(int x, int y, int w, int h);
+    void end_buffered_paint();
+
     // Configure the screen rectangle that pulses paint into. Default is
     // full-screen; orchestration that wants to keep a persistent overlay
     // (e.g. Slave mode's battery + signal-strength icon strip at the top)
