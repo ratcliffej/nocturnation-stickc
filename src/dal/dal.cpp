@@ -118,6 +118,12 @@ void compose_host_profile() {
         s_host_outputs[s_host_output_count++] = CapabilityId::DisplayClear;
         s_host_outputs[s_host_output_count++] = CapabilityId::DisplayFillRect;
         s_host_outputs[s_host_output_count++] = CapabilityId::DisplayMeter;
+        // The screen IS this host's primary "light" - declare RgbPulse so
+        // render_fx("local", RgbPulseEvent{...}) paints the screen with the
+        // attack/sustain/release envelope. On a future LED-only host without
+        // Display, RgbPulse would still be declared but routed to the LED
+        // surface by that host's local driver.
+        s_host_outputs[s_host_output_count++] = CapabilityId::RgbPulse;
     }
     if (hal::HAL::has(hal::Capability::Battery)) {
         s_host_outputs[s_host_output_count++] = CapabilityId::BatteryLevel;
@@ -268,6 +274,10 @@ uint32_t DAL::driver_send_count(const char* transport_name) {
 // =============================================================================
 
 bool DAL::fire_rgb_pulse(const char* t, const RgbPulseEvent& ev) {
+    return dispatch_output(t, CapabilityId::RgbPulse, ev);
+}
+
+bool DAL::render_fx(const char* t, const RgbPulseEvent& ev) {
     return dispatch_output(t, CapabilityId::RgbPulse, ev);
 }
 bool DAL::fire_rgb_static(const char* t, const RgbStaticEvent& ev) {

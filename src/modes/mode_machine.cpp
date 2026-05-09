@@ -11,6 +11,9 @@
 
 #include "modes/mode_machine.h"
 #include "effects/effects.h"
+#include "hal/hal.h"
+#include "transport/espnow/frame.h"
+#include "../dal/drivers/local_driver.h"   // for set_pulse_enabled gating
 
 #include <cmath>
 #include <cstdio>
@@ -19,6 +22,7 @@
 #ifdef ARDUINO
 #include <Arduino.h>
 #include <Preferences.h>
+#include <WiFi.h>
 #else
 // Native test stubs. millis() is needed by the Boot countdown; tests advance
 // it explicitly via the seam below.
@@ -110,6 +114,21 @@ void save_ir_enabled(bool e) {
     prefs.end();
 }
 
+bool load_screen_pulse_enabled() {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/true);
+    bool e = prefs.getBool("scr_puls_en", true);   // default ON
+    prefs.end();
+    return e;
+}
+
+void save_screen_pulse_enabled(bool e) {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/false);
+    prefs.putBool("scr_puls_en", e);
+    prefs.end();
+}
+
 AudioCalibration load_calibration() {
     Preferences prefs;
     prefs.begin("noct", /*readOnly=*/true);
@@ -130,11 +149,170 @@ void save_calibration(const AudioCalibration& c) {
 #else
 ModeId           load_last_runtime_mode() { return kDefaultRuntimeMode; }
 void             save_last_runtime_mode(ModeId)  {}
-bool             load_ir_enabled()        { return true; }
-void             save_ir_enabled(bool)    {}
+bool             load_ir_enabled()             { return true; }
+void             save_ir_enabled(bool)         {}
+bool             load_screen_pulse_enabled()    { return true; }
+void             save_screen_pulse_enabled(bool) {}
 AudioCalibration load_calibration()       { return kCalibrationDefault; }
 void             save_calibration(const AudioCalibration&) {}
 #endif
+
+// =============================================================================
+// EspNowBroadcaster - shared by AutonomousMaster and TestMode (and any future
+// mode that wants to push frames over ESP-NOW). Each instance holds its own
+// source_id / seq_num / radio-active state and calls HAL::esp_now() under
+// the hood. begin/end follow the owning mode's lifecycle; HAL::esp_now()->
+// begin() is idempotent so concurrent owners across mode transitions work
+// fine.
+//
+// Stepping stone toward a proper EspNowDriver registered with the DAL behind
+// render_fx("esp-now-broadcast", ev). When that lands, per-mode lifecycle
+// goes away and the radio sits up for the firmware's life. Until then this
+// keeps the broadcast logic in one place rather than duplicated across modes.
+// =============================================================================
+
+struct EspNowBroadcaster {
+    static constexpr uint32_t kHeartbeatPeriodMs = 1000;   // 1 Hz alive signal
+
+    bool      active_      = false;
+    uint8_t   source_id_   = 1;
+    uint8_t   seq_num_     = 1;
+    uint32_t  last_tx_ms_  = 0;
+
+    bool begin(uint8_t channel) {
+        if (active_) return true;
+        auto* radio = hal::HAL::esp_now();
+        if (!radio) return false;
+        source_id_  = derive_source_id();
+        seq_num_    = 1;
+        last_tx_ms_ = 0;
+        active_ = radio->begin(channel);
+#ifdef ARDUINO
+        if (!active_) {
+            Serial.println("[espnow] broadcaster begin() failed");
+        } else {
+            Serial.printf("[espnow] broadcaster up: ch=%u src_id=%u\n",
+                          (unsigned)channel, (unsigned)source_id_);
+        }
+#endif
+        return active_;
+    }
+
+    void end() {
+        if (!active_) return;
+        if (auto* radio = hal::HAL::esp_now()) radio->end();
+        active_ = false;
+    }
+
+    static uint8_t derive_source_id() {
+#ifdef ARDUINO
+        uint8_t mac[6] = {0};
+        WiFi.macAddress(mac);
+        uint8_t id = mac[5];
+        if (id == 0 || id == 0xFF) id = (mac[4] != 0 && mac[4] != 0xFF) ? mac[4] : 1;
+        return id;
+#else
+        return 1;
+#endif
+    }
+
+    uint8_t next_seq() {
+        const uint8_t s = seq_num_;
+        seq_num_ = (seq_num_ == 255) ? 1 : (seq_num_ + 1);
+        return s;
+    }
+
+    void send_frame_bytes(const uint8_t* buf, size_t n, const char* label) {
+        if (!active_ || n == 0) return;
+        auto* radio = hal::HAL::esp_now();
+        if (!radio) return;
+        const bool ok = radio->send_broadcast(buf, n);
+        if (ok) last_tx_ms_ = millis();
+#ifdef ARDUINO
+        Serial.printf("[espnow TX %s%s] ", label, ok ? "" : " FAIL");
+        for (size_t i = 0; i < n; ++i) Serial.printf("%02X ", buf[i]);
+        Serial.println();
+#else
+        (void)ok; (void)label;
+#endif
+    }
+
+    void send_beat(float strength_rms, float bpm) {
+        if (!active_) return;
+        using namespace transport::espnow;
+        Header h{};
+        h.source_id       = source_id_;
+        h.sequence_number = next_seq();
+        h.hop_count       = 0;
+        BeatDetectedPayload p{};
+        const float scaled = strength_rms / 20.0f;
+        p.strength = (scaled < 0.0f)   ? 0
+                   : (scaled > 255.0f) ? 255
+                                       : static_cast<uint8_t>(scaled);
+        const float bpm_x10 = bpm * 10.0f;
+        p.bpm_x10 = (bpm_x10 < 0.0f)     ? 0
+                  : (bpm_x10 > 65535.0f) ? 65535
+                                         : static_cast<uint16_t>(bpm_x10);
+        uint8_t buf[kHeaderSize + kBeatDetectedPayloadLen];
+        const size_t n = encode_beat_detected(buf, sizeof(buf), h, p);
+        send_frame_bytes(buf, n, "BEAT");
+    }
+
+    void send_heartbeat() {
+        if (!active_) return;
+        using namespace transport::espnow;
+        Header h{};
+        h.source_id       = source_id_;
+        h.sequence_number = next_seq();
+        h.hop_count       = 0;
+        uint8_t buf[kHeaderSize + kHeartbeatPayloadLen];
+        const size_t n = encode_heartbeat(buf, sizeof(buf), h);
+        send_frame_bytes(buf, n, "HBEAT");
+    }
+
+    void send_light_command(uint8_t target_group,
+                            uint8_t r, uint8_t g, uint8_t b,
+                            effects::PulseEnvelope env,
+                            pixmob::Chance chance) {
+        if (!active_) return;
+        using namespace transport::espnow;
+        Header h{};
+        h.source_id       = source_id_;
+        h.sequence_number = next_seq();
+        h.hop_count       = 0;
+        LightCommandPayload p{};
+        p.target_group = target_group;
+        p.r = r; p.g = g; p.b = b;
+        p.attack  = static_cast<uint8_t>(env.attack);
+        p.sustain = static_cast<uint8_t>(env.sustain);
+        p.release = static_cast<uint8_t>(env.release);
+        p.chance  = static_cast<uint8_t>(chance);
+        uint8_t buf[kHeaderSize + kLightCommandPayloadLen];
+        const size_t n = encode_light_command(buf, sizeof(buf), h, p);
+        send_frame_bytes(buf, n, "LIGHT");
+    }
+
+    // Convenience: encode + send LIGHT_COMMAND from an RgbPulseEvent. Used
+    // by Test mode test fires - same RgbPulseEvent that drives the local
+    // screen + IR also hits the wire so slaves render in sync.
+    void send_light_command(uint8_t target_group, const RgbPulseEvent& ev) {
+        send_light_command(target_group, ev.r, ev.g, ev.b,
+                           effects::PulseEnvelope{ev.attack, ev.sustain, ev.release},
+                           ev.chance);
+    }
+
+    // Master loop_tick calls this every iteration. If no frame has gone
+    // out within kHeartbeatPeriodMs, sends one. During music with
+    // BEAT_DETECTED firing every 350-500 ms, this short-circuits and
+    // heartbeat traffic stays at zero.
+    bool maybe_send_heartbeat() {
+        if (!active_) return false;
+        const uint32_t now = millis();
+        if (now - last_tx_ms_ < kHeartbeatPeriodMs) return false;
+        send_heartbeat();
+        return true;
+    }
+};
 
 }  // namespace
 
@@ -459,11 +637,13 @@ public:
         sync_pulse_colour();
         pulse_.enter();
         DAL::start_audio_input("local", 16000, 512);
+        broadcaster_.begin(kMasterChannel);
         draw();
     }
 
     void exit() override {
         DAL::stop_audio_input("local");
+        broadcaster_.end();
         pulse_.exit();
     }
 
@@ -473,6 +653,9 @@ public:
             draw();
             last_draw_ms_ = now;
         }
+        // Skip-if-recent heartbeat: keep master-alive flowing only when
+        // BEAT_DETECTED traffic isn't already covering it.
+        broadcaster_.maybe_send_heartbeat();
     }
 
     void on_audio_frame(const AudioFrameEvent& ev) override {
@@ -508,6 +691,29 @@ public:
             }
         }
         last_beat_ms_ = now;
+
+        // Broadcast to any slaves over ESP-NOW. Two frames per beat:
+        //   - BEAT_DETECTED carries strength + BPM as metadata for any
+        //     slave that wants to drive its own colour scheme (e.g. a
+        //     constellation art piece) or display a BPM readout.
+        //   - LIGHT_COMMAND carries the exact RGB + envelope the master's
+        //     local IR fire used, so a slave that wants to be a literal
+        //     "extra light" in the show can render the same colour with
+        //     the same envelope on its screen.
+        // send is async at the radio layer so this returns quickly; the
+        // transmission overlaps with the local screen flash + IR fire
+        // below. Skipped when paused so the entire deployment goes
+        // silent on a single mute press; the periodic heartbeat keeps
+        // slaves' master-loss detection from tripping during a pause.
+        if (!paused_) {
+            broadcaster_.send_beat(current_level_, estimated_bpm_);
+            uint8_t r=0, g=0, b=0;
+            colour_to_rgb(colour_, r, g, b);
+            broadcaster_.send_light_command(
+                /*target_group=*/0, r, g, b,
+                effects::envelope_for_bpm(estimated_bpm_),
+                pixmob::CHANCE_100);
+        }
 
         // Beat response. Same ordering as the prototype: flash, fire IR (if
         // not muted), short delay, redraw. The IR firing now goes through
@@ -546,6 +752,12 @@ public:
     }
 
 private:
+    // Channel 1 is the hobby/community default per spec §4.5; show-mode
+    // (channel 11) and operator override land in Block 6.
+    static constexpr uint8_t kMasterChannel = 1;
+
+    EspNowBroadcaster broadcaster_;
+
     Colour            colour_           = Colour::Red;
     bool              paused_           = false;
     effects::Pulse    pulse_;
@@ -657,7 +869,18 @@ private:
 };
 
 // =============================================================================
-// SlaveMode - waiting screen stub. Real ESP-NOW listening lands in Epic 4.
+// SlaveMode - ESP-NOW receive (Epic 4 Block 3, RX side).
+//
+// Pulls the radio up on channel 1 (matching the master's hobby default;
+// channel-priority dual-scan lands in Block 6) and registers a receive
+// callback. Each inbound frame is decoded into its typed payload and
+// logged via Serial - this is the byte-for-byte verification path the
+// Epic Block 3 acceptance criterion calls for.
+//
+// Higher-level orchestration (deduplication, master-loss timeout +
+// idle-effect fallback, display-as-light, IR re-fire on the slave) is
+// Block 4's work. For now SlaveMode just shows a counter of received
+// frames and the last source_id / message type seen.
 // =============================================================================
 
 class SlaveMode : public Mode {
@@ -666,21 +889,347 @@ public:
     const char* name() const override { return "Slave"; }
 
     void enter() override {
+        rx_count_         = 0;
+        last_rx_ms_       = 0;
+        last_source_id_   = 0;
+        last_msg_type_    = 0xFF;
+        radio_active_     = false;
+        no_signal_        = false;
+        last_strip_draw_ms_ = 0;
+
+        // Reserve a 12 px status strip at the top of the screen so the
+        // battery + signal-strength icons stay visible while pulses paint
+        // the rest of the screen. LocalDriver paints fill_rect within
+        // these bounds; the strip is ours to draw into.
+        dal::local_driver_instance()->set_pulse_rect(
+            0, kStripHeight, 240, 135 - kStripHeight);
+
         DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
-        DAL::fire_display_show_text("local", DisplayShowTextEvent{
-            10, 10, "Slave", WHITE, BLACK, 3});
-        DAL::fire_display_show_text("local", DisplayShowTextEvent{
-            10, 50, "Listening for master...", WHITE, BLACK, 2});
-        DAL::fire_display_show_text("local", DisplayShowTextEvent{
-            10, 80, "(ESP-NOW: Epic 4)", WHITE, BLACK, 1});
-        DAL::fire_display_show_text("local", DisplayShowTextEvent{
-            10, 128, "B-hold: menu", WHITE, BLACK, 1});
+        draw_status_strip();    // initial paint so the strip exists
+
+        if (auto* radio = hal::HAL::esp_now()) {
+            radio->set_recv_callback([this](const hal::ESPNowMessage& m) {
+                this->on_recv(m);
+            });
+            radio_active_ = radio->begin(kSlaveChannel);
+#ifdef ARDUINO
+            if (!radio_active_) {
+                Serial.println("[espnow] slave begin() failed");
+            } else {
+                Serial.printf("[espnow] slave up: ch=%u\n",
+                              (unsigned)kSlaveChannel);
+            }
+#endif
+        }
+    }
+
+    void exit() override {
+        if (radio_active_) {
+            if (auto* radio = hal::HAL::esp_now()) radio->end();
+            radio_active_ = false;
+        }
+        // Restore full-screen pulse rect for whichever mode comes next.
+        dal::local_driver_instance()->reset_pulse_rect();
+    }
+
+    void loop_tick() override {
+        const uint32_t now = millis();
+
+        // Drain any LIGHT_COMMAND queued by the ESP-NOW callback. Doing
+        // this here (main task context) keeps IRsend::sendRaw off the
+        // WiFi task where it would crash the S3.
+        if (pending_light_) {
+            pending_light_ = false;
+            render_light(pending_light_payload_);
+        }
+
+        // Edge into NO SIGNAL: paint the status UI immediately (the rest
+        // of the screen below the strip is dead space anyway since no
+        // pulses are arriving). Slave does NOT auto-promote.
+        if (rx_count_ > 0 && !no_signal_
+            && (now - last_rx_ms_) > kNoSignalMs) {
+            no_signal_ = true;
+#ifdef ARDUINO
+            Serial.printf("[espnow] slave NO SIGNAL: %lu ms since last RX\n",
+                          (unsigned long)(now - last_rx_ms_));
+#endif
+            DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
+            draw_status_strip();
+            draw_no_signal_body();
+            last_draw_ms_ = now;
+            return;
+        }
+
+        // Status strip refreshes ~2x per second; the icons read battery
+        // level + signal age both of which change slowly enough that
+        // higher refresh rates would just waste SPI cycles.
+        if (now - last_strip_draw_ms_ > kStripRefreshMs) {
+            draw_status_strip();
+            last_strip_draw_ms_ = now;
+        }
+
+        // NO SIGNAL diagnostic body in the pulse-rect area (no pulses
+        // arrive in that state so it stays visible). Refreshes the age
+        // counter every ~200 ms.
+        if (no_signal_ && now - last_draw_ms_ > 200) {
+            draw_no_signal_body();
+            last_draw_ms_ = now;
+        }
     }
 
     void on_button_event(const ButtonPressEvent& ev) override {
         if (ev.id == ButtonId::Btn2 && ev.kind == ButtonEvent::LongPressed) {
             ModeMachine::switch_to(ModeId::Menu);
         }
+    }
+
+private:
+    static constexpr uint8_t  kSlaveChannel        = 1;
+    // No-signal threshold: 3x the master's heartbeat period (1 Hz). Three
+    // missed heartbeats with no other traffic = master almost certainly
+    // gone. Slaves do NOT auto-promote to master on this transition - the
+    // master might be momentarily out of range or paused, and a rogue
+    // slave-promoted-to-master would compete with the real master and
+    // ruin show coordination. Block 4 will run a subtle local idle
+    // effect through this state; for now we just display NO SIGNAL.
+    static constexpr uint32_t kNoSignalMs          = 3000;
+
+    // Status strip (always-visible 12 px band at the top with battery +
+    // signal-strength icons). Pulse rect is set to the area BELOW this
+    // strip during enter() so pulses don't repaint over the icons.
+    static constexpr int      kStripHeight         = 12;
+    static constexpr uint32_t kStripRefreshMs      = 500;
+
+    bool      radio_active_       = false;
+    uint32_t  rx_count_           = 0;
+    uint32_t  last_rx_ms_         = 0;
+    uint32_t  last_draw_ms_       = 0;
+    uint32_t  last_strip_draw_ms_ = 0;
+    uint8_t   last_source_id_     = 0;
+    uint8_t   last_msg_type_      = 0xFF;
+    bool      no_signal_          = false;   // sticky once threshold crossed
+
+    // Deferred LIGHT_COMMAND queue (single slot; new arrivals replace).
+    // The ESP-NOW receive callback runs on the WiFi task; calling
+    // IRsend::sendRaw (~30 ms blocking GPIO loop) from that context
+    // crashes the chip. We copy the payload here in on_recv and drain
+    // in loop_tick (main task context, safe for the IR send timing).
+    volatile bool                            pending_light_ = false;
+    transport::espnow::LightCommandPayload   pending_light_payload_{};
+
+    // -------------------------------------------------------------------------
+    // Slave-as-target-device: an inbound LIGHT_COMMAND fans out to every
+    // locally-available lighting output via render_fx, each fail-silent if
+    // its transport / driver isn't enabled. No auto-forwarding inside
+    // render_fx itself - keeps each call to one job and respects the IR
+    // mute toggle (Config > IR > Enable, which gates the ir-pixmob driver
+    // via DAL::set_driver_enabled).
+    //
+    // Current targets:
+    //   "local"       -> screen on the StickC; future LED on simpler devices,
+    //                    screen + onboard LEDs on Tildagon.
+    //   "all-pixmobs" -> IR broadcast to PixMob bracelets in range. TEMPORARY
+    //                    target choice for Block 3.5 - Block 4 should switch
+    //                    to "group-N" where N is the slave's NVS-configured
+    //                    group, so two slaves on different groups don't fight
+    //                    over the same airspace. Brand-independent rename of
+    //                    "all-pixmobs" / "group-N" defers to its own focused
+    //                    refactor pass; see project_pixmob_free_endgame memory.
+    // -------------------------------------------------------------------------
+
+    void render_light(const transport::espnow::LightCommandPayload& p) {
+        RgbPulseEvent ev{};
+        ev.r       = p.r;
+        ev.g       = p.g;
+        ev.b       = p.b;
+        ev.attack  = static_cast<pixmob::Time>(p.attack);
+        ev.sustain = static_cast<pixmob::Time>(p.sustain);
+        ev.release = static_cast<pixmob::Time>(p.release);
+        ev.chance  = static_cast<pixmob::Chance>(p.chance);
+
+        // Local light surface (screen on the StickC).
+        DAL::render_fx("local", ev);
+        // IR forward to nearby bracelets. No-op if IR mute is on or the
+        // host has no IR Tx capability; no special-case handling needed.
+        DAL::render_fx("all-pixmobs", ev);
+    }
+
+    void on_recv(const hal::ESPNowMessage& m) {
+        using namespace transport::espnow;
+
+        rx_count_++;
+        last_rx_ms_ = millis();
+
+        // Recovery from no-signal: any fresh frame means the master is
+        // back. Clear the flag and let the next loop_tick redraw the
+        // status UI normally.
+        const bool was_no_signal = no_signal_;
+        no_signal_ = false;
+        if (was_no_signal) {
+#ifdef ARDUINO
+            Serial.println("[espnow] slave SIGNAL RECOVERED");
+#endif
+        }
+
+        Header hdr{};
+        if (decode_header(m.data, m.len, hdr) != DecodeResult::Ok) {
+#ifdef ARDUINO
+            Serial.printf("[espnow RX BAD HDR] len=%u: ",
+                          (unsigned)m.len);
+            for (size_t i = 0; i < m.len && i < 32; ++i) {
+                Serial.printf("%02X ", m.data[i]);
+            }
+            Serial.println();
+#endif
+            return;
+        }
+        last_source_id_ = hdr.source_id;
+        last_msg_type_  = static_cast<uint8_t>(hdr.message_type);
+
+        // Display-as-light: defer LIGHT_COMMAND rendering to loop_tick.
+        // This callback runs on the ESP-NOW / WiFi task; render_light
+        // fans out to render_fx("all-pixmobs"), which calls into
+        // IRsend::sendRaw - a ~30 ms blocking GPIO toggle loop unsafe
+        // to run from the WiFi task (causes watchdog / stack issues
+        // on the S3). Copying the payload is fast and safe; loop_tick
+        // pumps it from main task context. Newer arrivals replace
+        // older ones - dropping a stale beat is fine when a fresh one
+        // is already on the way.
+        if (hdr.message_type == MessageType::LightCommand
+            && m.len == kHeaderSize + kLightCommandPayloadLen) {
+            LightCommandPayload p{};
+            if (decode_light_command(hdr, m.data + kHeaderSize,
+                                     m.len - kHeaderSize, p)
+                == DecodeResult::Ok) {
+                pending_light_payload_ = p;
+                pending_light_ = true;
+            }
+        }
+
+#ifdef ARDUINO
+        Serial.printf("[espnow RX %02X src=%u seq=%u] ",
+                      (unsigned)last_msg_type_,
+                      (unsigned)hdr.source_id,
+                      (unsigned)hdr.sequence_number);
+        for (size_t i = 0; i < m.len && i < 32; ++i) {
+            Serial.printf("%02X ", m.data[i]);
+        }
+        Serial.println();
+#endif
+    }
+
+    // ---------------------------------------------------------------------
+    // Status strip: always-visible 12 px band at the top of the screen.
+    // Battery icon on the right, 4-bar signal indicator just left of it.
+    // Painted into pixels (0,0)..(239,11) which are excluded from the
+    // LocalDriver's pulse rect.
+    // ---------------------------------------------------------------------
+
+    // Until Block 7's RSSI capture lands we use a simple frame-age proxy:
+    // recently-arrived frames -> strong signal, no-traffic-for-a-while ->
+    // weak. The thresholds approximate "frames within an expected window
+    // are healthy" rather than meaning anything in dB.
+    int signal_bars_from_age() const {
+        if (rx_count_ == 0)              return 0;
+        const uint32_t age = millis() - last_rx_ms_;
+        if (age < 500)                   return 4;
+        if (age < 1000)                  return 3;
+        if (age < 2000)                  return 2;
+        if (age < kNoSignalMs)           return 1;
+        return 0;
+    }
+
+    void draw_status_strip() {
+        // Wipe the strip black so we can repaint icons cleanly without
+        // residue from whatever was there last refresh.
+        DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
+            0, 0, 240, kStripHeight, BLACK});
+
+        // Mode label, left.
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            2, 2, no_signal_ ? "NO SIG" : "Slave",
+            no_signal_ ? RED : WHITE, BLACK, 1});
+
+        // Signal bars: 4 vertical bars at heights 2/4/6/8 px, 2 px wide
+        // each, lit count = signal_bars. Anchored at the right of the
+        // strip just inside the battery icon.
+        const int sig_x   = 198;   // top-left of the signal-bars region
+        const int sig_top = 2;
+        const int bars    = signal_bars_from_age();
+        for (int i = 0; i < 4; ++i) {
+            const int bar_h = 2 + i * 2;          // 2,4,6,8
+            const int bar_y = sig_top + (8 - bar_h);
+            const uint16_t color = (i < bars) ? GREEN : 0x4208;  // dim grey for unlit
+            DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
+                sig_x + i * 4, bar_y, 2, bar_h, color});
+        }
+
+        // Battery icon on the right: 24 x 8 outline + tip + filled
+        // proportion.
+        const int batt_x = 214;
+        const int batt_y = 2;
+        const int batt_w = 22;
+        const int batt_h = 8;
+        // Outline (top, bottom, left, right via 1-px fill_rects).
+        DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
+            batt_x, batt_y, batt_w, 1, WHITE});
+        DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
+            batt_x, batt_y + batt_h - 1, batt_w, 1, WHITE});
+        DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
+            batt_x, batt_y, 1, batt_h, WHITE});
+        DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
+            batt_x + batt_w - 1, batt_y, 1, batt_h, WHITE});
+        // Tip on the right.
+        DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
+            batt_x + batt_w, batt_y + 2, 2, batt_h - 4, WHITE});
+
+        // Fill proportion.
+        const int level = DAL::battery_level("local");
+        if (level >= 0) {
+            const int interior_w = batt_w - 2;
+            int fill_w = (level * interior_w) / 100;
+            if (fill_w < 0) fill_w = 0;
+            if (fill_w > interior_w) fill_w = interior_w;
+            const uint16_t fill_color = (level > 20) ? GREEN
+                                       : (level > 5)  ? YELLOW
+                                                      : RED;
+            if (fill_w > 0) {
+                DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
+                    batt_x + 1, batt_y + 1, fill_w, batt_h - 2, fill_color});
+            }
+        }
+    }
+
+    // Diagnostic body shown only while NO SIGNAL is active. The pulse-
+    // rect area below the strip is otherwise black (no incoming pulses)
+    // so we have the whole screen below the strip to spend on text.
+    void draw_no_signal_body() {
+        char line[40];
+
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 30, "NO SIGNAL", RED, BLACK, 3});
+
+        std::snprintf(line, sizeof(line), "ch %u %s",
+                      (unsigned)kSlaveChannel,
+                      radio_active_ ? "listening" : "off");
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 70, line, WHITE, BLACK, 1});
+
+        std::snprintf(line, sizeof(line), "rx total: %lu",
+                      (unsigned long)rx_count_);
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 84, line, WHITE, BLACK, 1});
+
+        if (rx_count_ > 0) {
+            const uint32_t age = millis() - last_rx_ms_;
+            std::snprintf(line, sizeof(line), "last rx: %lu ms ago    ",
+                          (unsigned long)age);
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 98, line, RED, BLACK, 1});
+        }
+
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 122, "B-hold: menu", WHITE, BLACK, 1});
     }
 };
 
@@ -767,7 +1316,7 @@ public:
 private:
     enum class Level   : uint8_t { Top, Sub };
     enum class SubMenu : uint8_t {
-        None = 0, Audio, IR, EspNow, WiFi, Dmx, PixMob, System,
+        None = 0, Audio, Display, IR, EspNow, WiFi, Dmx, PixMob, System,
     };
 
     // Within the PixMob submenu, drilling into one of its items enters a
@@ -780,14 +1329,15 @@ private:
         SubMenu     target;
         const char* label;
     };
-    static constexpr TopEntry kTop[7] = {
-        { SubMenu::Audio,  "Audio"   },
-        { SubMenu::IR,     "IR"      },
-        { SubMenu::EspNow, "ESP-NOW" },
-        { SubMenu::WiFi,   "WiFi"    },
-        { SubMenu::Dmx,    "DMX"     },
-        { SubMenu::PixMob, "PixMob"  },
-        { SubMenu::System, "System"  },
+    static constexpr TopEntry kTop[8] = {
+        { SubMenu::Audio,   "Audio"   },
+        { SubMenu::Display, "Display" },
+        { SubMenu::IR,      "IR"      },
+        { SubMenu::EspNow,  "ESP-NOW" },
+        { SubMenu::WiFi,    "WiFi"    },
+        { SubMenu::Dmx,     "DMX"     },
+        { SubMenu::PixMob,  "PixMob"  },
+        { SubMenu::System,  "System"  },
     };
     static constexpr size_t kTopCount = sizeof(kTop) / sizeof(kTop[0]);
 
@@ -850,9 +1400,10 @@ private:
 
     void handle_sub(const ButtonPressEvent& ev) {
         switch (active_sub_) {
-            case SubMenu::System: handle_system(ev); break;
-            case SubMenu::IR:     handle_ir(ev);     break;
-            case SubMenu::PixMob: handle_pixmob(ev); break;
+            case SubMenu::System:  handle_system(ev);  break;
+            case SubMenu::IR:      handle_ir(ev);      break;
+            case SubMenu::Display: handle_display(ev); break;
+            case SubMenu::PixMob:  handle_pixmob(ev);  break;
             case SubMenu::Audio:
             case SubMenu::EspNow:
             case SubMenu::WiFi:
@@ -871,8 +1422,9 @@ private:
 
     void draw_sub() {
         switch (active_sub_) {
-            case SubMenu::Audio:  draw_stub("Audio",   kAudioItems,  kAudioItemCount,  "Epic 3"); break;
-            case SubMenu::IR:     draw_ir(); break;
+            case SubMenu::Audio:   draw_stub("Audio", kAudioItems, kAudioItemCount, "Epic 3"); break;
+            case SubMenu::Display: draw_display(); break;
+            case SubMenu::IR:      draw_ir(); break;
             case SubMenu::EspNow: draw_stub("ESP-NOW", kEspNowItems, kEspNowItemCount, "Epic 4"); break;
             case SubMenu::WiFi:   draw_stub("WiFi",    kWifiItems,   kWifiItemCount,   "Epic 4"); break;
             case SubMenu::Dmx:    draw_stub("DMX",     kDmxItems,    kDmxItemCount,    "Epic 7"); break;
@@ -913,12 +1465,13 @@ private:
 
     size_t stub_item_count() const {
         switch (active_sub_) {
-            case SubMenu::Audio:  return kAudioItemCount;
-            case SubMenu::IR:     return kIrItemCount;
-            case SubMenu::EspNow: return kEspNowItemCount;
-            case SubMenu::WiFi:   return kWifiItemCount;
-            case SubMenu::Dmx:    return kDmxItemCount;
-            default:              return 1;
+            case SubMenu::Audio:   return kAudioItemCount;
+            case SubMenu::Display: return kDisplayFunctionalItemCount;
+            case SubMenu::IR:      return kIrItemCount;
+            case SubMenu::EspNow:  return kEspNowItemCount;
+            case SubMenu::WiFi:    return kWifiItemCount;
+            case SubMenu::Dmx:     return kDmxItemCount;
+            default:               return 1;
         }
     }
 
@@ -944,6 +1497,60 @@ private:
         }
         DAL::fire_display_show_text("local", DisplayShowTextEvent{
             10, 122, "B: cycle  PWR: back",
+            WHITE, BLACK, 1});
+    }
+
+    // -------------------------------------------------------------------------
+    // Display submenu (functional: Pulse Enable toggle + persists)
+    //
+    // Pulse Enable gates the LocalDriver's RgbPulse handler only - all
+    // other Display* output (status text, menus, etc.) keeps working
+    // when this is OFF. Useful when an operator wants the screen to
+    // show diagnostics/UI but not flash on beats.
+    // -------------------------------------------------------------------------
+
+    enum class DisplayItem : uint8_t {
+        PulseEnable = 0,
+    };
+    static constexpr size_t kDisplayFunctionalItemCount = 1;
+
+    void handle_display(const ButtonPressEvent& ev) {
+        if (ev.id == ButtonId::Btn2) {
+            sub_selected_ = (sub_selected_ + 1) % kDisplayFunctionalItemCount;
+            draw();
+            return;
+        }
+        if (ev.id == ButtonId::Btn1
+         && (DisplayItem)sub_selected_ == DisplayItem::PulseEnable) {
+            const bool next = !dal::local_driver_instance()->pulse_enabled();
+            dal::local_driver_instance()->set_pulse_enabled(next);
+            save_screen_pulse_enabled(next);
+            draw();
+        }
+    }
+
+    void draw_display() {
+        DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 5, "Display", WHITE, BLACK, 2});
+
+        char ena[24];
+        std::snprintf(ena, sizeof(ena), "Pulse: %s",
+                      dal::local_driver_instance()->pulse_enabled()
+                          ? "ON" : "OFF");
+        const char* lines[kDisplayFunctionalItemCount] = { ena };
+
+        for (size_t i = 0; i < kDisplayFunctionalItemCount; ++i) {
+            const bool sel = (i == sub_selected_);
+            char buf[40];
+            std::snprintf(buf, sizeof(buf), "%s %s",
+                          sel ? ">" : " ", lines[i]);
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 30 + (int)i * 16, buf,
+                sel ? YELLOW : WHITE, BLACK, 2});
+        }
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 122, "A: toggle  B-hold: back",
             WHITE, BLACK, 1});
     }
 
@@ -1218,7 +1825,7 @@ private:
     }
 };
 
-constexpr ConfigMode::TopEntry ConfigMode::kTop[7];
+constexpr ConfigMode::TopEntry ConfigMode::kTop[8];
 constexpr const char* ConfigMode::kAudioItems[];
 constexpr const char* ConfigMode::kIrItems[];
 constexpr const char* ConfigMode::kEspNowItems[];
@@ -1290,13 +1897,18 @@ public:
     void enter() override {
         menu_selected_    = 0;
         menu_view_offset_ = 0;
+        // Same channel as AutonomousMaster - test fires broadcast over
+        // ESP-NOW so any slave on the channel renders the colour and
+        // forwards IR to its own bracelets, just like during a real show.
+        broadcaster_.begin(kTestChannel);
         return_to_menu();
     }
 
     void exit() override {
-        if (active_test_ == SubTest::RainbowTest) rainbow_.exit();
         if (active_test_ == SubTest::AudioLive
          || active_test_ == SubTest::Calibrate)   DAL::stop_audio_input("local");
+        dal::local_driver_instance()->cancel_pulse();
+        broadcaster_.end();
         active_test_ = SubTest::None;
     }
 
@@ -1311,6 +1923,17 @@ public:
             case SubTest::Calibrate:   tick_calibrate(now);                      break;
             default: break;
         }
+        // Post-pulse status redraw. While a pulse is animating the screen is
+        // the light surface (LocalDriver paints frame-by-frame). When the
+        // pulse terminates LocalDriver paints a final BLACK frame; we then
+        // overlay the test's status text on top so the operator sees the
+        // sub-test name, countdown, etc. between pulses. Only fires on the
+        // active->inactive transition so we don't repeatedly overdraw.
+        const bool pulse_active = dal::local_driver_instance()->is_pulse_active();
+        if (pulse_was_active_ && !pulse_active) {
+            redraw_status_for_active_test();
+        }
+        pulse_was_active_ = pulse_active;
     }
 
     void on_button_event(const ButtonPressEvent& ev) override {
@@ -1384,16 +2007,54 @@ private:
     float    auto_min_[4]          = { 1.0e9f, 1.0e9f, 1.0e9f, 1.0e9f };
     float    auto_max_[4]          = { 1.0f,   1.0f,   1.0f,   1.0f   };
 
-    effects::Rainbow rainbow_{"all-pixmobs", 0.5f, 1.0f};
+    // Rainbow Test: inline hue cycling so we can fan the same RgbPulseEvent
+    // out to all three targets explicitly (IR bracelets, local screen,
+    // ESP-NOW broadcast). The effects::Rainbow class only fires to a
+    // single target; using it here meant slaves never received the rainbow
+    // colour over the wire. When the EspNowDriver lands and "esp-now-
+    // broadcast" becomes a registered DAL target, this can collapse back
+    // into a single Rainbow instance whose target is "esp-now-broadcast"
+    // and the driver fans out internally.
+    static constexpr float    kRainbowCycleHz       = 0.5f;
+    static constexpr float    kRainbowBrightness    = 1.0f;
+    static constexpr uint16_t kRainbowStepIntervalMs = 50;
+    float    rainbow_hue_         = 0.0f;
+    uint32_t rainbow_last_step_ms_ = 0;
+
+    // Channel 1 (hobby) for now; same default as AutonomousMaster. When
+    // Block 6 lands the channel-config (hobby 1 / show 11) it'll come
+    // from a single source.
+    static constexpr uint8_t kTestChannel = 1;
+    EspNowBroadcaster broadcaster_;
+
+    // Tracks the LocalDriver's pulse-active flag across loop_tick calls,
+    // so we can redraw status text on the falling edge.
+    bool pulse_was_active_ = false;
+
+    void redraw_status_for_active_test() {
+        switch (active_test_) {
+            case SubTest::PulseTest:    draw_cycle_screen("Pulse");  break;
+            case SubTest::FadeTest:     draw_cycle_screen("Fade");   break;
+            case SubTest::RainbowTest:  draw_rainbow_screen();       break;
+            case SubTest::SparkleTest:  draw_sparkle_screen();       break;
+            case SubTest::WhiteOut:     draw_whiteout();             break;
+            // AudioLive and Calibrate own their own draw cadence; no
+            // post-pulse redraw needed (they don't drive RgbPulse).
+            default: break;
+        }
+    }
 
     // -------------------------------------------------------------------------
     // Sub-test menu
     // -------------------------------------------------------------------------
 
     void return_to_menu() {
-        if (active_test_ == SubTest::RainbowTest) rainbow_.exit();
         if (active_test_ == SubTest::AudioLive
          || active_test_ == SubTest::Calibrate)   DAL::stop_audio_input("local");
+        // Stop any in-flight pulse animation before redrawing the menu;
+        // otherwise the next loop_tick frame would overdraw the menu list.
+        dal::local_driver_instance()->cancel_pulse();
+        pulse_was_active_ = false;
         active_test_ = SubTest::None;
         draw_menu();
     }
@@ -1513,7 +2174,8 @@ private:
         if (now - last_step_ms_ < (fade ? kFadeStepMs : kPulseStepMs)) return;
         step_index_   = (step_index_ + 1) % kTestPaletteCount;
         fire_cycle_step(fade);
-        draw_cycle_screen(fade ? "Fade" : "Pulse");
+        // Status text redraws via the post-pulse hook in loop_tick - if we
+        // redraw here we'd overdraw the pulse animation immediately.
     }
 
     void fire_cycle_step(bool fade) {
@@ -1521,8 +2183,11 @@ private:
         const pixmob::Time attack  = fade ? pixmob::T_192_MS : pixmob::T_32_MS;
         const pixmob::Time sustain = fade ? pixmob::T_192_MS : pixmob::T_96_MS;
         const pixmob::Time release = fade ? pixmob::T_192_MS : pixmob::T_96_MS;
-        DAL::fire_rgb_pulse("all-pixmobs", RgbPulseEvent{
-            c.r, c.g, c.b, attack, sustain, release, pixmob::CHANCE_100});
+        const RgbPulseEvent ev{
+            c.r, c.g, c.b, attack, sustain, release, pixmob::CHANCE_100};
+        DAL::render_fx("all-pixmobs", ev);
+        DAL::render_fx("local",       ev);  // screen; gated by Config > Display > Pulse
+        broadcaster_.send_light_command(/*target_group=*/0, ev);
         last_step_ms_ = millis();
     }
 
@@ -1546,7 +2211,8 @@ private:
     // -------------------------------------------------------------------------
 
     void enter_rainbow() {
-        rainbow_.enter();
+        rainbow_hue_         = 0.0f;
+        rainbow_last_step_ms_ = 0;
         draw_rainbow_screen();
     }
 
@@ -1555,12 +2221,28 @@ private:
             return_to_menu();
             return;
         }
-        rainbow_.loop_tick(now);
-        // Redraw countdown roughly twice per second.
-        if (now - last_step_ms_ > 500) {
-            draw_rainbow_screen();
-            last_step_ms_ = now;
-        }
+        if (now - rainbow_last_step_ms_ < kRainbowStepIntervalMs) return;
+        rainbow_last_step_ms_ = now;
+
+        // Advance hue: degrees-per-step = 360 * cycle_hz / steps_per_sec.
+        const float steps_per_sec = 1000.0f / (float)kRainbowStepIntervalMs;
+        const float deg_per_step  = 360.0f * kRainbowCycleHz / steps_per_sec;
+        rainbow_hue_ = std::fmod(rainbow_hue_ + deg_per_step, 360.0f);
+
+        uint8_t r, g, b;
+        effects::hsv_to_rgb(rainbow_hue_, 1.0f, kRainbowBrightness, r, g, b);
+
+        // Envelope: attack=0, sustain=96, release=0 - matches the original
+        // effects::Rainbow tuning. Each step's command lands during the
+        // previous step's sustain so the bracelet stays at full brightness
+        // for the whole hue cycle (no fade-to-dark gaps).
+        const RgbPulseEvent ev{
+            r, g, b,
+            pixmob::T_0_MS, pixmob::T_96_MS, pixmob::T_0_MS,
+            pixmob::CHANCE_100};
+        DAL::render_fx("all-pixmobs", ev);
+        DAL::render_fx("local",       ev);
+        broadcaster_.send_light_command(/*target_group=*/0, ev);
     }
 
     void draw_rainbow_screen() {
@@ -1594,12 +2276,16 @@ private:
         }
         if (now - last_step_ms_ < kSparkleStepMs) return;
         const auto& c = kSparklePalette[std::rand() % kSparklePaletteCount];
-        DAL::fire_rgb_pulse("all-pixmobs", RgbPulseEvent{
+        const RgbPulseEvent ev{
             c.r, c.g, c.b,
             pixmob::T_32_MS, pixmob::T_32_MS, pixmob::T_96_MS,
-            pixmob::CHANCE_50});
+            pixmob::CHANCE_50};
+        DAL::render_fx("all-pixmobs", ev);
+        DAL::render_fx("local",       ev);   // LocalDriver rolls CHANCE_50
+                                             // independently, like a bracelet
+        broadcaster_.send_light_command(/*target_group=*/0, ev);
         last_step_ms_ = now;
-        draw_sparkle_screen();
+        // Status text redraws via the post-pulse hook in loop_tick.
     }
 
     void draw_sparkle_screen() {
@@ -1625,10 +2311,13 @@ private:
         // Single command: instant attack, ~2.4 s sustain, ~0.96 s release.
         // The PixMob protocol's Time enum has values up to T_3840_MS so
         // we don't need a multi-command staircase to span 2 s + 1 s.
-        DAL::fire_rgb_pulse("all-pixmobs", RgbPulseEvent{
+        const RgbPulseEvent ev{
             0xFF, 0xFF, 0xFF,
             pixmob::T_0_MS, pixmob::T_2400_MS, pixmob::T_960_MS,
-            pixmob::CHANCE_100});
+            pixmob::CHANCE_100};
+        DAL::render_fx("all-pixmobs", ev);
+        DAL::render_fx("local",       ev);
+        broadcaster_.send_light_command(/*target_group=*/0, ev);
     }
 
     void draw_whiteout() {
@@ -2148,6 +2837,7 @@ void ModeMachine::begin() {
 
     s_last_runtime = load_last_runtime_mode();
     DAL::set_driver_enabled("ir-pixmob", load_ir_enabled());
+    dal::local_driver_instance()->set_pulse_enabled(load_screen_pulse_enabled());
     s_calibration  = load_calibration();
     s_active_mode  = nullptr;          // force enter() in enter_mode()
     enter_mode(ModeId::Boot);

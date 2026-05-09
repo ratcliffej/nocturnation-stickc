@@ -35,6 +35,9 @@ enum class Capability : uint8_t {
     Buttons,    // discrete buttons (Btn1..Btn8) with click/long-press semantics
     IMU,        // 3- or 6-axis accelerometer/gyro
     Battery,    // battery level + voltage + charge state
+    Bluetooth,  // BLE peripheral (declaration-only at present; future Epic
+                // wires phone-app pairing on top - StickC Plus2 has BLE 4.2,
+                // StickS3 has BLE 5.0)
 };
 
 // =============================================================================

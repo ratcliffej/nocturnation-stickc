@@ -60,26 +60,23 @@ void Pulse::on_beat(uint32_t /*now_ms*/, float bpm) {
     fire(r_, g_, b_, bpm);
 }
 
-void Pulse::fire(uint8_t r, uint8_t g, uint8_t b, float bpm) {
-    pixmob::Time attack, sustain, release;
+PulseEnvelope envelope_for_bpm(float bpm) {
     if (bpm > 160.0f) {
         // Very fast: 0+32+96 = 128 ms total.
-        attack  = pixmob::T_0_MS;
-        sustain = pixmob::T_32_MS;
-        release = pixmob::T_96_MS;
-    } else if (bpm > 100.0f || bpm == 0.0f) {
-        // Medium / unknown: punchy default (32+96+96 = 224 ms).
-        attack  = pixmob::T_32_MS;
-        sustain = pixmob::T_96_MS;
-        release = pixmob::T_96_MS;
-    } else {
-        // Slow ballad: more presence (32+192+192 = 416 ms).
-        attack  = pixmob::T_32_MS;
-        sustain = pixmob::T_192_MS;
-        release = pixmob::T_192_MS;
+        return { pixmob::T_0_MS,  pixmob::T_32_MS,  pixmob::T_96_MS  };
     }
+    if (bpm > 100.0f || bpm == 0.0f) {
+        // Medium / unknown: punchy default (32+96+96 = 224 ms).
+        return { pixmob::T_32_MS, pixmob::T_96_MS,  pixmob::T_96_MS  };
+    }
+    // Slow ballad: more presence (32+192+192 = 416 ms).
+    return { pixmob::T_32_MS, pixmob::T_192_MS, pixmob::T_192_MS };
+}
+
+void Pulse::fire(uint8_t r, uint8_t g, uint8_t b, float bpm) {
+    const PulseEnvelope env = envelope_for_bpm(bpm);
     DAL::fire_rgb_pulse(target_, RgbPulseEvent{
-        r, g, b, attack, sustain, release, chance_});
+        r, g, b, env.attack, env.sustain, env.release, chance_});
 }
 
 // =============================================================================

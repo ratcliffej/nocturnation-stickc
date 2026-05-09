@@ -273,6 +273,28 @@ public:
     static bool fire_assign_device_group(const char* target, const AssignDeviceGroupEvent&);
 
     // -------------------------------------------------------------------------
+    // render_fx: canonical "render this effect on this device" entry point.
+    //
+    // Conceptually identical to the per-event fire_* helpers above for the
+    // current set of effect types - both end up dispatching the same typed
+    // event to the registered driver for the target's transport. The
+    // difference is intent and future extensibility: new effect types
+    // (planned: text overlay, simple graphics, scripted animations) will
+    // ship as render_fx overloads only, without per-capability fire_*
+    // proliferation. Existing fire_* helpers are kept for the call sites
+    // that already use them; new code should prefer render_fx.
+    //
+    // Per the slave-as-target-device model, calling
+    //   DAL::render_fx("local", RgbPulseEvent{...})
+    // on a StickC paints the screen with an attack/sustain/release fade;
+    // on a future LED-only device it drives the LED; on a Tildagon it can
+    // drive both screen and on-board LEDs. The host profile composition
+    // and the per-device driver decide which physical surface is "the
+    // light".
+    // -------------------------------------------------------------------------
+    static bool render_fx(const char* target, const RgbPulseEvent& ev);
+
+    // -------------------------------------------------------------------------
     // Input subscription. Returns false on unknown target or capability not
     // declared as an input on that target's profile. Callbacks fire from
     // DAL::loop_tick().

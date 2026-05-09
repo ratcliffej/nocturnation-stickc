@@ -5,9 +5,10 @@ notion_url: https://www.notion.so/357bd0677405800b891beab0f4e0a976
 notion_id: 357bd0677405800b891beab0f4e0a976
 last_synced: 2026-05-09
 sync_direction: bidirectional
+notion_status: synced (v0.18, Bluetooth + render_fx + slave-as-target updates)
 ---
 
-**Status:** Draft v0.17 - early architecture document, expect substantial revision.
+**Status:** Draft v0.18 - early architecture document, expect substantial revision.
 **Maintainer:** Jason Ratcliffe
 ---
 ## 1. Vision
@@ -170,12 +171,20 @@ The system is a single conceptual pipeline: events flow in, light commands flow 
 <td>Building scale</td>
 </tr>
 <tr>
+<td>Bluetooth LE</td>
+<td>Phone-app → host (control plane); future Epic</td>
+<td>10-100 ms</td>
+<td>5-30m typical</td>
+</tr>
+<tr>
 <td>Sub-GHz RF (LoRa) *future*</td>
 <td>Long-range outdoor</td>
 <td>50-200 ms</td>
 <td>500m+</td>
 </tr>
 </table>
+
+**Bluetooth role.** A future Epic adds BLE to the carrier set so a phone app can act as a control plane for any host within Bluetooth range: pick the show colour, trigger a test pulse, switch master/slave mode, view diagnostics. The phone speaks BLE only to the host it's directly paired with; that host then **fans the resulting `render_fx()` calls out over ESP-NOW** to every other host within radio range. Bluetooth is therefore a personal/local control link, not a show-wide protocol - ESP-NOW remains the show's distribution backbone. The HAL declares `Capability::Bluetooth` on hosts whose chips have a BLE radio (StickC Plus2 BLE 4.2, StickS3 BLE 5.0, future Tildagon BLE per its ESP32-C3); implementation is deferred to its own Epic but the capability is wired now so the API surface is ready.
 ### 4.2 Protocols
 <table header-row="true">
 <tr>
@@ -278,7 +287,8 @@ Offset  Field             Size  Notes
 - Receivers track `(source_id, sequence_number)` for last 16 frames; deduplicate.
 - Master sends each event 2-3 times with the same sequence number to spread across airtime gaps.
 - Repeaters rebroadcast frames they haven't already seen, with `hop_count + 1`. Cap at 3 hops.
-- Heartbeat at 4 Hz lets slaves detect master loss within 1 second and fall back to autonomous mode.
+- **Heartbeat at 1 Hz** (revised from the original 4 Hz design during Epic 4 Block 3 hardware verification; the lower duty cycle matters for battery-powered receivers and a ~3 second master-loss detection window is acceptable for the deployment scenarios in scope). Master also **skips heartbeat if any other frame went out within the heartbeat period**, so during music with `BEAT_DETECTED` / `LIGHT_COMMAND` traffic the alive-signal is implicit and heartbeat traffic drops to roughly zero.
+- **Master-loss behaviour: slaves run a local idle effect (subtle hue cycle) and stay in Slave mode.** Slaves do NOT auto-promote to master - a rogue slave-promoted-to-master would compete on the radio with the real master if it briefly drops or returns, fragmenting the show. Promotion only happens via explicit operator action through the mode menu. (This corrects the original "fall back to autonomous mode" wording above.)
 - Tier 3 receivers persist the highest `(days_since_2026, centiseconds_today)` tuple seen to NVM periodically (every 10 seconds maximum). The watermark provides tamper-evidence against replay attacks; see Security RFC §6 for full design.
 ### 4.4 PixMob protocol (existing, documented)
 Pre-existing reverse-engineered protocol implemented in `pixmob_protocol.h`. Verified bit-for-bit against jamesw343's Python encoder. Supports:
@@ -547,7 +557,33 @@ The Tildagon badge is unusual because it's both a *receiver* (in the audience, a
 - When in the foreground, the show animation runs full-screen on the round LCD plus the six perimeter LEDs.
 - When backgrounded, the perimeter LEDs continue to react (ESP-NOW listening continues), but the screen shows whatever foreground app the user has chosen.
 - An opt-in "intense mode" gives the show full-screen treatment even when in another app, for users who want the full effect during a known show window.
-### 7.4 Display-event abstraction (proposed)
+### 7.4 Display-as-light + render_fx() canonical entry point
+A receiver's display is **also a light surface in the show**. When a Stick is in Slave mode, an inbound `LIGHT_COMMAND` (or any locally-fired effect) paints the screen full-bleed with the broadcast colour and the matching attack/sustain/release fade - the Stick on a tripod becomes a coherent piece of installation gear, not just a transmitter that drives lights but one of the lights itself. For the constellation art piece a single Stick can act as both transmitter AND visible light point, reducing the bracelet count needed.
+
+This is implemented via the DAL's canonical render entry point: `DAL::render_fx(target, event)`. Orchestration on a beat (Master mode, Test mode, etc.) issues **multiple `render_fx` calls** - one per locally-available light surface - and each fails silent if its driver/transport isn't enabled or wired:
+
+```cpp
+DAL::render_fx("local",         ev);   // host's primary light surface
+                                       // (StickC: screen; future LED-only
+                                       //  device: LED; Tildagon: screen +
+                                       //  on-board LEDs)
+DAL::render_fx("all-pixmobs",   ev);   // IR transport to PixMob bracelets
+                                       // in range; gated by Config > IR
+                                       // > Enable
+DAL::render_fx("esp-now-broadcast", ev);  // ESP-NOW broadcast for slaves
+                                       // (rolling out in Block 3+ as a
+                                       //  proper EspNowDriver)
+```
+
+There is no auto-forwarding inside `render_fx()` itself: each call has one job, which keeps the IR mute toggle clean (`DAL::set_driver_enabled("ir-pixmob", false)` makes IR `render_fx` fail silently without affecting the screen) and respects per-host capability differences.
+
+**Per-capability gates beyond driver enable.** The `LocalDriver` exposes a per-capability gate for `RgbPulseEvent` (Config → Display → Pulse Enable, NVS-backed) so an operator can keep the screen showing status text/UI but suppress beat flashes. Other DisplayShowText / DisplayClear events stay unaffected. This is finer-grained than the driver-level enable; future per-capability gates on other drivers will follow the same pattern.
+
+**Future effect types** (text overlay, simple graphics, scripted animations per §6 future work) ship as additional `render_fx` overloads on new event structs. They will not introduce per-capability `fire_*` helpers - `render_fx` is the single entry point that orchestration learns once and reuses for every new effect.
+
+**Target naming direction.** The currently registered device names (`"all-pixmobs"`, `"group-1"`..`"group-5"`, etc.) are brand-tied for historical reasons. The agreed naming pattern going forward is `transport_protocol_groupfilter`: `IR_pixmob_group3`, `ESPNow_nocturnation`, `Local_Screen`, `Local_LED`, `DMX_universe1`. Bare `"local"` stays as the host-as-target convention. The rename will land in a focused refactor pass when a second IR protocol or NocturNation-native bracelet code arrives - the abstraction earns its keep with a real second consumer rather than speculatively.
+
+### 7.5 Display-event abstraction (proposed)
 Following the same layered pattern as the light driver abstraction, a future display abstraction would let orchestration emit display intents independent of platform:
 ```plain text
 display.show_palette(colours)         # full-screen colour wash

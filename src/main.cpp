@@ -12,10 +12,20 @@
 // setup() and loop() are intentionally tiny: bring up the DAL, bring up the
 // mode FSM, then advance both each tick.
 
+#include <Arduino.h>
+
 #include "dal/dal.h"
 #include "modes/mode_machine.h"
 
 void setup() {
+    // Bring up the USB-CDC / UART console. Required before any Serial.printf
+    // output flushes (arduino-esp32's CDC-on-boot path auto-creates the
+    // peripheral but doesn't open the stream until begin() is called). 115200
+    // matches platformio.ini's monitor_speed.
+    Serial.begin(115200);
+    delay(50);                  // brief settle so the boot banner isn't lost
+    Serial.println("[noct] boot");
+
     nocturnation::dal::DAL::begin();
     nocturnation::modes::ModeMachine::begin();
 }

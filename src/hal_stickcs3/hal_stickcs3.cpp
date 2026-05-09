@@ -17,11 +17,11 @@
 //
 // Capabilities currently declared:
 //
-//   Display, Buttons, IMU, Battery, Mic (ES8311), IRTx, IRRx
+//   Display, Buttons, IMU, Battery, Mic (ES8311), IRTx, IRRx, ESPNow
 //
-// Not yet declared (interfaces exist; implementations pending):
-//
-//   ESPNow  - Block 3 onwards (Epic 4).
+// ESPNow's begin() is NOT called from HAL::begin(); orchestration brings
+// the radio up when entering a mode that needs it (mirrors the Mic
+// on-demand pattern).
 
 #include "hal/hal.h"
 #include "M5Unified.h"
@@ -33,6 +33,7 @@
 #include "mic_stickcs3.h"
 #include "ir_tx_stickcs3.h"
 #include "ir_rx_stickcs3.h"
+#include "esp_now_stickcs3.h"
 
 namespace nocturnation {
 namespace hal {
@@ -49,6 +50,9 @@ static constexpr Capability kCapabilities[] = {
     Capability::Mic,
     Capability::IRTx,
     Capability::IRRx,
+    Capability::ESPNow,
+    Capability::Bluetooth,   // BLE 5.0 hardware; declaration only - future
+                             // Epic 4+ work wires phone-app pairing on top.
 };
 static constexpr size_t kCapabilityCount =
     sizeof(kCapabilities) / sizeof(kCapabilities[0]);
@@ -75,6 +79,7 @@ BatteryStickCS3 s_battery;
 MicStickCS3     s_mic;
 IRTxStickCS3    s_ir_tx;
 IRRxStickCS3    s_ir_rx;
+ESPNowStickCS3  s_esp_now;
 }  // namespace
 
 // -----------------------------------------------------------------------------
@@ -106,11 +111,10 @@ void HAL::loop_tick() {
 // Accessors
 // -----------------------------------------------------------------------------
 
-ESPNow*  HAL::esp_now()  { return nullptr; }
-
 Mic*     HAL::mic()      { return &s_mic; }
 IRTx*    HAL::ir_tx()    { return &s_ir_tx; }
 IRRx*    HAL::ir_rx()    { return &s_ir_rx; }
+ESPNow*  HAL::esp_now()  { return &s_esp_now; }
 Display* HAL::display()  { return &s_display; }
 Buttons* HAL::buttons()  { return &s_buttons; }
 IMU*     HAL::imu()      { return &s_imu; }

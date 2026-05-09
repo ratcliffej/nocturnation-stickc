@@ -1,11 +1,66 @@
 #include "local_driver.h"
 #include "hal/hal.h"
+#include "pixmob_protocol.h"
+
+#include <cstdlib>       // std::rand() for chance roll
+
+#ifdef ARDUINO
+#include <Arduino.h>     // now_ms()
+#endif
 
 namespace nocturnation {
 namespace dal {
 
 namespace {
 LocalDriver s_instance;
+
+// now_ms() shim. Native test envs that link this TU (test_dal_*) don't
+// pull in modes/ where mode_machine.cpp defines its native millis() seam,
+// so we can't depend on millis() being available. Returning 0 in
+// native builds means the pulse animation doesn't advance under tests -
+// which is fine; those tests exercise registration / dispatch, not
+// animation timing.
+inline uint32_t now_ms() {
+#ifdef ARDUINO
+    return ::millis();
+#else
+    return 0;
+#endif
+}
+
+// pixmob::Time enum index -> milliseconds. The enum values 0..7 map to a
+// fixed table per the protocol; see include/pixmob_protocol.h.
+constexpr uint16_t kPixMobTimeMs[8] = {
+    0, 32, 96, 192, 480, 960, 2400, 3840
+};
+
+// pixmob::Chance enum index -> percentage. Used by roll_chance(); each
+// "light" (bracelet OR local screen, per the slave-as-target-device
+// model) rolls independently against this percentage so a CHANCE_50
+// sparkle fires on roughly half the lights in range.
+constexpr uint8_t kPixMobChancePct[8] = {
+    100, 88, 67, 50, 32, 16, 10, 4
+};
+
+inline uint16_t pixmob_time_ms(pixmob::Time t) {
+    return kPixMobTimeMs[static_cast<uint8_t>(t) & 0x07];
+}
+
+inline uint8_t pixmob_chance_pct(pixmob::Chance c) {
+    return kPixMobChancePct[static_cast<uint8_t>(c) & 0x07];
+}
+
+bool roll_chance(pixmob::Chance c) {
+    const uint8_t pct = pixmob_chance_pct(c);
+    if (pct >= 100) return true;
+    return (std::rand() % 100) < pct;
+}
+
+inline uint16_t rgb888_to_rgb565(uint8_t r, uint8_t g, uint8_t b) {
+    return static_cast<uint16_t>(((r >> 3) << 11)
+                               | ((g >> 2) << 5)
+                               |  (b >> 3));
+}
 }  // namespace
 
 LocalDriver* local_driver_instance() { return &s_instance; }
@@ -55,6 +110,118 @@ bool LocalDriver::begin() {
     // useful for this driver to do, and registering would just add
     // lookup overhead.
     return any_capability_wired;
+}
+
+// -----------------------------------------------------------------------------
+// RgbPulse: paint screen full-bleed with attack/sustain/release fade.
+//
+// The first call kicks off a new animation; subsequent calls during an
+// in-flight pulse replace the current state (fresh beat takes over).
+// loop_tick() drives the per-frame render at ~30 Hz.
+// -----------------------------------------------------------------------------
+
+bool LocalDriver::send(uint8_t /*group_id*/, const RgbPulseEvent& ev) {
+    auto* d = hal::HAL::display();
+    if (!d) return false;
+    if (!pulse_enabled_) return false;
+
+    // Chance roll: each "light" (bracelet OR local screen) rolls
+    // independently per the slave-as-target-device model. CHANCE_50 on
+    // a sparkle effect paints the screen on roughly half the firings,
+    // matching what bracelets in range are doing - the screen behaves
+    // like one of many lights.
+    if (!roll_chance(ev.chance)) return false;
+
+    pulse_start_ms_   = now_ms();
+    attack_ms_        = pixmob_time_ms(ev.attack);
+    sustain_ms_       = pixmob_time_ms(ev.sustain);
+    release_ms_       = pixmob_time_ms(ev.release);
+    target_r_         = ev.r;
+    target_g_         = ev.g;
+    target_b_         = ev.b;
+    pulse_active_     = (attack_ms_ + sustain_ms_ + release_ms_) > 0
+                        && (target_r_ | target_g_ | target_b_) != 0;
+    pulse_terminated_ = false;
+
+    if (!pulse_active_) {
+        // Zero-envelope or all-black: terminate cleanly. We DO paint
+        // black into the pulse rect here so a stale colour from a
+        // previous pulse doesn't linger.
+        d->fill_rect(pulse_rect_x_, pulse_rect_y_,
+                     pulse_rect_w_, pulse_rect_h_, 0x0000);
+        pulse_terminated_ = true;
+        return true;
+    }
+
+    // No initial paint - loop_tick on the next main-loop iteration sees
+    // pulse_active_=true and paints the right brightness for elapsed=0
+    // (full colour for attack=0 envelopes like Rainbow's, otherwise a
+    // proper attack ramp). Painting BLACK here would force every fast-
+    // attack effect through a one-frame black flicker before the first
+    // colour render, which made Rainbow look broken on hardware.
+    last_render_ms_ = (pulse_start_ms_ < kFramePeriodMs)
+                      ? 0
+                      : pulse_start_ms_ - kFramePeriodMs;
+    return true;
+}
+
+void LocalDriver::loop_tick() {
+    if (!pulse_active_) return;
+    auto* d = hal::HAL::display();
+    if (!d) {
+        pulse_active_ = false;
+        return;
+    }
+
+    const uint32_t now      = now_ms();
+    const uint32_t elapsed  = now - pulse_start_ms_;
+    const uint32_t total_ms = static_cast<uint32_t>(attack_ms_)
+                            + sustain_ms_ + release_ms_;
+
+    // End of envelope: paint final black frame, mark inactive. We always
+    // do this draw even if the throttle window hasn't elapsed - it's the
+    // pulse's clean termination.
+    if (elapsed >= total_ms) {
+        if (!pulse_terminated_) {
+            d->fill_rect(pulse_rect_x_, pulse_rect_y_,
+                         pulse_rect_w_, pulse_rect_h_, 0x0000);
+            pulse_terminated_ = true;
+        }
+        pulse_active_ = false;
+        return;
+    }
+
+    // Throttle intermediate frames so we don't overrun the SPI bus.
+    if (now - last_render_ms_ < kFramePeriodMs) return;
+    last_render_ms_ = now;
+
+    // Brightness curve. Linear ramp on RGB888 inputs - the human visual
+    // response is non-linear but bracelet hardware uses linear PWM
+    // anyway, so this matches what bracelets in the same group are doing.
+    float brightness;
+    if (elapsed < attack_ms_ && attack_ms_ > 0) {
+        brightness = static_cast<float>(elapsed) /
+                     static_cast<float>(attack_ms_);
+    } else if (elapsed < static_cast<uint32_t>(attack_ms_) + sustain_ms_) {
+        brightness = 1.0f;
+    } else {
+        const uint32_t rel_elapsed = elapsed
+                                   - attack_ms_
+                                   - sustain_ms_;
+        brightness = (release_ms_ > 0)
+                   ? 1.0f - (static_cast<float>(rel_elapsed) /
+                              static_cast<float>(release_ms_))
+                   : 0.0f;
+    }
+    if (brightness < 0.0f) brightness = 0.0f;
+    if (brightness > 1.0f) brightness = 1.0f;
+
+    const uint8_t r = static_cast<uint8_t>(static_cast<float>(target_r_) * brightness);
+    const uint8_t g = static_cast<uint8_t>(static_cast<float>(target_g_) * brightness);
+    const uint8_t b = static_cast<uint8_t>(static_cast<float>(target_b_) * brightness);
+    d->fill_rect(pulse_rect_x_, pulse_rect_y_,
+                 pulse_rect_w_, pulse_rect_h_,
+                 rgb888_to_rgb565(r, g, b));
 }
 
 // -----------------------------------------------------------------------------

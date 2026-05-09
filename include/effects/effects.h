@@ -78,6 +78,17 @@ public:
 // Colour is mutable via set_colour(); typical orchestration call site is a
 // button handler that cycles through a palette.
 
+// BPM -> attack/sustain/release envelope picker. Single source of truth for
+// the prototype's tempo-driven envelope mapping; Pulse / ProbabilityPulse use
+// it for IR fires, AutonomousMaster uses it when packing LIGHT_COMMAND frames
+// for ESP-NOW so slaves render the same envelope on screen.
+struct PulseEnvelope {
+    pixmob::Time attack;
+    pixmob::Time sustain;
+    pixmob::Time release;
+};
+PulseEnvelope envelope_for_bpm(float bpm);
+
 class Pulse : public Effect {
 public:
     explicit Pulse(const char* target_name);

@@ -75,18 +75,21 @@ static void test_local_device_registered_after_begin(void) {
 static void test_local_profile_reflects_hal_capabilities(void) {
     using dal::CapabilityId;
     // HAL has Mic + Buttons + Display, so the composed host profile should
-    // declare AudioFrame + ButtonPress as inputs and the four display
-    // capabilities as outputs. ESPNow is NOT declared, so EspNowInbound
-    // must NOT appear as an input.
+    // declare AudioFrame + ButtonPress as inputs and the display capabilities
+    // + RgbPulse as outputs. RgbPulse is added alongside the Display
+    // capabilities because the screen IS this host's "light" surface (Epic 4
+    // slave-as-target-device design): render_fx("local", RgbPulseEvent{...})
+    // paints the screen with attack/sustain/release fade. ESPNow is NOT
+    // declared, so EspNowInbound must NOT appear as an input.
     TEST_ASSERT_TRUE (dal::DAL::supports("local", CapabilityId::AudioFrame));
     TEST_ASSERT_TRUE (dal::DAL::supports("local", CapabilityId::ButtonPress));
     TEST_ASSERT_TRUE (dal::DAL::supports("local", CapabilityId::DisplayShowText));
     TEST_ASSERT_TRUE (dal::DAL::supports("local", CapabilityId::DisplayClear));
     TEST_ASSERT_TRUE (dal::DAL::supports("local", CapabilityId::DisplayFillRect));
     TEST_ASSERT_TRUE (dal::DAL::supports("local", CapabilityId::DisplayMeter));
+    TEST_ASSERT_TRUE (dal::DAL::supports("local", CapabilityId::RgbPulse));
     TEST_ASSERT_FALSE(dal::DAL::supports("local", CapabilityId::EspNowInbound));
     TEST_ASSERT_FALSE(dal::DAL::supports("local", CapabilityId::DmxInbound));
-    TEST_ASSERT_FALSE(dal::DAL::supports("local", CapabilityId::RgbPulse));
     // HAL didn't declare Battery, so BatteryLevel must NOT appear as an output.
     TEST_ASSERT_FALSE(dal::DAL::supports("local", CapabilityId::BatteryLevel));
 }

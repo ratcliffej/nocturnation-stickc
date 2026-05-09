@@ -367,3 +367,23 @@ Key technical risks:
 The Plus2 EOL situation creates a small additional task: at the end of this Epic, the architecture spec should be updated to reflect that the S3 is now the preferred reference platform, with the Plus2 supported as legacy. Current spec §3 still leans Plus2-primary; the work in this Epic to prove S3 first-class behaviour is what unlocks that spec change.
 
 Processing Type stays Hybrid because most of this is laptop-driven coding work where Claude Code is genuinely a useful pair. The exception is Block 8's stress test, which is genuinely Manual - Jason and a deliberately-noisy environment.
+
+**Block 3 hardware-verification update (2026-05-09)**: ESP-NOW transmit + receive HAL backends landed on both Plus2 and S3. AutonomousMaster broadcasts BEAT_DETECTED + LIGHT_COMMAND on each detected beat. Slave mode receives, decodes header, defers payload work to main-loop (essential - calling IRsend::sendRaw from the WiFi callback context crashes the S3). Slave's screen renders the broadcast colour with attack/sustain/release fade through a new `LocalDriver` RgbPulse handler; orchestration just calls `DAL::render_fx("local", ev)` and the driver owns the per-frame paint at ~30 Hz.
+
+Several architectural clarifications adopted during Block 3 (now in spec §4.3, §4.7-Bluetooth, §7.4):
+
+1. **`render_fx(target, event)` is the canonical effect entry point** for orchestration. Existing per-capability `fire_*` helpers stay for legacy call sites; new effect types (text overlay, simple graphics, scripted animations - per §6 future work) ship as `render_fx` overloads on new event structs.
+2. **Slave-as-target-device**: a slave is just one of the lights in the show, not just an ESP-NOW relay. On a beat it lights its own screen AND forwards IR to nearby bracelets - both via explicit `render_fx` calls. No auto-forwarding inside `render_fx`.
+3. **No auto-promote on master loss**: corrects spec §4.3's original "fall back to autonomous mode" wording. Slaves stay slaves and run a local idle effect; promotion only via explicit operator action.
+4. **Heartbeat 4 Hz → 1 Hz with skip-if-recent**: lower TX/RX duty cycle for battery-powered receivers; `BEAT_DETECTED` traffic during music covers the alive-signal so heartbeat traffic drops to roughly zero.
+5. **Bluetooth as control plane**: future Epic adds BLE so a phone app can drive any host within Bluetooth range; the host fans `render_fx()` out over ESP-NOW. `Capability::Bluetooth` is declared by the HAL on Plus2 (BLE 4.2) and S3 (BLE 5.0) now so the API surface is ready.
+6. **Per-capability driver gates**: `Config → Display → Pulse Enable` (NVS-backed) gates the LocalDriver's `RgbPulse` handler only - status text and other display events stay unaffected. Finer-grained than driver-level enable.
+7. **Test mode joins the broadcast**: Test sub-tests (Pulse / Fade / Rainbow / Sparkle / WhiteOut) now `render_fx("local", ev)` for the screen AND call a shared `EspNowBroadcaster` helper to broadcast LIGHT_COMMAND, so any slave on the channel renders the same colour during a test the same way it does during a real show.
+
+Outstanding follow-ups carried into Block 4 / Block 5 / Block 6:
+
+- Replace the `EspNowBroadcaster` helper struct with a proper `EspNowDriver` registered in the DAL behind `render_fx("esp-now-broadcast", ev)`. The struct is a stepping stone; once it lands, the per-mode radio lifecycle goes away.
+- Slave forwards IR to its **own configured group**, not `"all-pixmobs"` broadcast. Slave NVS-stores its group ID; target string built dynamically. Avoids two slaves at opposite ends of a venue both broadcast-firing into the same airspace.
+- Brand-independent target naming sweep (`"all-pixmobs"` etc.) - deferred until a second IR protocol or NocturNation-native bracelet code arrives so the abstraction has a real second consumer.
+- esp-dsp `_aes3` SIMD FFT path on S3 - currently using `_ansi` because `_aes3` produced erratic per-bin magnitudes for our packed-real-as-complex input layout. ANSI path is still meaningfully faster than arduinoFFT (float vs double, better cache behaviour); recovering the SIMD win is a focused investigation.
+- Empirical IR radiation patterns: Plus2 IR LED is omnidirectional, S3 is more focused. Useful for deployment planning - operator can stack a Plus2 + S3 in the same venue with the S3 aimed at the dance floor and the Plus2 doing general fill.

@@ -19,7 +19,13 @@
 // Not yet declared (interfaces exist; backends pending):
 //
 //   IRRx    - hardware exists on the Plus2; not used in Epic 2.
-//   ESPNow  - Epic 4.
+//
+// Newly declared (Epic 4 Block 3):
+//
+//   ESPNow  - WiFi-radio broadcast/peer messaging. begin() is NOT called
+//             from HAL::begin(); orchestration brings the radio up when
+//             entering a mode that needs it (AutonomousMaster as Master,
+//             Slave Mode for receive). Mirrors the Mic on-demand pattern.
 
 #include "hal/hal.h"
 #include "M5Unified.h"
@@ -30,6 +36,7 @@
 #include "battery_stickcplus2.h"
 #include "mic_stickcplus2.h"
 #include "ir_tx_stickcplus2.h"
+#include "esp_now_stickcplus2.h"
 
 namespace nocturnation {
 namespace hal {
@@ -45,6 +52,9 @@ static constexpr Capability kCapabilities[] = {
     Capability::Battery,
     Capability::Mic,
     Capability::IRTx,
+    Capability::ESPNow,
+    Capability::Bluetooth,   // BLE 4.2 hardware; declaration only - future
+                             // Epic 4+ work wires phone-app pairing on top.
 };
 static constexpr size_t kCapabilityCount =
     sizeof(kCapabilities) / sizeof(kCapabilities[0]);
@@ -70,6 +80,7 @@ IMUStickCplus2     s_imu;
 BatteryStickCplus2 s_battery;
 MicStickCplus2     s_mic;
 IRTxStickCplus2    s_ir_tx;
+ESPNowStickCplus2  s_esp_now;
 }  // namespace
 
 // -----------------------------------------------------------------------------
@@ -115,10 +126,10 @@ void HAL::loop_tick() {
 // -----------------------------------------------------------------------------
 
 IRRx*    HAL::ir_rx()    { return nullptr; }
-ESPNow*  HAL::esp_now()  { return nullptr; }
 
 Mic*     HAL::mic()      { return &s_mic; }
 IRTx*    HAL::ir_tx()    { return &s_ir_tx; }
+ESPNow*  HAL::esp_now()  { return &s_esp_now; }
 Display* HAL::display()  { return &s_display; }
 Buttons* HAL::buttons()  { return &s_buttons; }
 IMU*     HAL::imu()      { return &s_imu; }
