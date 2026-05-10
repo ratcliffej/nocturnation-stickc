@@ -1,35 +1,38 @@
-// AutonomousMasterMode - lifts the Epic 1 beat-detection + IR-sending logic
-// out of main.cpp. Behaviour is preserved exactly; the only change is that
-// PWR long-press now goes to the Menu instead of toggling beat-mode.
+// AutonomousMasterMode - thin shell that hosts the active master-side
+// Visualisation (Epic 4.6 Block 8 onwards).
+//
+// Pre-Block-8 this owned the beat-pulse logic, the IBI/BPM tracking, and
+// the Colour enum directly. Post-Block-8 the per-beat render fan-out and
+// the BPM tracking live in BeatPulseVisualisation; this mode shrinks to:
+//   - lifecycle wiring (audio input, ESP-NOW broadcast)
+//   - pause state (canonical here; mirrored into ctx)
+//   - flux/baseline tracking for the on-screen meter (display-only)
+//   - music_event broadcast (mode concern, not vis)
+//   - status display (composes labels from the vis property bag)
+//   - button-event routing (cycles colour via InputAction::Cycle on the vis)
+//
+// Block 10 will introduce the vis picker that lets the user choose between
+// multiple registered visualisations and persist the choice to NVS. For
+// Block 8 the active vis is hardcoded to BeatPulse via the registry.
 
 #pragma once
 
-#include <cstddef>
 #include <cstdint>
 
 #include "modes/mode_machine.h"          // public header in include/
-#include "effects/effects.h"
 
 namespace nocturnation {
+
+namespace visualisations { class Visualisation; class VisualisationContext; }
+
 namespace modes {
-
-namespace autonomous_master_detail {
-
-// Used by AutonomousMasterMode (preserves Epic 1's six-state cycle including
-// the OFF "skip IR" state). Lives here only because AutonomousMasterMode
-// holds one as a member; helpers live in the .cpp anon namespace.
-enum class Colour : uint8_t {
-    Off = 0, Red, Green, Blue, Yellow, White
-};
-
-}  // namespace autonomous_master_detail
 
 class AutonomousMasterMode : public Mode {
 public:
     ModeId id() const override { return ModeId::AutonomousMaster; }
     const char* name() const override { return "Autonomous Master"; }
 
-    AutonomousMasterMode();
+    AutonomousMasterMode() = default;
 
     void enter() override;
     void exit() override;
@@ -38,36 +41,25 @@ public:
     void on_button_event(const dal::ButtonPressEvent& ev) override;
 
 private:
-    static constexpr size_t kIbiBufferSize = 8;
-
     // Channel comes from NVS (Config > ESP-NOW > Master Channel) per
-    // spec §4.5: 1 = hobby (default), 11 = show, 6 = advanced override.
-    // The radio itself lives in EspNowBroadcastDriver - this mode just
-    // starts/stops broadcast in its enter/exit lifecycle and hits the
-    // wire via DAL::render_fx("esp-now-broadcast", ...) and the driver's
-    // send_music_event() entry point.
+    // spec §4.5. The radio itself lives in EspNowBroadcastDriver - this
+    // mode just starts/stops broadcast in enter/exit; the driver's
+    // loop_tick handles retransmits and the 1 Hz heartbeat.
 
-    autonomous_master_detail::Colour colour_ =
-        autonomous_master_detail::Colour::Red;
-    bool              paused_           = false;
-    effects::Pulse    pulse_;
+    visualisations::Visualisation*        active_vis_ = nullptr;
+    visualisations::VisualisationContext* ctx_        = nullptr;
 
+    bool      paused_           = false;
+
+    // Flux/baseline state stays at mode level - it powers the on-screen
+    // meter, which is mode UI, not vis output. Beat firing is driven by
+    // ev.is_beat (BeatDetector in DAL); these are diagnostic.
     float     baseline_flux_    = 100.0f;
     float     prev_bass_energy_ = 0.0f;
     float     current_flux_     = 0.0f;
     float     current_level_    = 0.0f;
-    uint32_t  last_beat_ms_     = 0;
     uint32_t  last_draw_ms_     = 0;
 
-    uint32_t  ibi_buffer_[kIbiBufferSize] = {0};
-    size_t    ibi_index_        = 0;
-    size_t    ibi_count_        = 0;
-    float     estimated_bpm_    = 0.0f;
-
-    static void delay_ms(uint32_t ms);
-
-    void sync_pulse_colour();
-    void update_bpm_from_buffer();
     void draw();
 };
 

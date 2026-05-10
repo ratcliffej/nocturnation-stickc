@@ -16,6 +16,8 @@
 
 #include "dal/dal.h"
 #include "modes/mode_machine.h"
+#include "visualisations/visualisation_registry.h"
+#include "visualisations/beat_pulse.h"
 
 void setup() {
     // Bring up the USB-CDC / UART console. Required before any Serial.printf
@@ -27,6 +29,13 @@ void setup() {
     Serial.println("[noct] boot");
 
     nocturnation::dal::DAL::begin();
+
+    // Register master-side visualisations (Epic 4.6 Block 8). Block 10
+    // will add SpectrumBars + the picker; for now BeatPulse is the only
+    // registered vis and AutonomousMasterMode resolves it by id on enter.
+    nocturnation::visualisations::visualisation_registry().register_plugin(
+        nocturnation::visualisations::beat_pulse_instance());
+
     nocturnation::modes::ModeMachine::begin();
 }
 
