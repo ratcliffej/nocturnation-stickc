@@ -3,6 +3,11 @@
 build/
 .cache/
 
+# Captured reference audio samples for the analyser test harness.
+# Large binaries with third-party content; reproduced from the capture
+# protocol in test/audio_samples/README.md rather than committed.
+test/audio_samples/*.wav
+
 # Claude Code session metadata (per-developer)
 .claude/
 
