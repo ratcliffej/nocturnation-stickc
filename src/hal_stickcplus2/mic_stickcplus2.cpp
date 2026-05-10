@@ -1,4 +1,5 @@
 #include "mic_stickcplus2.h"
+#include "dal/analyser/audio_analyser.h"
 #include "M5Unified.h"
 #include <Arduino.h>
 #include <math.h>
@@ -108,30 +109,48 @@ void MicStickCplus2::poll() {
     fft_.compute(FFTDirection::Forward);
     fft_.complexToMagnitude();
 
-    // Bass band sum (matches the Epic 1 prototype's bins 2..7).
-    float bass_energy = 0.0f;
-    for (uint16_t i = bass_bin_lo_; i <= bass_bin_hi_; ++i) {
-        bass_energy += (float)v_real_[i];
+    // Convert arduinoFFT's double-precision magnitudes (in v_real_)
+    // into a float buffer the DAL analyser core consumes. The analyser
+    // operates on floats throughout so the same pure function path
+    // serves Plus2 here, S3 (which already runs floats), and any
+    // future host backend.
+    float magnitudes[kFftSize / 2];
+    for (size_t i = 0; i < kFftSize / 2; ++i) {
+        magnitudes[i] = static_cast<float>(v_real_[i]);
     }
 
-    // Mid (~250-2000 Hz at 16 kHz/512: bins 8..64) and treble (bins 65..255)
-    // band sums - reserved for future effects, not used by the current
-    // beat-detection logic.
-    float mid_energy = 0.0f;
-    for (size_t i = 8; i <= 64 && i < kFftSize / 2; ++i) {
-        mid_energy += (float)v_real_[i];
-    }
-    float treble_energy = 0.0f;
-    for (size_t i = 65; i < kFftSize / 2; ++i) {
-        treble_energy += (float)v_real_[i];
-    }
+    using namespace nocturnation::dal::analyser;
+    BandSummary8  b8{};
+    BandSummary3  b3{};
+    SpectrumFrame sf{};
+    compute_band_summaries(magnitudes, kFftSize / 2, kSampleRate, b8, b3);
+    compute_spectrum_frame(magnitudes, kFftSize / 2, kSampleRate, sf);
 
     if (callback_) {
         AudioFrame frame{};
         frame.timestamp_ms  = millis();
-        frame.bass_energy   = bass_energy;
-        frame.mid_energy    = mid_energy;
-        frame.treble_energy = treble_energy;
+
+        // 3-band B/M/T (restandardised to evidence-based ranges by the
+        // analyser core; Bass <250 Hz, Mid 250-2000 Hz, Treble 2-Nyquist Hz).
+        frame.bass_energy   = b3.bass;
+        frame.mid_energy    = b3.mid;
+        frame.treble_energy = b3.treble;
+
+        // 8-band perceptual summary (Audible Genius reference).
+        frame.mud           = b8.mud;
+        frame.sub_bass      = b8.sub_bass;
+        frame.bass          = b8.bass;
+        frame.low_mids      = b8.low_mids;
+        frame.midrange      = b8.midrange;
+        frame.high_mids     = b8.high_mids;
+        frame.presence      = b8.presence;
+        frame.air           = b8.air;
+
+        // 32-band log-spaced spectrum.
+        for (size_t i = 0; i < AudioFrame::kSpectrumBands; ++i) {
+            frame.spectrum[i] = sf.magnitudes[i];
+        }
+
         frame.overall_rms   = overall_rms;
         callback_(frame);
     }

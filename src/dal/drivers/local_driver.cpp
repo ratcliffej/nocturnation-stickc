@@ -89,19 +89,44 @@ bool LocalDriver::begin() {
     }
 
     // Input: mic. Register a HAL frame callback that translates each raw
-    // hal::AudioFrame into the DAL's AudioFrameEvent and delivers it to
-    // any orchestration-level subscribers. The mic is NOT started here -
-    // orchestration controls lifecycle via DAL::start_audio_input /
-    // stop_audio_input, which dispatches into start_audio_input() below.
+    // hal::AudioFrame into the DAL's AudioFrameEvent + SpectrumFrameEvent
+    // and delivers them to any orchestration-level subscribers. The
+    // analyser produces both surfaces in one FFT pass; the DAL splits
+    // them across two events so consumers can subscribe to just the
+    // band summaries (cheap, most effects) or to the rich spectrum
+    // (Epic 4.6 Diagnostic UI, Epic 4.7 modulators) without paying
+    // for what they don't need.
+    //
+    // The mic is NOT started here - orchestration controls lifecycle
+    // via DAL::start_audio_input / stop_audio_input, which dispatches
+    // into start_audio_input() below.
     if (auto* mic = hal::HAL::mic()) {
         mic->set_frame_callback([](const hal::AudioFrame& frame) {
-            AudioFrameEvent ev;
-            ev.timestamp_ms  = frame.timestamp_ms;
-            ev.bass_energy   = frame.bass_energy;
-            ev.mid_energy    = frame.mid_energy;
-            ev.treble_energy = frame.treble_energy;
-            ev.overall_rms   = frame.overall_rms;
-            DAL::deliver_audio_frame("local", ev);
+            // Band-summary event: 3-band B/M/T + 8-band perceptual.
+            AudioFrameEvent af;
+            af.timestamp_ms  = frame.timestamp_ms;
+            af.bass_energy   = frame.bass_energy;
+            af.mid_energy    = frame.mid_energy;
+            af.treble_energy = frame.treble_energy;
+            af.mud           = frame.mud;
+            af.sub_bass      = frame.sub_bass;
+            af.bass          = frame.bass;
+            af.low_mids      = frame.low_mids;
+            af.midrange      = frame.midrange;
+            af.high_mids     = frame.high_mids;
+            af.presence      = frame.presence;
+            af.air           = frame.air;
+            af.overall_rms   = frame.overall_rms;
+            DAL::deliver_audio_frame("local", af);
+
+            // Spectrum-frame event: 32 log-spaced magnitudes. Master-
+            // local; Epic 4.7 wires effects-side consumers.
+            SpectrumFrameEvent sf;
+            sf.timestamp_ms = frame.timestamp_ms;
+            for (size_t i = 0; i < SpectrumFrameEvent::kBands; ++i) {
+                sf.magnitudes[i] = frame.spectrum[i];
+            }
+            DAL::deliver_spectrum_frame("local", sf);
         });
         any_capability_wired = true;
     }

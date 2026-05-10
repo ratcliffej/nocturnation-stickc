@@ -66,13 +66,15 @@ Driver* s_drivers[kMaxDrivers];
 size_t  s_driver_count = 0;
 
 Subscriber<DAL::AudioFrameCallback>    s_audio_subs[kMaxSubscribersEach];
+Subscriber<DAL::SpectrumFrameCallback> s_spectrum_subs[kMaxSubscribersEach];
 Subscriber<DAL::ButtonPressCallback>   s_button_subs[kMaxSubscribersEach];
 Subscriber<DAL::EspNowInboundCallback> s_esp_subs[kMaxSubscribersEach];
 Subscriber<DAL::DmxInboundCallback>    s_dmx_subs[kMaxSubscribersEach];
-size_t s_audio_sub_count  = 0;
-size_t s_button_sub_count = 0;
-size_t s_esp_sub_count    = 0;
-size_t s_dmx_sub_count    = 0;
+size_t s_audio_sub_count    = 0;
+size_t s_spectrum_sub_count = 0;
+size_t s_button_sub_count   = 0;
+size_t s_esp_sub_count      = 0;
+size_t s_dmx_sub_count      = 0;
 
 // Composed host profile - capability arrays + the DeviceProfile struct.
 CapabilityId s_host_inputs[kMaxHostCapsEach];
@@ -105,6 +107,9 @@ void compose_host_profile() {
 
     if (hal::HAL::has(hal::Capability::Mic)) {
         s_host_inputs[s_host_input_count++] = CapabilityId::AudioFrame;
+    }
+    if (hal::HAL::has(hal::Capability::AnalyserSpectrumFrame)) {
+        s_host_inputs[s_host_input_count++] = CapabilityId::SpectrumFrame;
     }
     if (hal::HAL::has(hal::Capability::Buttons)) {
         s_host_inputs[s_host_input_count++] = CapabilityId::ButtonPress;
@@ -168,10 +173,11 @@ void DAL::begin() {
     // Reset registries (begin() is idempotent for testing).
     s_device_count = 0;
     s_driver_count = 0;
-    s_audio_sub_count  = 0;
-    s_button_sub_count = 0;
-    s_esp_sub_count    = 0;
-    s_dmx_sub_count    = 0;
+    s_audio_sub_count    = 0;
+    s_spectrum_sub_count = 0;
+    s_button_sub_count   = 0;
+    s_esp_sub_count      = 0;
+    s_dmx_sub_count      = 0;
 
     compose_host_profile();
 
@@ -312,6 +318,15 @@ bool DAL::subscribe_audio_frames(const char* target, AudioFrameCallback cb) {
     return true;
 }
 
+bool DAL::subscribe_spectrum_frames(const char* target, SpectrumFrameCallback cb) {
+    if (!target) return false;
+    const DeviceProfile* p = profile_of(target);
+    if (!p || !p->has_input(CapabilityId::SpectrumFrame)) return false;
+    if (s_spectrum_sub_count >= kMaxSubscribersEach) return false;
+    s_spectrum_subs[s_spectrum_sub_count++] = Subscriber<SpectrumFrameCallback>{target, cb};
+    return true;
+}
+
 bool DAL::subscribe_button_presses(const char* target, ButtonPressCallback cb) {
     if (!target) return false;
     const DeviceProfile* p = profile_of(target);
@@ -363,6 +378,33 @@ bool DAL::stop_audio_input(const char* target) {
     return driver->stop_audio_input();
 }
 
+bool DAL::configure_audio_pipeline(const char* target,
+                                    uint32_t sample_rate_hz,
+                                    uint16_t fft_size) {
+    // Forwards to the host's HAL Mic. The Mic backend declares its
+    // valid operating points and rejects anything else; in Epic 4.5
+    // only the canonical (16000, 512) is implemented across all hosts.
+    if (!target) return false;
+    const DeviceProfile* p = profile_of(target);
+    if (!p || !p->has_input(CapabilityId::AudioFrame)) return false;
+    auto* mic = hal::HAL::mic();
+    if (!mic) return false;
+    return mic->configure_audio_pipeline(sample_rate_hz, fft_size);
+}
+
+bool DAL::set_band_layout(const char* target, const char* preset_name) {
+    // Only "hifi+production" is implemented in Epic 4.5 - it ships
+    // both 3-band B/M/T and 8-band perceptual summaries concurrently.
+    // Named alternative presets (dnb-4band-with-subbass, vocal-emphasis,
+    // arbitrary JSON-defined ranges) are reserved for a future Epic;
+    // the API stub exists now so future Epics extend rather than
+    // re-architect.
+    if (!target || !preset_name) return false;
+    const DeviceProfile* p = profile_of(target);
+    if (!p || !p->has_input(CapabilityId::AudioFrame)) return false;
+    return std::strcmp(preset_name, "hifi+production") == 0;
+}
+
 // =============================================================================
 // Synchronous queries
 // =============================================================================
@@ -385,6 +427,15 @@ void DAL::deliver_audio_frame(const char* source, const AudioFrameEvent& ev) {
     for (size_t i = 0; i < s_audio_sub_count; ++i) {
         if (std::strcmp(s_audio_subs[i].target, source) == 0) {
             s_audio_subs[i].cb(source, ev);
+        }
+    }
+}
+
+void DAL::deliver_spectrum_frame(const char* source, const SpectrumFrameEvent& ev) {
+    if (!source) return;
+    for (size_t i = 0; i < s_spectrum_sub_count; ++i) {
+        if (std::strcmp(s_spectrum_subs[i].target, source) == 0) {
+            s_spectrum_subs[i].cb(source, ev);
         }
     }
 }

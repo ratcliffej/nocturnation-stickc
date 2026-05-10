@@ -56,7 +56,8 @@ enum class CapabilityId : uint16_t {
     AssignDeviceGroup,    // Bracelet-setup command: write a new group ID into the target's EEPROM
 
     // ----- Input -----
-    AudioFrame,           // Spectrum frames from a host's mic
+    AudioFrame,           // 3-band B/M/T + 8-band perceptual band summaries
+    SpectrumFrame,        // 32-band log-spaced spectrum (master-local; not on the wire)
     ButtonPress,          // Button events from a host's buttons
     EspNowInbound,        // Inbound ESP-NOW peer messages (Epic 4+)
     DmxInbound,           // Inbound DMX instructions (Epic 7+)
@@ -132,8 +133,45 @@ struct AssignDeviceGroupEvent {
 // =============================================================================
 
 struct AudioFrameEvent {
-    uint32_t timestamp_ms;
-    float    bass_energy, mid_energy, treble_energy, overall_rms;
+    uint32_t timestamp_ms = 0;
+
+    // 3-band B/M/T summary. Restandardised in Epic 4.5 to evidence-
+    // based ranges (Bass <250 Hz, Mid 250-2000 Hz, Treble 2-Nyquist Hz).
+    float    bass_energy   = 0.0f;
+    float    mid_energy    = 0.0f;
+    float    treble_energy = 0.0f;
+
+    // 8-band perceptual summary, Audible Genius reference. New in Epic
+    // 4.5. Internally consistent with the 3-band roll-up:
+    //   bass_energy   = mud + sub_bass + bass
+    //   mid_energy    = low_mids + midrange
+    //   treble_energy = high_mids + presence + air
+    float    mud           = 0.0f;
+    float    sub_bass      = 0.0f;
+    float    bass          = 0.0f;
+    float    low_mids      = 0.0f;
+    float    midrange      = 0.0f;
+    float    high_mids     = 0.0f;
+    float    presence      = 0.0f;
+    float    air           = 0.0f;
+
+    float    overall_rms   = 0.0f;
+};
+
+// 32-band log-spaced spectrum frame, master-local. Delivered alongside
+// AudioFrameEvent via a separate subscription channel so consumers
+// that only want band summaries (most effects) don't pay the cost of
+// receiving 128 bytes of magnitudes per FFT cycle. Consumers that
+// want the rich surface (Diagnostic UI in Epic 4.6, FX modulators in
+// Epic 4.7) subscribe specifically.
+//
+// NOT broadcast over ESP-NOW - too heavy at FFT rate. Slaves consume
+// the more compact MUSIC_DESCRIPTOR wire descriptor when Epic 4.7
+// ships.
+struct SpectrumFrameEvent {
+    uint32_t timestamp_ms = 0;
+    static constexpr size_t kBands = 32;
+    float    magnitudes[kBands] = {};
 };
 
 struct ButtonPressEvent {
@@ -300,14 +338,16 @@ public:
     // DAL::loop_tick().
     // -------------------------------------------------------------------------
     using AudioFrameCallback     = std::function<void(const char* source, const AudioFrameEvent&)>;
+    using SpectrumFrameCallback  = std::function<void(const char* source, const SpectrumFrameEvent&)>;
     using ButtonPressCallback    = std::function<void(const char* source, const ButtonPressEvent&)>;
     using EspNowInboundCallback  = std::function<void(const char* source, const EspNowInboundEvent&)>;
     using DmxInboundCallback     = std::function<void(const char* source, const DmxInboundEvent&)>;
 
-    static bool subscribe_audio_frames    (const char* target, AudioFrameCallback   cb);
-    static bool subscribe_button_presses  (const char* target, ButtonPressCallback  cb);
-    static bool subscribe_esp_now_inbound (const char* target, EspNowInboundCallback cb);
-    static bool subscribe_dmx_inbound     (const char* target, DmxInboundCallback   cb);
+    static bool subscribe_audio_frames     (const char* target, AudioFrameCallback    cb);
+    static bool subscribe_spectrum_frames  (const char* target, SpectrumFrameCallback cb);
+    static bool subscribe_button_presses   (const char* target, ButtonPressCallback   cb);
+    static bool subscribe_esp_now_inbound  (const char* target, EspNowInboundCallback cb);
+    static bool subscribe_dmx_inbound      (const char* target, DmxInboundCallback    cb);
 
     // -------------------------------------------------------------------------
     // Input lifecycle. Some inputs (audio mic) need to be enabled/disabled by
@@ -321,6 +361,21 @@ public:
     static bool stop_audio_input (const char* target);
 
     // -------------------------------------------------------------------------
+    // Audio analyser configuration (Epic 4.5 Block 2). Forwards to the
+    // host's HAL Mic. configure_audio_pipeline() asks the analyser to
+    // run at one of the host-declared operating points; in Epic 4.5
+    // only the canonical (16000, 512) is implemented across all hosts
+    // and any other tuple returns false. set_band_layout() selects a
+    // band-summary preset; only "hifi+production" is implemented in
+    // Epic 4.5 (3-band B/M/T + 8-band perceptual concurrent).
+    // -------------------------------------------------------------------------
+    static bool configure_audio_pipeline(const char* target,
+                                         uint32_t sample_rate_hz,
+                                         uint16_t fft_size);
+    static bool set_band_layout         (const char* target,
+                                         const char* preset_name);
+
+    // -------------------------------------------------------------------------
     // Synchronous queries. Returns -1 on unknown target, capability not
     // declared on that target's profile, or no driver available.
     // -------------------------------------------------------------------------
@@ -331,6 +386,7 @@ public:
     // subscribers. Application code does not call these directly.
     // -------------------------------------------------------------------------
     static void deliver_audio_frame      (const char* source, const AudioFrameEvent&);
+    static void deliver_spectrum_frame   (const char* source, const SpectrumFrameEvent&);
     static void deliver_button_press     (const char* source, const ButtonPressEvent&);
     static void deliver_esp_now_inbound  (const char* source, const EspNowInboundEvent&);
     static void deliver_dmx_inbound      (const char* source, const DmxInboundEvent&);

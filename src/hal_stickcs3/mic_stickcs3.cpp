@@ -1,4 +1,5 @@
 #include "mic_stickcs3.h"
+#include "dal/analyser/audio_analyser.h"
 #include "M5Unified.h"
 #include <Arduino.h>
 #include <math.h>
@@ -149,36 +150,50 @@ void MicStickCS3::poll() {
     dsps_bit_rev_fc32_ansi(fft_buf_, static_cast<int>(kFftSize));
     last_fft_micros_ = micros() - fft_t0;
 
-    // Magnitude per bin from interleaved (real, imag) pairs. We only need
-    // bins 0..N/2-1; bins N/2..N-1 are mirror images for real input.
-    auto magnitude = [&](size_t bin) -> float {
-        const float re = fft_buf_[2 * bin];
-        const float im = fft_buf_[2 * bin + 1];
-        return sqrtf(re * re + im * im);
-    };
-
-    float bass_energy = 0.0f;
-    for (uint16_t i = bass_bin_lo_; i <= bass_bin_hi_; ++i) {
-        bass_energy += magnitude(i);
+    // Compute one-sided magnitudes (bins 0..N/2-1) into a float buffer
+    // the DAL analyser core consumes. Bins N/2..N-1 are mirror images
+    // for real input and are dropped. The analyser core then routes
+    // magnitudes to the band summaries and spectrum frame using the
+    // Hz-first layout - same pure function path that runs on Plus2 and
+    // in the native test harness.
+    float magnitudes[kFftSize / 2];
+    for (size_t i = 0; i < kFftSize / 2; ++i) {
+        const float re = fft_buf_[2 * i];
+        const float im = fft_buf_[2 * i + 1];
+        magnitudes[i] = sqrtf(re * re + im * im);
     }
 
-    // Mid (~250-2000 Hz at 16 kHz/512: bins 8..64) and treble (bins 65..255)
-    // band sums - reserved for future effects.
-    float mid_energy = 0.0f;
-    for (size_t i = 8; i <= 64 && i < kFftSize / 2; ++i) {
-        mid_energy += magnitude(i);
-    }
-    float treble_energy = 0.0f;
-    for (size_t i = 65; i < kFftSize / 2; ++i) {
-        treble_energy += magnitude(i);
-    }
+    using namespace nocturnation::dal::analyser;
+    BandSummary8  b8{};
+    BandSummary3  b3{};
+    SpectrumFrame sf{};
+    compute_band_summaries(magnitudes, kFftSize / 2, kSampleRate, b8, b3);
+    compute_spectrum_frame(magnitudes, kFftSize / 2, kSampleRate, sf);
 
     if (callback_) {
         AudioFrame frame{};
         frame.timestamp_ms  = millis();
-        frame.bass_energy   = bass_energy;
-        frame.mid_energy    = mid_energy;
-        frame.treble_energy = treble_energy;
+
+        // 3-band B/M/T (restandardised to evidence-based ranges).
+        frame.bass_energy   = b3.bass;
+        frame.mid_energy    = b3.mid;
+        frame.treble_energy = b3.treble;
+
+        // 8-band perceptual summary (Audible Genius reference).
+        frame.mud           = b8.mud;
+        frame.sub_bass      = b8.sub_bass;
+        frame.bass          = b8.bass;
+        frame.low_mids      = b8.low_mids;
+        frame.midrange      = b8.midrange;
+        frame.high_mids     = b8.high_mids;
+        frame.presence      = b8.presence;
+        frame.air           = b8.air;
+
+        // 32-band log-spaced spectrum.
+        for (size_t i = 0; i < AudioFrame::kSpectrumBands; ++i) {
+            frame.spectrum[i] = sf.magnitudes[i];
+        }
+
         frame.overall_rms   = overall_rms;
         callback_(frame);
     }
