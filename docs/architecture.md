@@ -3,12 +3,12 @@ title: NocturNation Architecture Specification
 status: cross-project (will move to umbrella repo when Tildagon work begins)
 notion_url: https://www.notion.so/357bd0677405800b891beab0f4e0a976
 notion_id: 357bd0677405800b891beab0f4e0a976
-last_synced: 2026-05-09
+last_synced: 2026-05-10
 sync_direction: bidirectional
-notion_status: synced (v0.18, Bluetooth + render_fx + slave-as-target updates)
+notion_status: synced (v0.21, slave-only Tildagon + companion-app forward direction)
 ---
 
-**Status:** Draft v0.19 - early architecture document, expect substantial revision.
+**Status:** Draft v0.21 - early architecture document, expect substantial revision.
 **Maintainer:** Jason Ratcliffe
 ---
 ## 1. Vision
@@ -16,14 +16,10 @@ A modular, open-source crowd-lighting system that scales from one wearer at a tr
 NocturNation democratises a class of show-experience that has historically required expensive vendor contracts. PixMob, Xylobands, and similar systems charge bands tens of thousands per show; a NocturNation transmitter costs roughly £30. The shift is economic as well as technical: instead of paying a vendor for fan light experiences, touring bands can sell their own branded receivers as merch and turn the lighting into a profit centre rather than a cost line.
 The system has three deployment scales it must support cleanly:
 - **Solo**: one device, one wearer, no infrastructure. Personal use at gigs.
-- **Installation**: a small fixed rig (\~5 light points) with optional pre-programmed choreography. Art pieces, parties.
+- **Installation**: a small fixed rig (~5 light points) with optional pre-programmed choreography. Art pieces, parties.
 - **Distributed**: multiple master/repeater nodes covering a venue, optionally orchestrated from a laptop. Maker festivals, club nights.
 Across all three, the core experience is the same: ambient music drives synchronised, beautiful lighting on wearable or installed light points.
-Original prototyping work: <mention-page url="https://www.notion.so/358bd067740580bab876cd7c2b7ee6bf"/> 
-
-Pixmob Aurora Teardown: https://goughlui.com/2025/01/14/teardown-pixmob-led-wristband-aurora-v1-7/
-https://www.wsj.com/video/series/tech-behind/the-tech-behind-how-concert-led-light-wristbands-work/EAA54145-D07A-4100-8153-2EAF8D671921?mod=Searchresults_pos1&page=1
-
+Original prototyping work: (see https://www.notion.so/358bd067740580bab876cd7c2b7ee6bf) 
 ### Design principles
 - **Reuse over manufacture**: existing PixMob bracelets, existing EMF Tildagon badges, existing maker hardware. New devices only when necessary.
 - **Layered architecture**: hardware abstraction, audio analysis, device abstraction, orchestration, transport, and protocol are separate layers with clean interfaces. Any layer is swappable.
@@ -113,8 +109,8 @@ The system is a single conceptual pipeline: events flow in, light commands flow 
 </tr>
 <tr>
 <td>**EMF Tildagon badge**</td>
-<td>Lightweight node</td>
-<td>ESP32-C3 with WiFi/BLE, round colour LCD, six perimeter buttons, six addressable RGB LEDs, six hexpansion connectors. MicroPython runtime. Already deployed to thousands of attendees.</td>
+<td>Lightweight node, **slave-only**</td>
+<td>ESP32-C3 with WiFi/BLE, round colour LCD, six perimeter buttons, six addressable RGB LEDs, six hexpansion connectors. MicroPython runtime. Already deployed to thousands of attendees. **No microphone**, so cannot run autonomous audio analysis - therefore architecturally slave-only. Not a limitation; a clean fit for the receiver-only role and a prototype for the future mic-less companion-app device pattern (see §4.5 forward direction).</td>
 </tr>
 <tr>
 <td>**Mac/PC laptop**</td>
@@ -148,7 +144,7 @@ The system is a single conceptual pipeline: events flow in, light commands flow 
 <tr>
 <td>IR (940nm, 38kHz modulated)</td>
 <td>Master → bracelet</td>
-<td>\<1 ms</td>
+<td><1 ms</td>
 <td>1-15m depending on transmitter power; line-of-sight</td>
 </tr>
 <tr>
@@ -188,8 +184,7 @@ The system is a single conceptual pipeline: events flow in, light commands flow 
 <td>500m+</td>
 </tr>
 </table>
-
-**Bluetooth role.** A future Epic adds BLE to the carrier set so a phone app can act as a control plane for any host within Bluetooth range: pick the show colour, trigger a test pulse, switch master/slave mode, view diagnostics. The phone speaks BLE only to the host it's directly paired with; that host then **fans the resulting `render_fx()` calls out over ESP-NOW** to every other host within radio range. Bluetooth is therefore a personal/local control link, not a show-wide protocol - ESP-NOW remains the show's distribution backbone. The HAL declares `Capability::Bluetooth` on hosts whose chips have a BLE radio (StickC Plus2 BLE 4.2, StickS3 BLE 5.0, future Tildagon BLE per its ESP32-C3); implementation is deferred to its own Epic but the capability is wired now so the API surface is ready.
+**Bluetooth role.** A future Epic adds BLE to the carrier set so a phone app can act as a control plane for any host within Bluetooth range: pick the show colour, trigger a test pulse, switch master/slave mode, view diagnostics. The phone speaks BLE only to the host it's directly paired with; that host then **fans the resulting ****`render_fx()`**** calls out over ESP-NOW** to every other host within radio range. Bluetooth is therefore a personal/local control link, not a show-wide protocol - ESP-NOW remains the show's distribution backbone. The HAL declares `Capability::Bluetooth` on hosts whose chips have a BLE radio (StickC Plus2 BLE 4.2, StickS3 BLE 5.0, future Tildagon BLE per its ESP32-C3); implementation is deferred to its own Epic but the capability is wired now so the API surface is ready.
 ### 4.2 Protocols
 <table header-row="true">
 <tr>
@@ -243,7 +238,7 @@ Offset  Field             Size  Notes
 5       payload_len       1     Bytes of payload following header
 6+      payload           N     Type-specific
 ```
-**Note on sequence_number sizing.** A 1-byte field wraps every 255 frames. At our 4 Hz hard cap (§15.1), that's a wrap window of \~64 seconds, comfortably longer than any plausible reordering window in ESP-NOW broadcast. This matches Art-Net's choice of a 1-byte sequence field at 44 Hz refresh rate (5.8s wrap window). The cost of being wrong about this is benign: a duplicate frame from across a wrap boundary is detected by other means (identical payload + same source_id + within ESP-NOW's natural latency window).
+**Note on sequence_number sizing.** A 1-byte field wraps every 255 frames. At our 4 Hz hard cap (§15.1), that's a wrap window of ~64 seconds, comfortably longer than any plausible reordering window in ESP-NOW broadcast. This matches Art-Net's choice of a 1-byte sequence field at 44 Hz refresh rate (5.8s wrap window). The cost of being wrong about this is benign: a duplicate frame from across a wrap boundary is detected by other means (identical payload + same source_id + within ESP-NOW's natural latency window).
 **Time anchoring.** Wall-clock time is needed only by Tier 3 (signed-cert) receivers for validating cert validity windows. To avoid imposing this cost on Tier 0/1/2 deployments, time is carried in a dedicated `TIME_SYNC` message type rather than the frame header. Tier 3 masters broadcast `TIME_SYNC` at the heartbeat rate (4 Hz); lower-tier receivers ignore it. See message types table.
 ### Message types (v1)
 <table header-row="true">
@@ -307,25 +302,113 @@ Pre-existing reverse-engineered protocol implemented in `pixmob_protocol.h`. Ver
 - `buildSetColor`, `buildCycleProfiles`, `buildTwoColors` - extended commands (model-dependent support; not all bracelets respond)
 Tested working on user's bracelet model. EEPROM-write commands (`buildSetColor`, `buildCycleProfiles`) confirmed unsupported on this specific bracelet variant; rainbow effects implemented in software via repeated `buildSingleColor` calls instead.
 **Field-format resolution (2026-05-06):** the `buildCycleProfiles` `profileMask` argument is, per [jamesw343/PixMob_IR/docs/ir_](https://github.com/jamesw343/PixMob_IR/blob/main/docs/ir_protocol.md)[protocol.md](http://protocol.md) §"Set Config" and [docs/](https://github.com/jamesw343/PixMob_IR/blob/main/docs/operation.md)[operation.md](http://operation.md), an 8-bit `profile_range` field - the inclusive `profile_range_lo` (low 4 bits) and `profile_range_hi` (high 4 bits) bounds of the profile id range the bracelet cycles through. The C++ port's current "8-bit mask" framing in `pixmob_protocol.h` is incorrect; the function happens to be unused in the firmware so runtime behaviour is unaffected. Correction is deferred to the §10.4 architectural-prerequisites work.
-## 4.5 Group ID semantics
-Group ID is a first-class concept in the Nocturnation protocol, not a PixMob-IR-specific feature. Every receiver that understands LIGHT_COMMAND has an assigned group ID, persisted across reboots. The semantics:
+## 4.5 Two-channel architecture
+NocturNation operates on a deliberate two-channel split that encodes a social contract for the project's deployment ecosystem. This replaces the earlier single-canonical-channel design.
+**Channel 1 = Hobby/Community/Open.** Permanently the project's open territory. Tier 0 traffic only. Used by hackspace gigs, EMF deployments, makers learning the protocol, the constellation art piece, anyone playing with NocturNation. Channel 1 is where new ideas live and break.
+**Channel 11 = Show/Commercial.** Reserved for production deployments. Will carry Tier 1+ encrypted traffic when those Epics ship; remains Tier 0 until then. Used by touring bands, ticketed events, art installations where disruption would matter. Channel 11 is the project's professional territory.
+The rationale for the specific channel choice (1 and 11 rather than any other pair from the non-overlapping {1, 6, 11} set):
+- **Channel 11**: sits above the microwave-oven leak band (~2.4-2.45 GHz) that clips channels 6-9. Most consumer routers default to channel 6, making channel 11 consistently quieter on average.
+- **Channel 1**: lower frequency means slightly better wall/body penetration. Distinct from channel 11 by enough spacing that the two coexist cleanly without adjacent-channel interference.
+- **Channel 6 deliberately unused**: microwave leakage and default-router congestion make it the worst of the non-overlapping channels in arena conditions despite being theoretically usable.
+- **Channels 2-5, 7-10 forbidden**: they overlap with their neighbours and cause adjacent-channel interference, which is *worse* than co-channel congestion.
+- **Channels 12-13 not used as defaults**: not legal in all regions; we maintain global compatibility.
+### Slave-side dual-channel scan with show priority
+Receivers (Slaves, Tildagon receivers, future bracelets) scan both channels at startup, with channel 11 (show) prioritised over channel 1 (hobby). The scan loops until a heartbeat is heard:
+```plain text
+On boot, repeat indefinitely until heartbeat detected:
+  Listen on channel 11 (show) for ~2 seconds:
+    if heartbeat heard → lock to channel 11, exit scan
+  Listen on channel 1 (hobby) for ~2 seconds:
+    if heartbeat heard → lock to channel 1, exit scan
+  Loop back to channel 11.
+
+While locked to a channel:
+  Listen normally on that channel only - do not switch.
+  if heartbeat timeout (1 second silence per §4.3):
+    Resume the scan loop above.
+```
+ESP-NOW radios are single-tuner devices: they cannot listen on two channels simultaneously. Channel switching takes 5-15ms and frames may be missed during the switch window. The redundant transmission strategy (3-5 sends per frame with jitter, per Epic 4) absorbs missed frames. Once locked to a channel, the receiver does not periodically check the other channel - that would cause missed show frames for no good reason.
+**Implication for slave-only devices** (bracelets without UI, future custom hardware, anything where the user can't manually choose a channel): this auto-scan logic means *they don't need to*. Show traffic always wins over hobby traffic, automatically, with no user input required. This is exactly what a wearable or zero-config receiver needs.
+**Implication for Stick devices with UI**: auto-scan is the default. Operators can override via Config Mode (§8.4) to lock to a specific channel - useful when a hobbyist deliberately wants to ignore concurrent show traffic. The override is sticky across reboots.
+### Master-side channel selection
+Masters do not auto-scan. They transmit on a single channel chosen at startup based on their role:
+- **Hobby Master** (default for personal/community use): channel 1
+- **Show Master** (configured via Config Mode for commercial use): channel 11
+- **Custom channel** (advanced operators, research): any of {1, 11} via key combination; channel 6 not selectable
+The Master's role is selected during Master Mode startup per §8.3. Default is hobby/channel 1; switching to show/channel 11 requires explicit operator action - reflecting that show deployment is a more deliberate decision than hobby playing.
+### Forward direction: distance-based effects via RSSI
+Receivers capture RSSI (received signal strength) on every received frame. The primary use is operator awareness - a battery-style indicator showing whether the device has adequate signal. This is captured in Epic 4.
+A secondary, longer-term direction worth noting: RSSI gives a coarse approximation of distance from the transmitter, which in a fixed-stage deployment translates to distance from the stage. This opens a class of distance-based effects that PixMob-style broadcast IR can't achieve:
+- **Wave effects**: a colour pulse propagates outward from the stage, with each receiver delaying its own pulse proportionally to its RSSI. The closer to stage, the earlier the pulse fires; further away, later. Visually creates a wave moving across the crowd.
+- **Intensity gradients**: receivers near the stage fire at full brightness; receivers further away fire dimmer (or vice versa). Creates a physical sense of depth across the audience.
+- **Distance-zoned palettes**: red close to stage, fading through orange/yellow/green/blue as receivers get further away. A heat-map effect.
+- **Ambient-only mode for back rows**: receivers below an RSSI threshold default to ambient hue cycling rather than beat-reactive flashing - keeping the energy concentrated near the stage.
+- **Repeater self-discovery**: if a receiver's RSSI falls below a threshold, it can promote itself to repeater mode (with operator opt-in), extending the mesh organically.
+The honest calibration: RSSI to physical distance is approximately logarithmic but heavily affected by orientation, body absorption, multipath, and antenna characteristics. A free-space path loss model gives roughly -30dBm at 1m, -50dBm at 10m, -70dBm at 30m, -85dBm at 100m, but real-world readings vary by ±10-15dBm from these for the same physical distance. So RSSI is suitable for *coarse distance bands* ("near stage" / "mid-house" / "back of room") but not for precise positioning. This is enough for the effect classes above without being enough for surgical seat-level addressing.
+These effects are Tier 0 software work that runs on top of the existing protocol - no hardware changes needed beyond what Epic 4 already establishes. Implementation is deferred to a future Epic but the architectural commitment to capture RSSI in Epic 4 is what enables them.
+### Multi-show coexistence: why no universe field
+A question that arises naturally when comparing NocturNation to Art-Net: **should the frame header carry a universe (or scope, or namespace) field**, so that receivers can distinguish concurrent independent shows on the same channel?
+The scenario worth considering: two commercial shows running concurrently at the same venue (main stage and side stage at a festival, two art installations in adjacent rooms, etc.). Both would naturally want channel 11 / show. Without some discrimination beyond channel and group, every receiver in radio range reacts to both shows simultaneously.
+NocturNation's answer is **no universe field in v1**, for several reasons:
+- **Existing fields can carry the load.** The `source_id` field (already in every frame header) provides per-master discrimination. Receivers can be configured to listen only to a specific source. The `target_group` field (in LIGHT_COMMAND payload) provides per-device-collection discrimination. Show A using groups 1-15 and Show B using groups 16-31 is a perfectly serviceable workaround.
+- **Frame header is deliberately minimal.** At 6 bytes, the header is already the smallest in the project's history. Adding even a 1-byte universe field is a 17% header-size increase for a feature that may never matter to most deployments.
+- **Premature wire-format additions are expensive.** Once a field is in v1, removing it breaks every deployed device. Adding it later (via the EXTENSION message type 0xFF, or a v2 frame format) is much cheaper. The asymmetry favours waiting until the need is real.
+- **Operational discipline is sufficient.** If two shows need to coexist on channel 11, the operators agree on group ranges before deployment. This is the same way large festivals coordinate radio frequencies, lighting universes, audio frequencies - human coordination, not automated arbitration.
+**Comparison to Art-Net's universe field.** Art-Net's universe is a *channel-space identifier* - it says "this packet contains 512 DMX values for universe N". NocturNation is fundamentally event-driven, not channel-stream-driven; we don't broadcast "channel values", we broadcast "beat detected, fire colour X to group Y". So Art-Net's universe concept doesn't have a clean analogue here. Adding a universe field by analogy would be cargo-culting.
+**When this would change**: if real-world deployment surfaces a multi-show-on-same-channel scenario that operational discipline cannot handle (e.g., shows that don't want to coordinate, or where group-range partitioning is too restrictive), a v2 frame format adds a `scope` or `universe` field. Tier 2+ deployments use it; Tier 0 hobby stays on v1 with no overhead. The EXTENSION message type 0xFF in v1 is the migration path. Until that need is real, the simpler frame wins.
+### Forward direction: per-device addressing for K-pop-style commercial deploymentsA further commercial direction worth flagging, though significantly further out: **per-device addressing for surgical effects**.
+K-pop concerts use considerably more expensive crowd-lighting devices (typically $60-100, sometimes more) than the bracelet model PixMob targets. Audiences are happy to pay these prices because the device is a souvenir they own and bring to every show, not a single-use ticket inclusion. The technical capability that makes these expensive devices interesting is **seat-linked addressing**: each device is registered to a specific seat number for a given show, allowing the show operator to address devices with surgical precision. Effects that become possible:
+- **Text in the audience**: spell out words across the field of view by lighting only the devices at specific seat positions.
+- **Gradients across the field**: continuous colour transitions that respect physical position rather than broadcast groups.
+- **"Wave from front to back" with precision**: not RSSI-approximate, but exact - because the show knows where every device is.
+- **Personalised effects**: VIP seats get distinct colours, fan club sections get coordinated patterns.
+This is a fundamentally different commercial model from PixMob's:
+- *PixMob model*: dumb bracelets, IR projectors do the addressing, single-use mostly, ~£20/each, ticket inclusion or short-term loan.
+- *K-pop light stick model*: smart, fan-owned, expensive (£60-100+), brings to every show, customisable, status symbol within fandom culture.
+For NocturNation, this is exactly the kind of long-term capability the merch-receiver economic model could support. A £60 fan-owned device justifies BLE pairing, app-based seat mapping, even GPS for outdoor venues. Per-device addressing means truly personalised effects, which justifies the price point. The fan owns the device forever, brings it to every show, becomes part of the band's community. The band makes ongoing revenue from accessory sales, special-edition versions, app-driven features.
+This is *not* a commitment to build it - it's a sketch of an ambition the architecture should remain compatible with. Specifically, the protocol's group ID field (5 bits, 0-31) is too narrow for per-device addressing of large audiences, but the message-type space (0xFF) leaves room for a future EXTENSION-class message that carries a wider per-device identifier without breaking existing receivers. The architecture commits to nothing here beyond "don't paint into a corner that forecloses this direction".
+### Forward direction: companion app and mic-less devices
+A further commercial direction worth flagging that pulls together several existing forward directions into a coherent product vision: **a phone companion app paired with a mic-less NocturNation device**.
+The scenario:
+- A simpler, cheaper NocturNation device (Stick or wristband form factor) ships **without a microphone**. It receives ESP-NOW frames and lights up. That's it. No autonomous audio analysis capability.
+- A **companion phone app** (iOS + Android) connects to the device via BLE. The phone does the audio analysis using its mic, then sends events to the device via BLE. The device fires lights in response to those events.
+- At a **show**: app captures show metadata (which show, optionally which seat) and stores it on the device for future reference.
+- At **home**: audience member who bought the device at a show takes it home, opens the app, plays Spotify, and the device lights up to their music.
+This pulls together three commercial angles the architecture has already flagged separately:
+**Cheaper hardware, better margins.** A mic-less device removes one of the more expensive components (high-quality microphone) and one of the more difficult engineering surfaces (FFT pipeline tuning, noise floor calibration). The device becomes simpler to build, cheaper to manufacture, and easier to support. The audio analysis happens on the phone, where it's already a solved problem.
+**Home-use retention model.** This is genuinely the most strategically important angle. PixMob's bracelet model is essentially single-use - audience member wears it for the show, takes it home, never uses it again, eventually it goes to landfill. NocturNation with a companion app inverts this: the device is *useful at home*, plugged into the audience member's own music library, on demand. The device retains value to the buyer indefinitely, justifying a higher price point at the show, justifying ongoing engagement with the brand. Bands that sell branded NocturNation devices as merch get a continuing presence in their fans' lives rather than a one-night souvenir.
+**Seat-capture for surgical effects.** The app can supply *better* location data than RSSI alone: GPS for outdoor venues, seat number for indoor venues with seat numbering, BLE proximity for intimate spaces. This unlocks the K-pop-style seat-linked addressing flagged earlier in this section, without requiring the show operator to manually configure each device. The audience member's app does the work; the show operator just receives well-located devices.
+The technical pieces required, in order of complexity:
+1. **BLE service surface on the device** (already declared as Capability::Bluetooth in §4.1, implementation deferred to its own future Epic). The app pairs with the device via standard BLE; a small custom service exposes fire-event-by-type endpoints that the app calls when it detects a beat, drop, etc.
+2. **Phone-side audio analysis** (well-trodden territory; libraries exist for both iOS and Android). The app uses standard mic API + FFT, runs the same algorithms NocturNation runs natively (centroid, energy envelope, multi-band onset, section detection per Epic 4.7), and produces the same event types.
+3. **Per-device identity surface** (BLE pairing handshake captures device's serial number, optional seat metadata, optional show metadata). Stored on the device persistently.
+4. **App backend** (potentially - for show metadata distribution to attendees who scan a QR code at a show, or to sync seat assignments from a venue's seating chart).
+The architectural commitments needed to keep this future possible:
+- BLE capability declared on hardware, with implementation deferred (already done in §4.1).
+- Per-device addressing via the EXTENSION message type 0xFF (already flagged in this section's K-pop subsection).
+- Persistent storage on devices for seat/show metadata (small, can be added when needed).
+- Protocol stability so the app doesn't need updating every time a new event type is added (the EXTENSION pattern means receivers ignore unknown messages without breaking).
+**This is not a committed Epic.** It's captured here because the commercial argument is compelling enough to warrant making sure the architecture stays compatible with it, and because it pulls together several existing forward directions into a single coherent vision. The walk-before-run priority remains: ship beat detection (4.5), UI cleanup (4.6), dynamic shows (4.7), Tildagon (5), and only then revisit whether companion-app territory is the right next direction.
+## 4.6 Group ID semantics
+Group ID is a first-class concept in the NocturNation protocol, not a PixMob-IR-specific feature. Every receiver that understands LIGHT_COMMAND has an assigned group ID, persisted across reboots. The semantics:
 - **Group 0** - broadcast. All receivers act on the command. Matches PixMob's protocol semantics for compatibility.
 - **Groups 1-3** - automatic coordination groups. Receivers assign themselves a random group from this range at first boot, persisted to NVM. Across an audience this gives natural colour/pattern variety without operator intervention.
 - **Groups 4-31** - specialist assignment. Set explicitly via Config Mode (Tildagon UI) or via a SET_GROUP_ID command (PixMob bracelet IR). Used for VIPs, performers' own bracelets, the lighting designer's monitor unit, designated zone sub-groups, etc.
 The 5-bit field width (groups 0-31) matches the PixMob protocol's existing constraint, simplifying the IR driver's translation.
 Receivers that haven't been assigned a group default to group 1, ensuring something happens out of the box. Operators can verify group assignment by entering Test Mode on the receiver and triggering Group Targeting Test.
 For PixMob bracelets specifically, group ID is set via the `buildSetGroupId` IR command per §4.4. For Tildagons, group ID is set via the on-device Config Mode menu and stored in app settings. Both paths produce the same protocol-level behaviour.
+Note that group IDs and the per-device addressing flagged in §4.5 are complementary, not alternative: groups handle coarse "this section vs that section" coordination cheaply, per-device addressing (if and when implemented) handles surgical positioning. A future commercial deployment might use both - group 4 for VIP front rows with per-device addressing within them, group 0 for everyone else as broadcast targets.
 ---
 ## 5. Audio analysis pipeline
 Currently implemented on M5StickC Plus2 in C++. Architecture is platform-portable.
 ### 5.1 Pipeline stages
-1. **Mic capture**: I2S PDM mic, 16 kHz mono, 512-sample windows (\~32 ms).
+1. **Mic capture**: I2S PDM mic, 16 kHz mono, 512-sample windows (~32 ms).
 2. **Volume gate**: mean absolute amplitude; if below `VOLUME_GATE`, skip remaining stages and reset flux state.
 3. **FFT**: 512-point real FFT with Hamming window. Produces 256 magnitude bins.
 4. **Bass-band sum**: bins 2-7 (≈62-220 Hz), giving a single bass-energy scalar.
 5. **Spectral flux**: rectified positive change in bass energy from previous window.
 6. **Adaptive baseline**: asymmetric EMA of flux. Fast attack, slow release.
-7. **Beat decision**: flux \> baseline × multiplier AND flux \> absolute floor AND time since last beat \> refractory.
+7. **Beat decision**: flux > baseline × multiplier AND flux > absolute floor AND time since last beat > refractory.
 8. **BPM tracking**: rolling buffer of inter-beat intervals (IBIs); reject outliers (50-200 BPM range); compute mean.
 ### 5.2 Tuning parameters
 <table header-row="true">
@@ -342,12 +425,12 @@ Currently implemented on M5StickC Plus2 in C++. Architecture is platform-portabl
 <tr>
 <td>`FFT_SIZE`</td>
 <td>512</td>
-<td>\~32 ms window</td>
+<td>~32 ms window</td>
 </tr>
 <tr>
 <td>`BASS_BIN_LO` / `_HI`</td>
 <td>2 / 7</td>
-<td>\~62-220 Hz</td>
+<td>~62-220 Hz</td>
 </tr>
 <tr>
 <td>`VOLUME_GATE`</td>
@@ -569,10 +652,8 @@ The Tildagon badge is unusual because it's both a *receiver* (in the audience, a
 - An opt-in "intense mode" gives the show full-screen treatment even when in another app, for users who want the full effect during a known show window.
 ### 7.4 Display-as-light + render_fx() canonical entry point
 A receiver's display is **also a light surface in the show**. When a Stick is in Slave mode, an inbound `LIGHT_COMMAND` (or any locally-fired effect) paints the screen full-bleed with the broadcast colour and the matching attack/sustain/release fade - the Stick on a tripod becomes a coherent piece of installation gear, not just a transmitter that drives lights but one of the lights itself. For the constellation art piece a single Stick can act as both transmitter AND visible light point, reducing the bracelet count needed.
-
-This is implemented via the DAL's canonical render entry point: `DAL::render_fx(target, event)`. Orchestration on a beat (Master mode, Test mode, etc.) issues **multiple `render_fx` calls** - one per locally-available light surface - and each fails silent if its driver/transport isn't enabled or wired:
-
-```cpp
+This is implemented via the DAL's canonical render entry point: `DAL::render_fx(target, event)`. Orchestration on a beat (Master mode, Test mode, etc.) issues **multiple ****`render_fx`**** calls** - one per locally-available light surface - and each fails silent if its driver/transport isn't enabled or wired:
+```c++
 DAL::render_fx("local",         ev);   // host's primary light surface
                                        // (StickC: screen; future LED-only
                                        //  device: LED; Tildagon: screen +
@@ -584,15 +665,10 @@ DAL::render_fx("esp-now-broadcast", ev);  // ESP-NOW broadcast for slaves
                                        // (rolling out in Block 3+ as a
                                        //  proper EspNowDriver)
 ```
-
 There is no auto-forwarding inside `render_fx()` itself: each call has one job, which keeps the IR mute toggle clean (`DAL::set_driver_enabled("ir-pixmob", false)` makes IR `render_fx` fail silently without affecting the screen) and respects per-host capability differences.
-
 **Per-capability gates beyond driver enable.** The `LocalDriver` exposes a per-capability gate for `RgbPulseEvent` (Config → Display → Pulse Enable, NVS-backed) so an operator can keep the screen showing status text/UI but suppress beat flashes. Other DisplayShowText / DisplayClear events stay unaffected. This is finer-grained than the driver-level enable; future per-capability gates on other drivers will follow the same pattern.
-
 **Future effect types** (text overlay, simple graphics, scripted animations per §6 future work) ship as additional `render_fx` overloads on new event structs. They will not introduce per-capability `fire_*` helpers - `render_fx` is the single entry point that orchestration learns once and reuses for every new effect.
-
 **Target naming direction.** The currently registered device names (`"all-pixmobs"`, `"group-1"`..`"group-5"`, etc.) are brand-tied for historical reasons. The agreed naming pattern going forward is `transport_protocol_groupfilter`: `IR_pixmob_group3`, `ESPNow_nocturnation`, `Local_Screen`, `Local_LED`, `DMX_universe1`. Bare `"local"` stays as the host-as-target convention. The rename will land in a focused refactor pass when a second IR protocol or NocturNation-native bracelet code arrives - the abstraction earns its keep with a real second consumer rather than speculatively.
-
 ### 7.5 Display-event abstraction (proposed)
 Following the same layered pattern as the light driver abstraction, a future display abstraction would let orchestration emit display intents independent of platform:
 ```plain text
@@ -621,7 +697,7 @@ The single-device autonomous use case (StickC Plus2 at the Coldplay tribute act,
 <tr>
 <td>**Autonomous Master**</td>
 <td>Run local audio analysis, fire local outputs (IR/LED/screen), broadcast beat events on ESP-NOW for any listeners. Continues running indefinitely whether or not audio is present - silence is treated as a valid state, not a failure. Optional **Audio-silence failover** config (default OFF; see §8.4) demotes the node to Slave Mode after a configurable silence period, intended for unattended deployments only.</td>
-<td>Mic + at least one output</td>
+<td>Mic + at least one output. **Hosts without a microphone (e.g. Tildagon) cannot enter Master Mode** and the mode-selection menu should not present it as an option on those platforms.</td>
 </tr>
 <tr>
 <td>**Slave**</td>
@@ -704,7 +780,7 @@ For hardware validation and bracelet setup verification. Each test fires a known
 <tr>
 <td>**M5StickC Plus2**</td>
 <td>Btn A (select), Btn B (cycle), Btn PWR (back/power)</td>
-<td>1.14" TFT, \~5 lines of text at size 2</td>
+<td>1.14" TFT, ~5 lines of text at size 2</td>
 <td>Three buttons sufficient for menu navigation; long-press PWR for idle/off.</td>
 </tr>
 <tr>
@@ -791,7 +867,7 @@ Master at fixed location handles audio analysis. Distributed transmitter nodes p
 - Custom ESP32-C3 SuperMini bracelet design (when bracelet supply runs out)
 - Shieldagon receiver hexpansion as fixed installation lights
 - Art-Net integration (in addition to serial DMX)
-- Integration with professional lighting consoles via DMX/Art-Net
+- Integration with professional lighting consoles via DMX/Art-Net. The likely canonical professional deployment path is **QLC+ as upstream show controller** (free, open-source, runs on Mac/Windows/Linux) driving NocturNation as a DMX-receiving fixture. This aligns with how the lighting industry actually works: NocturNation becomes a DMX-driven endpoint, not a complete vertical stack. Forward direction worth flagging: an offline tool that takes a song WAV and Essentia analysis output, then emits a `.qxw` show file with beats/drops/sections pre-populated and the audio embedded as the show's audio track. The tool would be useful to anyone using QLC+ for music-synchronised lighting, not just NocturNation users - properly aligned with the project's open-source ethos. Submitting a NocturNation `.qxf` fixture definition to QLC+'s standard fixture library would put the brand in front of lighting designers who'd never otherwise encounter it. None of this is committed; it's the direction the architecture remains compatible with. The walk-before-run priority is beat detection (Epic 4.5) → Tildagon (Epic 5) → UI cleanup.
 ### 10.4 Architectural prerequisites
 Cross-cutting refactors that need to land before the §10.2 items can cleanly proceed. These are not user-facing capabilities; they unblock everything above.
 - **Hardware abstraction layer (HAL)** - decouple the firmware from the M5Unified library and from M5StickC Plus2-specific GPIO and peripheral assumptions so alternate ESP32 boards (M5 StickS3, generic ESP32 dev kits, and eventually different microcontroller families) can target the same firmware logic. Surfaced 2026-05-06 when a Wokwi experiment confirmed M5Unified's runtime board detection prevents the firmware from running on any non-StickC-family ESP32 device. The HAL is a top-level Epic 2 abstraction and must land before any of §10.2's work can claim to be vendor-neutral.
@@ -802,7 +878,7 @@ Cross-cutting refactors that need to land before the §10.2 items can cleanly pr
 - **Tildagon app submission**: timeline, review process, opt-out UX.
 - **Group ID assignment workflow** for the constellation: physical isolation procedure, labelling, persistence verification.
 - **Channel selection** for ESP-NOW: hardcoded vs configurable vs adaptive scan.
-- **Show file format**: QLC+ files for laptop-driven, or define a portable JSON format that's runnable from embedded?
+- **Show file format**: QLC+ files for laptop-driven, or define a portable JSON format that's runnable from embedded? See §10.3 forward direction on QLC+ as canonical professional path.
 - **Synchronisation strategy at scale**: event-based ("BEAT NOW") vs clock-based ("phase X of bar at time T") vs hybrid.
 - **Power and weatherproofing** for outdoor lantern deployment.
 - **Failure modes**: what does each node do when ESP-NOW drops? When master goes silent? When mic noise floor changes?
@@ -810,19 +886,19 @@ Cross-cutting refactors that need to land before the §10.2 items can cleanly pr
 ## 12. References
 References use Harvard style. URLs verified at the time of writing (May 2026); links may move.
 ### 12.1 Reverse-engineering work this project builds on
-Weidman, D. (2022) *Hacking the PixMob infrared protocol to enable control of PixMob wristbands at home* \[Online repository\]. GitHub. Available at: [https://github.com/danielweidman/pixmob-ir-reverse-engineering](https://github.com/danielweidman/pixmob-ir-reverse-engineering) (Accessed: 5 May 2026).
-W., J. (2024) *PixMob_IR: PixMob IR Reverse Engineering* \[Online repository\]. GitHub. Available at: [https://github.com/jamesw343/PixMob_IR](https://github.com/jamesw343/PixMob_IR) (Accessed: 5 May 2026). The companion documentation files `docs/ir_protocol.md` and `docs/operation.md` in the same repository are the authoritative source for the byte-level protocol structure used in Nocturnation's `pixmob_protocol.h` C++ port.
+Weidman, D. (2022) *Hacking the PixMob infrared protocol to enable control of PixMob wristbands at home* [Online repository]. GitHub. Available at: [https://github.com/danielweidman/pixmob-ir-reverse-engineering](https://github.com/danielweidman/pixmob-ir-reverse-engineering) (Accessed: 5 May 2026).
+W., J. (2024) *PixMob_IR: PixMob IR Reverse Engineering* [Online repository]. GitHub. Available at: [https://github.com/jamesw343/PixMob_IR](https://github.com/jamesw343/PixMob_IR) (Accessed: 5 May 2026). The companion documentation files `docs/ir_protocol.md` and `docs/operation.md` in the same repository are the authoritative source for the byte-level protocol structure used in Nocturnation's `pixmob_protocol.h` C++ port.
 ### 12.2 Lighting control standards
 Artistic Licence Engineering Ltd (2023) *Specification for the Art-Net 4 Ethernet Communication Protocol*. Available at: [https://art-net.org.uk/downloads/art-net.pdf](https://art-net.org.uk/downloads/art-net.pdf) (Accessed: 5 May 2026). Royalty-free specification covering the ArtDmx, ArtPoll, and ArtPollReply packet formats used in Nocturnation's console-input driver.
 Entertainment Services and Technology Association (2008) *ANSI E1.11-2008 (R2018): Entertainment Technology - USITT DMX512-A - Asynchronous Serial Digital Data Transmission Standard for Controlling Lighting Equipment and Accessories*. ESTA Technical Standards Program. Available at: [https://tsp.esta.org/tsp/documents/docs/ANSI-ESTA_E1-11_2008R2018.pdf](https://tsp.esta.org/tsp/documents/docs/ANSI-ESTA_E1-11_2008R2018.pdf) (Accessed: 5 May 2026). The current edition (ANSI E1.11-2024) is paywalled; the 2008/R2018 PDF is freely available from ESTA's Technical Standards Program and is technically equivalent for our purposes.
-Espressif Systems (n.d.) *ESP-NOW Wireless Communication Protocol* \[Product page\]. Available at: [https://www.espressif.com/en/solutions/low-power-solutions/esp-now](https://www.espressif.com/en/solutions/low-power-solutions/esp-now) (Accessed: 5 May 2026). High-level description of the connectionless Wi-Fi protocol used as Nocturnation's embedded mesh transport, including supported chip families (ESP8266, ESP32, ESP32-S, ESP32-C) and indicative range figures (200m+ open-air at +21dBm).
-Espressif Systems (2024) *ESP-NOW - ESP-IDF Programming Guide* \[Online\]. Available at: [https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/network/esp_now.html](https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/network/esp_now.html) (Accessed: 5 May 2026). Authoritative API reference covering the vendor-specific action frame format, v1.0 (250-byte) and v2.0 (1470-byte) maximum payloads, optional CCMP/AES-128 encryption, and the C API (`esp_now_init`, `esp_now_send`, `esp_now_register_recv_cb`) used in Nocturnation's master and repeater implementations.
-Espressif Systems (2024) *esp-now: A connectionless Wi-Fi communication protocol - User Guide* \[Online repository\]. GitHub. Available at: [https://github.com/espressif/esp-now/blob/master/User_Guide.md](https://github.com/espressif/esp-now/blob/master/User_Guide.md) (Accessed: 5 May 2026). Application-level guide covering pairing, OTA, and security features layered on the base protocol; relevant context for Nocturnation's deduplication and repeater logic.
+Espressif Systems (n.d.) *ESP-NOW Wireless Communication Protocol* [Product page]. Available at: [https://www.espressif.com/en/solutions/low-power-solutions/esp-now](https://www.espressif.com/en/solutions/low-power-solutions/esp-now) (Accessed: 5 May 2026). High-level description of the connectionless Wi-Fi protocol used as Nocturnation's embedded mesh transport, including supported chip families (ESP8266, ESP32, ESP32-S, ESP32-C) and indicative range figures (200m+ open-air at +21dBm).
+Espressif Systems (2024) *ESP-NOW - ESP-IDF Programming Guide* [Online]. Available at: [https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/network/esp_now.html](https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/network/esp_now.html) (Accessed: 5 May 2026). Authoritative API reference covering the vendor-specific action frame format, v1.0 (250-byte) and v2.0 (1470-byte) maximum payloads, optional CCMP/AES-128 encryption, and the C API (`esp_now_init`, `esp_now_send`, `esp_now_register_recv_cb`) used in Nocturnation's master and repeater implementations.
+Espressif Systems (2024) *esp-now: A connectionless Wi-Fi communication protocol - User Guide* [Online repository]. GitHub. Available at: [https://github.com/espressif/esp-now/blob/master/User_Guide.md](https://github.com/espressif/esp-now/blob/master/User_Guide.md) (Accessed: 5 May 2026). Application-level guide covering pairing, OTA, and security features layered on the base protocol; relevant context for Nocturnation's deduplication and repeater logic.
 ### 12.3 Hardware platform documentation
 M5Stack Technology Co., Ltd (2024) *M5StickC PLUS2 (SKU: K016-P2) - Product Documentation*. Available at: [https://docs.m5stack.com/en/core/M5StickC%20PLUS2](https://docs.m5stack.com/en/core/M5StickC%20PLUS2) (Accessed: 5 May 2026). Authoritative source for ESP32-PICO-V3-02 specifications, ST7789V2 display driver, GPIO pinout (including the IR LED on GPIO 19 and HOLD pin on GPIO 4), and the PlatformIO configuration used by Nocturnation's StickC Plus2 firmware.
-M5Stack Technology Co., Ltd (2024) *M5StickC PLUS2 datasheet (K016-P2)* \[PDF\]. Mouser Electronics. Available at: [https://www.mouser.com/datasheet/2/1117/M5Stack_Technology_01102024_K016_P2-3387216.pdf](https://www.mouser.com/datasheet/2/1117/M5Stack_Technology_01102024_K016_P2-3387216.pdf) (Accessed: 5 May 2026). PDF datasheet covering electrical specifications, dimensions, and connector pinouts.
-Electromagnetic Field Ltd (2024) *Tildagon Badge Documentation* \[Online\]. Available at: [https://tildagon.badge.emfcamp.org/](https://tildagon.badge.emfcamp.org/) (Accessed: 5 May 2026). Includes the badge hardware overview, hexpansion creation guide, end-user manual, and gallery of community hexpansions.
-Electromagnetic Field Ltd (2024) *badge-2024-hardware: EMF 2024 Tildagon badge hardware design files* \[Online repository\]. GitHub. Available at: [https://github.com/emfcamp/badge-2024-hardware](https://github.com/emfcamp/badge-2024-hardware) (Accessed: 5 May 2026). Contains the schematics, PCB templates, and hexpansion connector specifications referenced by Nocturnation's Tildagon receiver app design.
+M5Stack Technology Co., Ltd (2024) *M5StickC PLUS2 datasheet (K016-P2)* [PDF]. Mouser Electronics. Available at: [https://www.mouser.com/datasheet/2/1117/M5Stack_Technology_01102024_K016_P2-3387216.pdf](https://www.mouser.com/datasheet/2/1117/M5Stack_Technology_01102024_K016_P2-3387216.pdf) (Accessed: 5 May 2026). PDF datasheet covering electrical specifications, dimensions, and connector pinouts.
+Electromagnetic Field Ltd (2024) *Tildagon Badge Documentation* [Online]. Available at: [https://tildagon.badge.emfcamp.org/](https://tildagon.badge.emfcamp.org/) (Accessed: 5 May 2026). Includes the badge hardware overview, hexpansion creation guide, end-user manual, and gallery of community hexpansions.
+Electromagnetic Field Ltd (2024) *badge-2024-hardware: EMF 2024 Tildagon badge hardware design files* [Online repository]. GitHub. Available at: [https://github.com/emfcamp/badge-2024-hardware](https://github.com/emfcamp/badge-2024-hardware) (Accessed: 5 May 2026). Contains the schematics, PCB templates, and hexpansion connector specifications referenced by Nocturnation's Tildagon receiver app design.
 Electromagnetic Field Ltd (2024) 'Tildagon: The EMF 2024+ badge', *EMF Camp Blog*, 18 March. Available at: [https://blog.emfcamp.org/2024/03/18/tildagon/](https://blog.emfcamp.org/2024/03/18/tildagon/) (Accessed: 5 May 2026). Background context on the reusable-badge philosophy underpinning the Tildagon design, relevant to Nocturnation's reuse-over-manufacture principle.
 ---
 ## 13. Power and battery budgets
@@ -837,7 +913,7 @@ Indicative runtimes per platform under typical Nocturnation workload. Numbers ar
 <tr>
 <td>**M5StickC Plus2**</td>
 <td>200 mAh internal Li-ion</td>
-<td>\~2 hours</td>
+<td>~2 hours</td>
 <td>FFT and IR transmission are the dominant load. Plug in via USB-C for indefinite operation; small power bank doubles runtime trivially.</td>
 </tr>
 <tr>
@@ -855,8 +931,8 @@ Indicative runtimes per platform under typical Nocturnation workload. Numbers ar
 <tr>
 <td>**EMF Tildagon**</td>
 <td>Shared with badge functions (multi-day at idle)</td>
-<td>\~6-8 hours under Nocturnation receive workload (estimate)</td>
-<td>ESP-NOW listening + screen + LEDs noticeably faster than idle drain. Calm mode and aggressive sleep when no broadcasts heard for \>30s recommended.</td>
+<td>~6-8 hours under Nocturnation receive workload (estimate)</td>
+<td>ESP-NOW listening + screen + LEDs noticeably faster than idle drain. Calm mode and aggressive sleep when no broadcasts heard for >30s recommended.</td>
 </tr>
 <tr>
 <td>**M5Stack Atom Lite**</td>
@@ -865,7 +941,7 @@ Indicative runtimes per platform under typical Nocturnation workload. Numbers ar
 <td>No internal battery. Suitable only for fixed installations or wired deployments.</td>
 </tr>
 </table>
-For longer-running deployments, USB power banks (10,000 mAh, \~£15) extend StickC Plus2 and Atom Lite runtime to a full festival day. The bracelets are the easiest part of the rig to power - the original batteries from the events at which they were handed out routinely outlast the rest of the system.
+For longer-running deployments, USB power banks (10,000 mAh, ~£15) extend StickC Plus2 and Atom Lite runtime to a full festival day. The bracelets are the easiest part of the rig to power - the original batteries from the events at which they were handed out routinely outlast the rest of the system.
 ---
 ## 14. Licensing
 Nocturnation is open source under permissive terms.
@@ -900,8 +976,8 @@ Genres above 240 BPM are deliberately niche and not a target deployment. The cap
 ### 15.2 Brightness and contrast limits
 Low-to-mid transitions trigger fewer seizures than off-to-max. Default behaviours:
 - **Background Wash** is enabled by default in any beat-reactive show, providing a non-zero baseline brightness so pulses are mid-to-high transitions rather than off-to-high.
-- **Tildagon screens** must not flash full-area between high-contrast colours (e.g., white ↔ black) at \>2 Hz. Animations should use partial-area effects (concentric rings, edge glows) or low-contrast transitions.
-- **Brightness caps** in calm mode reduce maximum LED brightness to 50% of full and disable any contrast \>2:1 between consecutive frames.
+- **Tildagon screens** must not flash full-area between high-contrast colours (e.g., white ↔ black) at >2 Hz. Animations should use partial-area effects (concentric rings, edge glows) or low-contrast transitions.
+- **Brightness caps** in calm mode reduce maximum LED brightness to 50% of full and disable any contrast >2:1 between consecutive frames.
 ### 15.3 Calm mode
 Every Nocturnation receiver implements a **Calm Mode** that the user can enable locally and that persists across reboots:
 - Strobe Burst effects ignored entirely.
@@ -962,11 +1038,14 @@ See the Security RFC for the full design.
 - **v0.10** (2026-05-05): made Audio-silence failover an opt-in config (default OFF) rather than mandatory behaviour. Master Mode now treats silence as a valid state and runs indefinitely; the failover is reserved for unattended deployments only. This avoids the footgun of silently demoting the master during legitimate breaks (between sets, quiet passages, band returning from interval). Removed two open questions resolved by previous revisions.
 - **v0.11** (2026-05-06): renamed project to **Nocturnation** (from MurmurNet) and adopted new tagline "Open-source crowd lighting, conjured from cheap silicon". The name is a portmanteau of *nocturnal* and *murmuration*, encoding both the after-dark deployment context and the swarm-coordination metaphor. Murmurations of starlings actually happen at dusk as the birds return to roost, making the name etymologically tight. Updated vision (§1) to articulate the democratisation framing - replacing per-show vendor contracts with commodity hardware - and the merch-revenue economic model that makes the project commercially attractive to touring bands. Added new Security model (§16) covering threat model, three-tier deployment design (Open / Whitelist / PSK+Whitelist / signed-frames-future), PSK distribution mechanics, channel protection, and compromise recovery. Glossary renumbered to §17. All MurmurNet references throughout the document replaced with Nocturnation.
 - **v0.12** (2026-05-06): two protocol/architecture refinements. (1) Replaced 16-bit `sequence_number` field in the ESP-NOW frame header with a 32-bit `master_timecode` field that serves dual purpose: deduplication key AND time anchor for cert validity. Receivers persist the highest timecode seen per source_id to NVM, eliminating the need for an internal RTC and providing tamper-evidence for replay attacks. Frame header grows from 12 bytes to 14 bytes. (2) Slimmed §16 Security model from full design to brief overview, with the full architecture moved to a separate Security architecture (RFC) page under the Nocturnation parent - acknowledging that the security design is exploratory and not ready for implementation. The architecture spec retains the architectural commitments (open algorithms, tiered deployment, time anchoring, hobbyist-unaffected, unidirectional Calm Mode) and links out for the detail.
-- **v0.13** (2026-05-06): split sequence number from time anchoring, following Art-Net's precedent of using a 1-byte sequence field for deduplication and a separate packet type for timecode. Frame header drops from 14 bytes to 6 bytes - the smallest size in the project's history. Wall-clock time is now carried in a new `TIME_SYNC` message type (0x05) broadcast by Tier 3 masters at heartbeat rate; Tier 0/1/2 receivers ignore it. The split saves bandwidth on every BEAT_DETECTED and LIGHT_COMMAND frame (the vast majority of traffic) while retaining the time-anchoring capability that Tier 3 cert validity needs. Sequence wrap window at 4 Hz is \~64 seconds, comfortably longer than any plausible ESP-NOW reordering window.
+- **v0.13** (2026-05-06): split sequence number from time anchoring, following Art-Net's precedent of using a 1-byte sequence field for deduplication and a separate packet type for timecode. Frame header drops from 14 bytes to 6 bytes - the smallest size in the project's history. Wall-clock time is now carried in a new `TIME_SYNC` message type (0x05) broadcast by Tier 3 masters at heartbeat rate; Tier 0/1/2 receivers ignore it. The split saves bandwidth on every BEAT_DETECTED and LIGHT_COMMAND frame (the vast majority of traffic) while retaining the time-anchoring capability that Tier 3 cert validity needs. Sequence wrap window at 4 Hz is ~64 seconds, comfortably longer than any plausible ESP-NOW reordering window.
 - **v0.14** (2026-05-06): added §13.1 Domains, recording the registration of [nocturnation.com](http://nocturnation.com) and [nocturnation.net](http://nocturnation.net) (both 6 May 2026, 1-year initial term) as project-canonical domains pending future use.
-<empty-block/>
-<empty-block/>
-<empty-block/>
+- **v0.18** (2026-05-08): rewrote §4.5 from "Group ID semantics" (now §4.6) into a substantive **"Two-channel architecture"** section covering: the channel 1 hobby / channel 11 show social contract; the deliberate avoidance of channels 6 and 2-13; the slave-side dual-channel scan algorithm with show priority (show channel scanned first, then hobby, looped indefinitely until heartbeat detected); master-side channel-and-role selection (hobby default, show explicit). Added a forward-looking subsection on **distance-based effects via RSSI** describing wave effects, intensity gradients, distance-zoned palettes, ambient-only-back-rows mode, and repeater self-discovery as Tier 0 software effects that become possible once Epic 4 lands RSSI capture - with honest calibration about RSSI's coarse-band rather than precise nature. Added a second forward-looking subsection on **per-device addressing for K-pop-style commercial deployments**, contrasting PixMob's dumb-bracelet model with K-pop's expensive-fan-owned-light-stick model where seat-linked addressing enables surgical effects (text in audience, precise gradients, personalised effects). The section commits to nothing beyond "don't paint into a corner that forecloses this direction" but flags it as the most ambitious commercial future the architecture should remain compatible with. §4.5 Group ID semantics renumbered to §4.6.
+- **v0.19** (2026-05-08): added "Multi-show coexistence: why no universe field" subsection to §4.5. Captures the design decision to deliberately *not* add an Art-Net-style universe / scope field to the frame header in v1, and the reasoning (existing source_id and target_group fields can carry the discrimination load; operational discipline handles the multi-show-on-same-channel case adequately; premature wire-format additions are expensive; v2 via EXTENSION message type 0xFF is the migration path if the need turns out to be real). Recorded so future-you doesn't re-debate it.
+- **v0.20** (2026-05-09): added "Forward direction: companion app and mic-less devices" subsection to §4.5. Pulls together three previously-separate forward directions (BLE carrier in §4.1, K-pop seat-mapping above, distance-based effects via RSSI above) into a single coherent product vision: a mic-less NocturNation device paired with a phone companion app that does audio analysis and sends events via BLE. Captures three commercial angles - cheaper hardware/better margins, home-use retention model (the strategically most important one), and seat-capture for surgical effects. Frames as forward direction only, not committed Epic. Walk-before-run priority captured: 4.5 → 4.6 → 4.7 → 5, then revisit. Also updated §10.3 with the QLC+ canonical-professional-path forward direction (recorded earlier in same session); the longer-term roadmap is now properly structured around what the architecture should remain compatible with rather than what's committed to build.
+- **v0.21** (2026-05-10): two refinements. (1) §3.2 Tildagon entry updated to make explicit that the platform is **slave-only** because it has no microphone. The constraint was previously implicit (derivable from the §8.2 capability requirements) but not stated; making it architectural means the Tildagon receiver app design (Epic 5) is unambiguous about scope and the platform is positioned cleanly as a prototype for the future mic-less companion-app device pattern. (2) §8.2 Autonomous Master row updated to make explicit that hosts without a microphone cannot enter Master Mode and the mode-selection menu should not present it as an option on those platforms - removes a potential UX bug in the Tildagon receiver app where Master Mode could be selected and would then fail silently.
+
+
+
 -
-<empty-block/>
-<empty-block/>
+
