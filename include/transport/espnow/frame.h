@@ -44,7 +44,19 @@ enum class MessageType : uint8_t {
     LightCommand = 0x03,
     ClockSync    = 0x04,
     TimeSync     = 0x05,
+    MusicEvent   = 0x06,   // DROP / BREAKDOWN / BUILD; Epic 4.5 Block 4
     Extension    = 0xFF,
+};
+
+// MusicEvent payload's event_type field. Wire-stable values; see
+// architecture spec §4.3 MUSIC_EVENT row. Receivers that don't
+// understand a given event type should leave it as Unknown and
+// silently drop the frame (forward-compatible).
+enum class MusicEventType : uint8_t {
+    Unknown   = 0,
+    Drop      = 1,
+    Breakdown = 2,
+    Build     = 3,   // reserved by spec; not fired by Epic 4.5 producers
 };
 
 struct Header {
@@ -99,6 +111,11 @@ struct TimeSyncPayload {
 };
 constexpr uint8_t kTimeSyncPayloadLen = 5;
 
+struct MusicEventPayload {
+    MusicEventType event_type;     // 1-byte enum; see MusicEventType comment
+};
+constexpr uint8_t kMusicEventPayloadLen = 1;
+
 // =============================================================================
 // Result codes
 // =============================================================================
@@ -133,6 +150,8 @@ size_t encode_clock_sync   (uint8_t* buf, size_t buf_len, const Header& hdr,
                             const ClockSyncPayload& p);
 size_t encode_time_sync    (uint8_t* buf, size_t buf_len, const Header& hdr,
                             const TimeSyncPayload& p);
+size_t encode_music_event  (uint8_t* buf, size_t buf_len, const Header& hdr,
+                            const MusicEventPayload& p);
 
 // =============================================================================
 // Decoders
@@ -165,6 +184,9 @@ DecodeResult decode_clock_sync  (const Header& hdr,
 DecodeResult decode_time_sync   (const Header& hdr,
                                  const uint8_t* payload, size_t payload_len,
                                  TimeSyncPayload& out);
+DecodeResult decode_music_event (const Header& hdr,
+                                 const uint8_t* payload, size_t payload_len,
+                                 MusicEventPayload& out);
 
 }  // namespace espnow
 }  // namespace transport

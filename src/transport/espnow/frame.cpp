@@ -57,6 +57,7 @@ bool is_known_message_type(uint8_t raw) {
         case static_cast<uint8_t>(MessageType::LightCommand):
         case static_cast<uint8_t>(MessageType::ClockSync):
         case static_cast<uint8_t>(MessageType::TimeSync):
+        case static_cast<uint8_t>(MessageType::MusicEvent):
         case static_cast<uint8_t>(MessageType::Extension):
             return true;
         default:
@@ -130,6 +131,15 @@ size_t encode_time_sync(uint8_t* buf, size_t buf_len, const Header& hdr,
     write_header(buf, hdr, MessageType::TimeSync, kTimeSyncPayloadLen);
     write_u16_le(buf + kHeaderSize + 0, p.days_since_2026);
     write_u24_le(buf + kHeaderSize + 2, p.centiseconds_today);
+    return total;
+}
+
+size_t encode_music_event(uint8_t* buf, size_t buf_len, const Header& hdr,
+                          const MusicEventPayload& p) {
+    constexpr size_t total = kHeaderSize + kMusicEventPayloadLen;
+    if (buf_len < total) return 0;
+    write_header(buf, hdr, MessageType::MusicEvent, kMusicEventPayloadLen);
+    buf[kHeaderSize + 0] = static_cast<uint8_t>(p.event_type);
     return total;
 }
 
@@ -251,6 +261,33 @@ DecodeResult decode_time_sync(const Header& hdr,
     }
     out.days_since_2026     = read_u16_le(payload + 0);
     out.centiseconds_today  = read_u24_le(payload + 2);
+    return DecodeResult::Ok;
+}
+
+DecodeResult decode_music_event(const Header& hdr,
+                                const uint8_t* payload, size_t payload_len,
+                                MusicEventPayload& out) {
+    if (hdr.message_type != MessageType::MusicEvent) {
+        return DecodeResult::InvalidMessageType;
+    }
+    if (hdr.payload_len != kMusicEventPayloadLen ||
+        payload_len    != kMusicEventPayloadLen) {
+        return DecodeResult::PayloadLenMismatch;
+    }
+    // Map raw byte to enum. Unknown raw values land as Unknown so
+    // receivers can drop the frame without misinterpreting future-
+    // protocol additions (forward-compatible per spec §4.3).
+    const uint8_t raw = payload[0];
+    switch (raw) {
+        case static_cast<uint8_t>(MusicEventType::Drop):
+            out.event_type = MusicEventType::Drop; break;
+        case static_cast<uint8_t>(MusicEventType::Breakdown):
+            out.event_type = MusicEventType::Breakdown; break;
+        case static_cast<uint8_t>(MusicEventType::Build):
+            out.event_type = MusicEventType::Build; break;
+        default:
+            out.event_type = MusicEventType::Unknown; break;
+    }
     return DecodeResult::Ok;
 }
 

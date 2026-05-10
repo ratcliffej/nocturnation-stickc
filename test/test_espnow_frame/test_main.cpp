@@ -227,6 +227,95 @@ static void test_time_sync_round_trip(void) {
 }
 
 // ---------------------------------------------------------------------------
+// MUSIC_EVENT (0x06): roundtrip Drop / Breakdown / Build, plus the
+// forward-compatible Unknown handling for unrecognised event_type bytes.
+// ---------------------------------------------------------------------------
+
+static void test_music_event_round_trip(void) {
+    uint8_t buf[kMaxFrameSize] = {};
+    const Header in = make_header();
+    const MusicEventPayload p_in{ MusicEventType::Drop };
+
+    const size_t n = encode_music_event(buf, sizeof(buf), in, p_in);
+    TEST_ASSERT_EQUAL_size_t(kHeaderSize + kMusicEventPayloadLen, n);
+    assert_header_bytes(buf, MessageType::MusicEvent, kMusicEventPayloadLen);
+    TEST_ASSERT_EQUAL_UINT8(0x01, buf[kHeaderSize + 0]);  // 1 = Drop, wire-stable
+
+    Header decoded{};
+    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
+                      static_cast<int>(decode_header(buf, n, decoded)));
+    MusicEventPayload p_out{};
+    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
+                      static_cast<int>(decode_music_event(decoded,
+                                                          buf + kHeaderSize,
+                                                          decoded.payload_len,
+                                                          p_out)));
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MusicEventType::Drop),
+                          static_cast<int>(p_out.event_type));
+}
+
+static void test_music_event_breakdown_and_build_round_trip(void) {
+    // Smaller version of the above that just confirms the other two
+    // currently-defined event types survive the roundtrip too. Keeps
+    // the wire-byte values pinned: 2 = Breakdown, 3 = Build.
+    uint8_t buf[kMaxFrameSize] = {};
+    const Header in = make_header();
+
+    {
+        const MusicEventPayload p_in{ MusicEventType::Breakdown };
+        const size_t n = encode_music_event(buf, sizeof(buf), in, p_in);
+        TEST_ASSERT_EQUAL_UINT8(0x02, buf[kHeaderSize + 0]);
+        Header decoded{};
+        decode_header(buf, n, decoded);
+        MusicEventPayload p_out{};
+        decode_music_event(decoded, buf + kHeaderSize, decoded.payload_len, p_out);
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(MusicEventType::Breakdown),
+                              static_cast<int>(p_out.event_type));
+    }
+    {
+        const MusicEventPayload p_in{ MusicEventType::Build };
+        const size_t n = encode_music_event(buf, sizeof(buf), in, p_in);
+        TEST_ASSERT_EQUAL_UINT8(0x03, buf[kHeaderSize + 0]);
+        Header decoded{};
+        decode_header(buf, n, decoded);
+        MusicEventPayload p_out{};
+        decode_music_event(decoded, buf + kHeaderSize, decoded.payload_len, p_out);
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(MusicEventType::Build),
+                              static_cast<int>(p_out.event_type));
+    }
+}
+
+static void test_music_event_unknown_event_type_decodes_as_unknown(void) {
+    // Forward-compatibility: a byte we don't recognise (e.g. a future
+    // protocol's 0x42) decodes as MusicEventType::Unknown so the
+    // receiver can drop the frame without misinterpreting it.
+    uint8_t buf[kHeaderSize + kMusicEventPayloadLen] = {};
+    Header in = make_header();
+    in.message_type = MessageType::MusicEvent;
+    in.payload_len  = kMusicEventPayloadLen;
+    // Manually write the frame so we can inject an unknown event_type.
+    buf[0] = 0x01;            // protocol version
+    buf[1] = in.source_id;
+    buf[2] = in.sequence_number;
+    buf[3] = in.hop_count;
+    buf[4] = static_cast<uint8_t>(MessageType::MusicEvent);
+    buf[5] = kMusicEventPayloadLen;
+    buf[kHeaderSize + 0] = 0x42;   // not a known MusicEventType
+
+    Header decoded{};
+    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
+                      static_cast<int>(decode_header(buf, sizeof(buf), decoded)));
+    MusicEventPayload p_out{};
+    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
+                      static_cast<int>(decode_music_event(decoded,
+                                                          buf + kHeaderSize,
+                                                          decoded.payload_len,
+                                                          p_out)));
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(MusicEventType::Unknown),
+                          static_cast<int>(p_out.event_type));
+}
+
+// ---------------------------------------------------------------------------
 // Encoder rejects buffer-too-small without writing past the end
 // ---------------------------------------------------------------------------
 
@@ -402,6 +491,9 @@ int main(int, char**) {
     RUN_TEST(test_light_command_round_trip);
     RUN_TEST(test_clock_sync_round_trip);
     RUN_TEST(test_time_sync_round_trip);
+    RUN_TEST(test_music_event_round_trip);
+    RUN_TEST(test_music_event_breakdown_and_build_round_trip);
+    RUN_TEST(test_music_event_unknown_event_type_decodes_as_unknown);
     RUN_TEST(test_encode_buffer_too_small);
     RUN_TEST(test_decode_header_buffer_too_short);
     RUN_TEST(test_decode_header_bad_protocol_version);
