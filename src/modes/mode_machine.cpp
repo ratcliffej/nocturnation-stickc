@@ -479,7 +479,10 @@ struct EspNowBroadcaster {
     bool maybe_send_heartbeat() {
         if (!active_) return false;
         const uint32_t now = millis();
-        if (now - last_tx_ms_ < kHeartbeatPeriodMs) return false;
+        const uint32_t gap = now - last_tx_ms_;
+        if (gap < kHeartbeatPeriodMs) return false;
+        Serial.printf("[HBEAT] firing after %lu ms gap since last TX\n",
+                      static_cast<unsigned long>(gap));
         send_heartbeat();
         return true;
     }
