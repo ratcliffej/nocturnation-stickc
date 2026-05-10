@@ -180,6 +180,34 @@ void SpectrumBarsVisualisation::draw_spectrum(VisualisationContext& ctx,
     if (last_draw_ms_ != 0 && (now - last_draw_ms_) < 33u) return;
     last_draw_ms_ = now;
 
+#ifdef ARDUINO
+    // Diagnostic: dump min/max/median band magnitude once per second so
+    // the calibration constants can be set against observed hardware
+    // values rather than guessed. Drop this block once kMagFloor /
+    // kSensScale are dialled in.
+    {
+        static uint32_t last_log_ms = 0;
+        if (now - last_log_ms >= 1000u) {
+            last_log_ms = now;
+            float mn = ev.magnitudes[0], mx = ev.magnitudes[0];
+            float sorted[SpectrumFrameEvent::kBands];
+            for (size_t i = 0; i < SpectrumFrameEvent::kBands; ++i) {
+                const float m = ev.magnitudes[i];
+                if (m < mn) mn = m;
+                if (m > mx) mx = m;
+                sorted[i] = m;
+            }
+            for (size_t i = 1; i < SpectrumFrameEvent::kBands; ++i) {
+                float k = sorted[i]; size_t j = i;
+                while (j > 0 && sorted[j-1] > k) { sorted[j] = sorted[j-1]; --j; }
+                sorted[j] = k;
+            }
+            const float med = sorted[SpectrumFrameEvent::kBands / 2];
+            Serial.printf("[SPEC] min=%.1f med=%.1f max=%.1f\n", mn, med, mx);
+        }
+    }
+#endif
+
     const uint8_t  band_focus  = ctx.get_property("band_focus").as_enum();
     const uint8_t  sensitivity = ctx.get_property("sensitivity").as_u8();
     const uint16_t focus_tint  = focused_tint(band_focus);
