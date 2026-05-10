@@ -14,6 +14,7 @@
 #pragma once
 
 #include "dal/analyser/beat_detector.h"
+#include "dal/analyser/drop_detector.h"
 #include "dal/dal.h"
 
 namespace nocturnation {
@@ -129,6 +130,13 @@ private:
     // consumers (mode_machine's Master and TestMode audio paths) can
     // act on a beat without re-running their own threshold logic.
     analyser::BeatDetector beat_detector_;
+
+    // Drop and breakdown detector. Same lifecycle as beat_detector_ -
+    // one update per FFT cycle, the result is stamped onto each
+    // AudioFrameEvent's music_event field. Master orchestration then
+    // broadcasts MUSIC_EVENT frames over ESP-NOW when the field is
+    // non-zero.
+    analyser::DropDetector drop_detector_;
 };
 
 // Singleton accessor used by DAL::begin() to register the driver.

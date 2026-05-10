@@ -117,6 +117,14 @@ bool LocalDriver::begin() {
             }
             const bool beat = s_instance.beat_detector_.process(sf, frame.timestamp_ms);
 
+            // Run the drop detector over the bass-energy roll-up. Uses
+            // the 3-band B/M/T summary's bass field (full <250 Hz
+            // energy) rather than spectrum bins directly - drops
+            // manifest as broadband bass-region energy shifts and the
+            // pre-rolled-up scalar is exactly that signal.
+            const analyser::DropEvent music =
+                s_instance.drop_detector_.process(frame.bass_energy, frame.timestamp_ms);
+
             // Band-summary event: 3-band B/M/T + 8-band perceptual + is_beat.
             AudioFrameEvent af;
             af.timestamp_ms  = frame.timestamp_ms;
@@ -133,6 +141,7 @@ bool LocalDriver::begin() {
             af.air           = frame.air;
             af.overall_rms   = frame.overall_rms;
             af.is_beat       = beat;
+            af.music_event   = static_cast<uint8_t>(music);
             DAL::deliver_audio_frame("local", af);
 
             // Spectrum-frame event: 32 log-spaced magnitudes. Master-

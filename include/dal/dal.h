@@ -164,6 +164,13 @@ struct AudioFrameEvent {
     // and produces equivalent behaviour across hosts with different
     // mic SNR.
     bool     is_beat       = false;
+
+    // Macro-level music event fired by the analyser's DropDetector
+    // on this frame, or 0 (none). Wire-stable values match
+    // transport::espnow::MusicEventType (1=DROP, 2=BREAKDOWN, 3=BUILD
+    // reserved). Master orchestration broadcasts MUSIC_EVENT frames
+    // when this is non-zero. Epic 4.5 Block 4.
+    uint8_t  music_event   = 0;
 };
 
 // 32-band log-spaced spectrum frame, master-local. Delivered alongside

@@ -424,6 +424,23 @@ struct EspNowBroadcaster {
         send_frame_bytes(buf, n, "HBEAT");
     }
 
+    // MUSIC_EVENT (0x06): macro-level musical events fired by the
+    // master's drop detector (Epic 4.5 Block 4). Wire-byte values
+    // match analyser::DropEvent and transport::espnow::MusicEventType,
+    // so callers can pass the analyser's enum directly.
+    void send_music_event(transport::espnow::MusicEventType event_type) {
+        if (!active_) return;
+        using namespace transport::espnow;
+        Header h{};
+        h.source_id       = source_id_;
+        h.sequence_number = next_seq();
+        h.hop_count       = 0;
+        MusicEventPayload p{ event_type };
+        uint8_t buf[kHeaderSize + kMusicEventPayloadLen];
+        const size_t n = encode_music_event(buf, sizeof(buf), h, p);
+        send_frame_bytes(buf, n, "MUSIC");
+    }
+
     void send_light_command(uint8_t target_group,
                             uint8_t r, uint8_t g, uint8_t b,
                             effects::PulseEnvelope env,
@@ -841,6 +858,17 @@ public:
 
         baseline_flux_ = baseline_flux_ * (1.0f - kBaselineAlpha)
                        + flux * kBaselineAlpha;
+
+        // Broadcast macro-level musical events (DROP, BREAKDOWN) as
+        // MUSIC_EVENT (0x06) frames. Independent of the beat path -
+        // a drop can fire on any frame, beat or not, and at most once
+        // per genuine transition (the analyser's DropDetector arms
+        // and disarms internally). Skipped during pause so the entire
+        // deployment stays silent on a single mute press.
+        if (ev.music_event != 0 && !paused_) {
+            broadcaster_.send_music_event(
+                static_cast<transport::espnow::MusicEventType>(ev.music_event));
+        }
 
         const uint32_t now = millis();
         if (!ev.is_beat) return;
