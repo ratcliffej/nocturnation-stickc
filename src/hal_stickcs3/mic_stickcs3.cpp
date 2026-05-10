@@ -77,6 +77,44 @@ void MicStickCS3::set_bass_band(uint16_t lo_hz, uint16_t hi_hz) {
     bass_bin_hi_ = hi;
 }
 
+// S3's audio pipeline operating points. ES8311 codec supports up to
+// 48 kHz natively; 8 MB PSRAM + esp-dsp HW-accelerated FFT make larger
+// FFTs tractable. The list declares operating points the host CAN
+// support; only the first is actually implemented in Epic 4.5. Future
+// Epics light up the others (notably 48 kHz for full Air-band capture).
+namespace {
+constexpr AudioOperatingPoint kS3OperatingPoints[] = {
+    { /*sample_rate_hz=*/16000, /*fft_size=*/512  },  // canonical default
+    { /*sample_rate_hz=*/32000, /*fft_size=*/1024 },  // future: extended range
+    { /*sample_rate_hz=*/48000, /*fft_size=*/1024 },  // future: full Air band
+    { /*sample_rate_hz=*/48000, /*fft_size=*/2048 },  // future: high resolution
+};
+constexpr size_t kS3OperatingPointCount =
+    sizeof(kS3OperatingPoints) / sizeof(kS3OperatingPoints[0]);
+}  // namespace
+
+const AudioOperatingPoint* MicStickCS3::operating_points() const {
+    return kS3OperatingPoints;
+}
+
+size_t MicStickCS3::operating_point_count() const {
+    return kS3OperatingPointCount;
+}
+
+AudioOperatingPoint MicStickCS3::current_operating_point() const {
+    // Backend currently runs only at the canonical default; declared
+    // alternatives are reserved for a future Epic.
+    return kS3OperatingPoints[0];
+}
+
+bool MicStickCS3::configure_audio_pipeline(uint32_t sample_rate_hz,
+                                            uint16_t fft_size) {
+    // Only the canonical default is implemented in Epic 4.5; higher
+    // operating points are declared on this host but not yet wired
+    // into the I2S clock / FFT plan management.
+    return sample_rate_hz == kSampleRate && fft_size == kFftSize;
+}
+
 void MicStickCS3::poll() {
     if (!running_)            return;
     if (!M5.Mic.isEnabled())  return;

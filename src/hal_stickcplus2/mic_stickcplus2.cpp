@@ -51,6 +51,39 @@ void MicStickCplus2::set_bass_band(uint16_t lo_hz, uint16_t hi_hz) {
     bass_bin_hi_ = hi;
 }
 
+// Plus2's audio pipeline operating points. PDM mic + I2S clock setup
+// is fixed at 16 kHz; the backend declares one option and rejects any
+// other. Future work could add a 32 kHz path if PDM throughput allows,
+// but that's not in Epic 4.5's scope.
+namespace {
+constexpr AudioOperatingPoint kPlus2OperatingPoints[] = {
+    { /*sample_rate_hz=*/16000, /*fft_size=*/512 },
+};
+constexpr size_t kPlus2OperatingPointCount =
+    sizeof(kPlus2OperatingPoints) / sizeof(kPlus2OperatingPoints[0]);
+}  // namespace
+
+const AudioOperatingPoint* MicStickCplus2::operating_points() const {
+    return kPlus2OperatingPoints;
+}
+
+size_t MicStickCplus2::operating_point_count() const {
+    return kPlus2OperatingPointCount;
+}
+
+AudioOperatingPoint MicStickCplus2::current_operating_point() const {
+    // Backend is hard-fixed at the canonical default; return that.
+    return kPlus2OperatingPoints[0];
+}
+
+bool MicStickCplus2::configure_audio_pipeline(uint32_t sample_rate_hz,
+                                               uint16_t fft_size) {
+    // Only the canonical default is implemented in Epic 4.5; reject
+    // anything else explicitly so future Epics see a clean integration
+    // point.
+    return sample_rate_hz == kSampleRate && fft_size == kFftSize;
+}
+
 void MicStickCplus2::poll() {
     if (!running_)            return;
     if (!M5.Mic.isEnabled())  return;

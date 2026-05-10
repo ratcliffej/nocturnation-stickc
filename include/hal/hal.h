@@ -38,18 +38,85 @@ enum class Capability : uint8_t {
     Bluetooth,  // BLE peripheral (declaration-only at present; future Epic
                 // wires phone-app pairing on top - StickC Plus2 has BLE 4.2,
                 // StickS3 has BLE 5.0)
+
+    // -------------------------------------------------------------------------
+    // Audio analyser sub-capabilities (Epic 4.5)
+    // -------------------------------------------------------------------------
+    //
+    // Sub-capabilities that compose what an analyser produces. A host
+    // with Mic + an analyser implementation declares the subset of
+    // these that its current operating point actually supports.
+    // Slaves consume events over the wire and need none of these
+    // declared - the analyser is master-side only.
+    //
+    // Lit by Epic 4.5 (this Epic):
+    AnalyserBeatDetection,    // produces BEAT_DETECTED events (bass-band onset)
+    AnalyserDropDetection,    // produces MUSIC_EVENT (DROP / BREAKDOWN) events
+    AnalyserSpectrumFrame,    // emits 32-band log-spaced SpectrumFrameEvent
+    AnalyserBandSummary,      // emits 3-band B/M/T + 8-band perceptual summary
+    // Reserved for Epic 4.7 (declared so the enum is stable; not yet listed
+    // by any host's capability set):
+    AnalyserMultiBandOnset,   // SNARE/HIHAT events alongside BEAT_DETECTED
+    AnalyserSpectralCentroid, // continuous centroid descriptor
+    AnalyserEnergyEnvelope,   // continuous smoothed-RMS descriptor
+    AnalyserSectionDetection, // SECTION_CHANGE events (verse/chorus/bridge)
 };
 
 // =============================================================================
-// Mic - audio analysis frames at a fixed cadence (raw FFT only, no beat detect)
+// Mic - audio analysis frames at a fixed cadence (raw FFT + analyser surface)
 // =============================================================================
 
+// Per-FFT-cycle output of the host's audio analyser. Carries the
+// 3-band B/M/T summary (existing API, restandardised in Epic 4.5 to
+// evidence-based ranges), the 8-band perceptual summary (Audible
+// Genius reference - new in Epic 4.5), and the 32-band log-spaced
+// spectrum (new in Epic 4.5; consumed by Diagnostic UI in 4.6 and FX
+// modulators in 4.7).
+//
+// All fields default-initialise to 0.0f so a backend that doesn't fill
+// the new surface yet (e.g. before Block 2c lights up the integration)
+// returns sane zeros rather than uninitialised garbage. Existing
+// consumers reading bass_energy / mid_energy / treble_energy continue
+// to work; new consumers can opt into the richer surface.
 struct AudioFrame {
-    uint32_t timestamp_ms;   // millis() at frame end
-    float    bass_energy;    // sum of FFT bins ~62-187 Hz
-    float    mid_energy;     // ~250-2000 Hz
-    float    treble_energy;  // ~2000-8000 Hz
-    float    overall_rms;    // mean abs amplitude over the window
+    uint32_t timestamp_ms = 0;        // millis() at frame end
+
+    // 3-band B/M/T summary. Boundaries restandardised in Epic 4.5 to
+    // perceptual splits taken from the Audible Genius reference.
+    float    bass_energy   = 0.0f;    // [0, 250) Hz   (was ~62-187)
+    float    mid_energy    = 0.0f;    // [250, 2000) Hz
+    float    treble_energy = 0.0f;    // [2000, Nyquist) Hz
+
+    // 8-band perceptual summary. Internally consistent with the 3-band
+    // roll-up: bass_energy = mud + sub_bass + bass; mid_energy =
+    // low_mids + midrange; treble_energy = high_mids + presence + air.
+    float    mud           = 0.0f;    // [0, 20) Hz
+    float    sub_bass      = 0.0f;    // [20, 60) Hz
+    float    bass          = 0.0f;    // [60, 250) Hz
+    float    low_mids      = 0.0f;    // [250, 500) Hz
+    float    midrange      = 0.0f;    // [500, 2000) Hz
+    float    high_mids     = 0.0f;    // [2000, 4000) Hz
+    float    presence      = 0.0f;    // [4000, 6000) Hz
+    float    air           = 0.0f;    // [6000, 20000) Hz, truncated at Nyquist
+
+    // 32-band log-spaced spectrum covering [30 Hz, Nyquist). Master-
+    // local; never broadcast over ESP-NOW (too heavy at FFT rate). At
+    // the canonical 16 kHz / 512 FFT operating point this spans 30 Hz
+    // to 8 kHz; at higher operating points the upper edge follows
+    // Nyquist.
+    static constexpr size_t kSpectrumBands = 32;
+    float    spectrum[kSpectrumBands] = {};
+
+    float    overall_rms   = 0.0f;    // mean abs amplitude over the window
+};
+
+// A valid (sample_rate_hz, fft_size) tuple the host's audio pipeline
+// supports. Hosts declare a static list of these; orchestration picks
+// one via configure_audio_pipeline(). The first entry in a host's list
+// is its default operating point.
+struct AudioOperatingPoint {
+    uint32_t sample_rate_hz;
+    uint16_t fft_size;
 };
 
 class Mic {
@@ -67,6 +134,27 @@ public:
 
     // Override default bass-band edges if needed.
     virtual void set_bass_band(uint16_t lo_hz, uint16_t hi_hz) = 0;
+
+    // -------------------------------------------------------------------------
+    // Audio pipeline operating points (Epic 4.5)
+    // -------------------------------------------------------------------------
+    //
+    // Each backend declares a const static list of valid operating
+    // points it can run at, in priority order with the default first.
+    // Plus2 declares one (codec-limited); S3 declares several (capable
+    // of higher sample rates and larger FFTs); future phone or PC HALs
+    // declare their own.
+    //
+    // configure_audio_pipeline() asks the backend to switch to one of
+    // its declared points. **In Epic 4.5 only the canonical default
+    // (16000, 512) is implemented across all hosts**; any other tuple
+    // returns false (explicit not-supported). Future Epics light up
+    // the additional declared operating points on capable hosts.
+    virtual const AudioOperatingPoint* operating_points() const = 0;
+    virtual size_t                     operating_point_count() const = 0;
+    virtual AudioOperatingPoint        current_operating_point() const = 0;
+    virtual bool                       configure_audio_pipeline(uint32_t sample_rate_hz,
+                                                                 uint16_t fft_size) = 0;
 };
 
 // =============================================================================

@@ -45,6 +45,18 @@ public:
     void set_frame_callback(FrameCallback cb) override;
     void set_bass_band(uint16_t lo_hz, uint16_t hi_hz) override;
 
+    // Audio pipeline operating-point API (Epic 4.5 Block 2). S3's
+    // ES8311 codec supports rates up to 48 kHz natively, and 8 MB
+    // PSRAM + esp-dsp HW-accelerated FFT make larger FFTs tractable;
+    // the backend declares the canonical default plus higher operating
+    // points future Epics can light up. In Epic 4.5 only the canonical
+    // default is implemented across all hosts.
+    const AudioOperatingPoint* operating_points() const override;
+    size_t                     operating_point_count() const override;
+    AudioOperatingPoint        current_operating_point() const override;
+    bool                       configure_audio_pipeline(uint32_t sample_rate_hz,
+                                                         uint16_t fft_size) override;
+
     // Backend-specific - called from HAL::loop_tick() in hal_stickcs3.cpp.
     void poll();
 

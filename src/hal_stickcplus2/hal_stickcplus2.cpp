@@ -55,6 +55,15 @@ static constexpr Capability kCapabilities[] = {
     Capability::ESPNow,
     Capability::Bluetooth,   // BLE 4.2 hardware; declaration only - future
                              // Epic 4+ work wires phone-app pairing on top.
+
+    // Audio analyser sub-capabilities lit by Epic 4.5. Plus2 and S3
+    // declare the same set; they differ only in available CPU headroom
+    // (S3 has esp-dsp HW-accelerated FFT) and in the size of their
+    // declared audio_pipeline_operating_points list.
+    Capability::AnalyserBeatDetection,
+    Capability::AnalyserDropDetection,
+    Capability::AnalyserSpectrumFrame,
+    Capability::AnalyserBandSummary,
 };
 static constexpr size_t kCapabilityCount =
     sizeof(kCapabilities) / sizeof(kCapabilities[0]);

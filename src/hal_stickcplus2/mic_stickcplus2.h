@@ -29,6 +29,15 @@ public:
     void set_frame_callback(FrameCallback cb) override;
     void set_bass_band(uint16_t lo_hz, uint16_t hi_hz) override;
 
+    // Audio pipeline operating-point API (Epic 4.5 Block 2). Plus2's
+    // PDM mic and the I2S clock setup are fixed at 16 kHz; the backend
+    // declares a single operating point and rejects any other.
+    const AudioOperatingPoint* operating_points() const override;
+    size_t                     operating_point_count() const override;
+    AudioOperatingPoint        current_operating_point() const override;
+    bool                       configure_audio_pipeline(uint32_t sample_rate_hz,
+                                                         uint16_t fft_size) override;
+
     // Backend-specific - called from HAL::loop_tick() in hal_stickcplus2.cpp.
     void poll();
 
