@@ -67,16 +67,33 @@ const PropertyDef kProps[] = {
 
 constexpr size_t kPropCount = sizeof(kProps) / sizeof(kProps[0]);
 
-// LCD geometry. Status strip occupies the top ~12 px; bars draw from y0
-// down to the bottom. 240 px wide / 32 bars = 7 px per bar with 1 px
-// gap (we let the leftover 16 px sit on the right as margin; symmetric
-// margins on a non-divisible width add a divide we don't need).
+// LCD geometry. Bars draw from y=14 down to y=134 (120 px tall) on the
+// StickC Plus2's 240x135 panel. 32 bars * (6 px wide + 1 px gap) = 224
+// px, centred with an 8 px margin each side. The previous 7+1 sizing
+// produced 32*8 = 256 px which overflowed the panel by 16 px and clipped
+// the two highest-frequency bands off the right edge.
 constexpr int kBarsTopY      = 14;
-constexpr int kBarsBottomY   = 134;          // StickC Plus2 height is 135
+constexpr int kBarsBottomY   = 134;
 constexpr int kBarsMaxHeight = kBarsBottomY - kBarsTopY;
-constexpr int kBarWidth      = 7;
+constexpr int kBarWidth      = 6;
 constexpr int kBarGap        = 1;
-constexpr int kBarsLeftX     = 0;
+constexpr int kBarsLeftX     = 8;
+
+// Magnitude-to-bar-height calibration. The analyser emits log2-scaled
+// FFT bin energies; AudioLive's reference calibration treats the typical
+// operating range as ~14..20 for the B/M/T bands (floor / ceil from
+// kCalibrationDefault in persistence.h) and ~5..10 for treble. We use a
+// single conservative noise floor of 4.0 so treble still responds at
+// modest volumes, then scale by sensitivity (1..10) * 0.01 so the
+// default sensitivity of 5 produces a healthy bar (~50-80%) over the
+// expected magnitude range. Anything above ~24 magnitude with sens=5
+// clamps to full height.
+//
+// Without the floor subtraction, ambient magnitudes around 5-10 with
+// sensitivity 5 and the previous 0.04 multiplier produced v >= 1.0 for
+// every band - all bars stuck at maximum, no useful information.
+constexpr float kMagFloor    = 4.0f;
+constexpr float kSensScale   = 0.01f;
 
 // Band-focus group bounds (inclusive). Bass = bands 0..9 (lowest 10 of
 // 32 log-spaced bins, sub-200-ish-Hz on the StickC analyser), Mid =
@@ -173,14 +190,11 @@ void SpectrumBarsVisualisation::draw_spectrum(VisualisationContext& ctx,
         0, kBarsTopY, 240, kBarsMaxHeight, BLACK});
 
     for (size_t i = 0; i < SpectrumFrameEvent::kBands; ++i) {
-        // Magnitudes are non-negative log2-scaled energies; the
-        // analyser's exact range is calibration-dependent, but values
-        // typically sit in the 5..22 region. We scale by sensitivity
-        // (1..10) then normalise against a fixed display ceiling
-        // (~30.0f * 1.0f) so sensitivity ~5 lands a healthy bar at
-        // moderate signal. Anything above the ceiling clamps to full
-        // bar height.
-        float v = ev.magnitudes[i] * sens_scale * 0.04f;   // ~30 ceiling
+        // Subtract noise floor before scaling so silence shows no bar
+        // (rather than a permanent baseline) and treble bands (typical
+        // 5..10 magnitude) still respond. See kMagFloor / kSensScale
+        // notes above for the calibration reasoning.
+        float v = (ev.magnitudes[i] - kMagFloor) * sens_scale * kSensScale;
         if (v < 0.0f) v = 0.0f;
         if (v > 1.0f) v = 1.0f;
 
