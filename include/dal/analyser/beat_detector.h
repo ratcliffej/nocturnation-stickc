@@ -26,8 +26,8 @@
 //      detectors over the same spectrum.
 //
 // Tuning history (so future-you doesn't relitigate it):
-//   2026-05-10: initial integration on hardware (Plus2 + S3) with
-//   Vengaboys-class test track. Original defaults (k=1.5, 80 ms
+//   2026-05-10 round 1: initial integration on hardware (Plus2 + S3)
+//   with Vengaboys-class test track. Original defaults (k=1.5, 80 ms
 //   refractory, 11 bands watched 30-215 Hz) over-fired badly: a
 //   112 BPM track read 155 BPM, screen flashed semi-continuously.
 //   Tightened to k=2.5 (matches legacy single-threshold's beat
@@ -36,6 +36,20 @@
 //   300 BPM, prevents same-kick double-fire as the envelope decays
 //   through neighbouring sub-bands), and 8 watched bands focused
 //   on the kick fundamental at 30-150 Hz.
+//   2026-05-10 round 2: cross-device hardware verification on Plus2
+//   + S3 showed the round-1 tuning was just slightly too tight - a
+//   few softer kicks were being missed, leaving >1 s gaps that the
+//   master's heartbeat (architecture spec §4.3) legitimately filled.
+//   Mechanism: after a loud kick the kick's energy enters the per-
+//   band history, elevating the mean and raising the threshold for
+//   the next ~1 s. A soft kick within that window can fall just
+//   below the elevated threshold and miss. Loosened k from 2.5 to
+//   2.2 - 10% more permissive, picks up the soft-after-loud kicks
+//   without re-introducing the round-1 over-fire. A future structural
+//   improvement (outlier-rejecting mean: exclude individual loud
+//   spikes from contributing to the history's mean while still
+//   counting them for variance) would close this loop more cleanly
+//   but is out of Epic 4.5 scope.
 //
 // Why "candidate" rather than "beat" in step 3: only the first
 // candidate within the refractory window fires; subsequent candidates
@@ -91,13 +105,15 @@ struct BeatDetectorConfig {
 
     // Threshold multiplier. A frame's per-band magnitude must exceed
     // (mean + k × std_dev) of the history to flag the band as a
-    // candidate. Typical range 2.0 - 3.0; default 2.5 matches the
-    // legacy single-threshold detector's beat multiplier and gives
-    // sensible results on the reference samples without false fires
-    // on noisy bands. The maker-community ESP32 reference work
-    // suggests 1.5 but that's per-band-only - with multiple watched
-    // bands the false-positive rate compounds with band count.
-    float    threshold_k   = 2.5f;
+    // candidate. Typical range 2.0 - 3.0; default 2.2 settles the
+    // sensitivity between the maker-community 1.5 (over-fires on
+    // multi-band watching) and the legacy single-threshold detector's
+    // 2.5 (misses softer kicks that follow a loud kick within ~1 s,
+    // because the loud kick's history elevates the per-band mean).
+    // 2.2 catches the soft kicks without re-introducing the over-
+    // fire seen at 1.5 - confirmed empirically on Jason's hardware
+    // tests with Plus2 + S3 (2026-05-10).
+    float    threshold_k   = 2.2f;
 
     // Refractory period in milliseconds. After a beat fires, no
     // subsequent beat can fire until this gap elapses. 200 ms allows
