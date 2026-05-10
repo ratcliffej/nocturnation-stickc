@@ -866,6 +866,14 @@ public:
         // and disarms internally). Skipped during pause so the entire
         // deployment stays silent on a single mute press.
         if (ev.music_event != 0 && !paused_) {
+            const char* name = (ev.music_event == 1) ? "DROP"
+                             : (ev.music_event == 2) ? "BREAKDOWN"
+                             : (ev.music_event == 3) ? "BUILD"
+                             :                         "?";
+            Serial.printf("[MUSIC] %s at %lu ms (bass_energy=%.1f)\n",
+                          name,
+                          static_cast<unsigned long>(millis()),
+                          ev.bass_energy);
             broadcaster_.send_music_event(
                 static_cast<transport::espnow::MusicEventType>(ev.music_event));
         }
