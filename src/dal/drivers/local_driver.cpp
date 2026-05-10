@@ -97,12 +97,27 @@ bool LocalDriver::begin() {
     // (Epic 4.6 Diagnostic UI, Epic 4.7 modulators) without paying
     // for what they don't need.
     //
+    // Per-frame the BeatDetector runs over the spectrum frame and
+    // stamps is_beat onto AudioFrameEvent so orchestration consumers
+    // (Master + TestMode in mode_machine.cpp) gate their per-beat
+    // actions on the detector's output rather than re-running their
+    // own threshold logic.
+    //
     // The mic is NOT started here - orchestration controls lifecycle
     // via DAL::start_audio_input / stop_audio_input, which dispatches
     // into start_audio_input() below.
     if (auto* mic = hal::HAL::mic()) {
         mic->set_frame_callback([](const hal::AudioFrame& frame) {
-            // Band-summary event: 3-band B/M/T + 8-band perceptual.
+            // Run the beat detector over the spectrum frame. Build a
+            // SpectrumFrame view for the detector; then we'll fan the
+            // same magnitudes into the SpectrumFrameEvent below.
+            analyser::SpectrumFrame sf;
+            for (size_t i = 0; i < analyser::kSpectrumBands; ++i) {
+                sf.magnitudes[i] = frame.spectrum[i];
+            }
+            const bool beat = s_instance.beat_detector_.process(sf, frame.timestamp_ms);
+
+            // Band-summary event: 3-band B/M/T + 8-band perceptual + is_beat.
             AudioFrameEvent af;
             af.timestamp_ms  = frame.timestamp_ms;
             af.bass_energy   = frame.bass_energy;
@@ -117,16 +132,17 @@ bool LocalDriver::begin() {
             af.presence      = frame.presence;
             af.air           = frame.air;
             af.overall_rms   = frame.overall_rms;
+            af.is_beat       = beat;
             DAL::deliver_audio_frame("local", af);
 
             // Spectrum-frame event: 32 log-spaced magnitudes. Master-
             // local; Epic 4.7 wires effects-side consumers.
-            SpectrumFrameEvent sf;
-            sf.timestamp_ms = frame.timestamp_ms;
+            SpectrumFrameEvent sfe;
+            sfe.timestamp_ms = frame.timestamp_ms;
             for (size_t i = 0; i < SpectrumFrameEvent::kBands; ++i) {
-                sf.magnitudes[i] = frame.spectrum[i];
+                sfe.magnitudes[i] = frame.spectrum[i];
             }
-            DAL::deliver_spectrum_frame("local", sf);
+            DAL::deliver_spectrum_frame("local", sfe);
         });
         any_capability_wired = true;
     }

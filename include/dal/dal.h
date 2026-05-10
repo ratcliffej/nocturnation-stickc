@@ -156,6 +156,14 @@ struct AudioFrameEvent {
     float    air           = 0.0f;
 
     float    overall_rms   = 0.0f;
+
+    // True if the analyser's BeatDetector fired a beat candidate on
+    // this frame (Epic 4.5 Block 3). Orchestration consumers gate
+    // their per-beat actions on this flag rather than running their
+    // own flux-threshold logic - the detector is self-calibrating
+    // and produces equivalent behaviour across hosts with different
+    // mic SNR.
+    bool     is_beat       = false;
 };
 
 // 32-band log-spaced spectrum frame, master-local. Delivered alongside

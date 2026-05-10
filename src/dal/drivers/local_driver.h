@@ -13,6 +13,7 @@
 
 #pragma once
 
+#include "dal/analyser/beat_detector.h"
 #include "dal/dal.h"
 
 namespace nocturnation {
@@ -121,6 +122,13 @@ private:
 
     uint32_t  last_render_ms_   = 0;
     static constexpr uint32_t kFramePeriodMs = 33;   // ~30 Hz cap
+
+    // Sub-band adaptive-threshold beat detector. Driven from the mic
+    // frame callback, one update per FFT cycle. The result is stamped
+    // onto each AudioFrameEvent's is_beat field so orchestration
+    // consumers (mode_machine's Master and TestMode audio paths) can
+    // act on a beat without re-running their own threshold logic.
+    analyser::BeatDetector beat_detector_;
 };
 
 // Singleton accessor used by DAL::begin() to register the driver.

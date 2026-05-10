@@ -825,6 +825,15 @@ public:
             return;
         }
 
+        // Track flux + baseline for the audio meter display only -
+        // beat firing is now decided by the DAL analyser's
+        // BeatDetector which consumes the 32-band spectrum frame
+        // (Epic 4.5 Block 3). Self-calibrating threshold per sub-band
+        // means the same ev.is_beat semantics hold across Plus2 and S3
+        // regardless of mic SNR. The flux/baseline values are still
+        // useful as a "what the old single-threshold detector would
+        // have seen" diagnostic on the meter strip; they have no
+        // bearing on which frames fire beats.
         float flux = ev.bass_energy - prev_bass_energy_;
         if (flux < 0) flux = 0;
         prev_bass_energy_ = ev.bass_energy;
@@ -834,10 +843,7 @@ public:
                        + flux * kBaselineAlpha;
 
         const uint32_t now = millis();
-        const bool is_beat = flux > baseline_flux_ * kBeatMultiplier
-                          && flux > kFluxFloor
-                          && (now - last_beat_ms_) > kBeatRefractoryMs;
-        if (!is_beat) return;
+        if (!ev.is_beat) return;
 
         // BPM tracking: record IBI before updating last_beat_ms_.
         if (last_beat_ms_ > 0) {
@@ -2917,13 +2923,14 @@ private:
             }
         }
 
-        // Beat detection - same constants as AutonomousMaster so what you
-        // see here matches what would fire in Master mode. No IR fires.
+        // Beat firing now driven by the DAL analyser's BeatDetector
+        // (Epic 4.5 Block 3), so what you see here matches exactly what
+        // would fire in Master mode. The flux/baseline tracking below
+        // remains for the diagnostic meter strip - it shows what the
+        // legacy single-threshold detector would have seen at this
+        // frame, decoupled from the actual beat decision.
         constexpr float kVolumeGate     = 500.0f;
         constexpr float kBaselineAlpha  = 0.02f;
-        constexpr float kBeatMultiplier = 2.5f;
-        constexpr float kFluxFloor      = 2000.0f;
-        constexpr uint32_t kRefractoryMs = 200;
 
         if (ev.overall_rms < kVolumeGate) {
             audio_prev_bass_ = 0.0f;
@@ -2937,10 +2944,7 @@ private:
                              + flux * kBaselineAlpha;
 
         const uint32_t now = millis();
-        const bool is_beat = flux > audio_baseline_flux_ * kBeatMultiplier
-                          && flux > kFluxFloor
-                          && (now - audio_last_beat_ms_) > kRefractoryMs;
-        if (!is_beat) return;
+        if (!ev.is_beat) return;
 
         if (audio_last_beat_ms_ > 0) {
             const uint32_t ibi = now - audio_last_beat_ms_;
