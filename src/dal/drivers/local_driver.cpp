@@ -1,5 +1,7 @@
 #include "local_driver.h"
 #include "hal/hal.h"
+#include "hal/input_action.h"
+#include "hal/input_action_mapper_2btn.h"
 #include "pixmob_protocol.h"
 
 #include <cstdlib>       // std::rand() for chance roll
@@ -61,6 +63,18 @@ inline uint16_t rgb888_to_rgb565(uint8_t r, uint8_t g, uint8_t b) {
                                | ((g >> 2) << 5)
                                |  (b >> 3));
 }
+
+// Singleton input-action mapper for the 2-button hosts (StickC Plus2 +
+// S3). Constructed on first access so its Emit lambda is wired before
+// any button event arrives. A future Tildagon backend would replace
+// this with its own 6-button mapper at the same wiring site.
+hal::InputActionMapper2Btn& input_mapper() {
+    static hal::InputActionMapper2Btn instance(
+        [](const hal::InputEvent& ev) {
+            DAL::deliver_input_action("local", ev);
+        });
+    return instance;
+}
 }  // namespace
 
 LocalDriver* local_driver_instance() { return &s_instance; }
@@ -80,10 +94,25 @@ bool LocalDriver::begin() {
 
     // Input: buttons. Register a HAL callback that bridges button events
     // up to DAL subscribers via deliver_button_press("local", ...).
+    //
+    // Each physical button gesture fires both events: the raw
+    // ButtonPressEvent (existing surface; modes that haven't migrated to
+    // semantic actions keep working unchanged) and the semantic
+    // InputEvent emitted by the InputActionMapper2Btn. Visualisations
+    // and overlay UIs in Block 5+ subscribe to the semantic surface so
+    // they're forward-compatible with hosts that have a different
+    // button layout (Tildagon, future custom hardware) without code
+    // changes.
+    //
+    // The mapper is the 2-button variant - shared by the StickC Plus2
+    // and S3 backends. A future Tildagon HAL would construct its own
+    // mapper here (e.g. InputActionMapper6Btn) emitting the same
+    // semantic surface but using all six physical buttons.
     if (auto* buttons = hal::HAL::buttons()) {
         buttons->set_callback([](hal::ButtonId id, hal::ButtonEvent kind) {
             ButtonPressEvent ev{id, kind};
             DAL::deliver_button_press("local", ev);
+            input_mapper().on_button_event(id, kind, now_ms());
         });
         any_capability_wired = true;
     }

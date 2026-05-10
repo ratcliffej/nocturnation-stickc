@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <functional>
 #include "hal/hal.h"
+#include "hal/input_action.h"
 #include "pixmob_protocol.h"
 
 namespace nocturnation {
@@ -194,6 +195,13 @@ struct ButtonPressEvent {
     hal::ButtonEvent kind;
 };
 
+// Semantic input event - the host's input mapper translates raw
+// ButtonPressEvents into these so visualisations and overlay UIs run
+// unchanged across hosts with different button layouts. Aliased from
+// the HAL definition so app code can stay on dal::InputEvent without
+// pulling hal/input_action.h directly.
+using InputEvent = hal::InputEvent;
+
 struct EspNowInboundEvent {
     uint32_t       timestamp_ms;
     uint8_t        peer_mac[6];
@@ -355,12 +363,14 @@ public:
     using AudioFrameCallback     = std::function<void(const char* source, const AudioFrameEvent&)>;
     using SpectrumFrameCallback  = std::function<void(const char* source, const SpectrumFrameEvent&)>;
     using ButtonPressCallback    = std::function<void(const char* source, const ButtonPressEvent&)>;
+    using InputActionCallback    = std::function<void(const char* source, const hal::InputEvent&)>;
     using EspNowInboundCallback  = std::function<void(const char* source, const EspNowInboundEvent&)>;
     using DmxInboundCallback     = std::function<void(const char* source, const DmxInboundEvent&)>;
 
     static bool subscribe_audio_frames     (const char* target, AudioFrameCallback    cb);
     static bool subscribe_spectrum_frames  (const char* target, SpectrumFrameCallback cb);
     static bool subscribe_button_presses   (const char* target, ButtonPressCallback   cb);
+    static bool subscribe_input_actions    (const char* target, InputActionCallback   cb);
     static bool subscribe_esp_now_inbound  (const char* target, EspNowInboundCallback cb);
     static bool subscribe_dmx_inbound      (const char* target, DmxInboundCallback    cb);
 
@@ -403,6 +413,7 @@ public:
     static void deliver_audio_frame      (const char* source, const AudioFrameEvent&);
     static void deliver_spectrum_frame   (const char* source, const SpectrumFrameEvent&);
     static void deliver_button_press     (const char* source, const ButtonPressEvent&);
+    static void deliver_input_action     (const char* source, const hal::InputEvent&);
     static void deliver_esp_now_inbound  (const char* source, const EspNowInboundEvent&);
     static void deliver_dmx_inbound      (const char* source, const DmxInboundEvent&);
 };

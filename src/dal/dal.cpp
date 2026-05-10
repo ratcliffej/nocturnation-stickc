@@ -69,11 +69,13 @@ size_t  s_driver_count = 0;
 Subscriber<DAL::AudioFrameCallback>    s_audio_subs[kMaxSubscribersEach];
 Subscriber<DAL::SpectrumFrameCallback> s_spectrum_subs[kMaxSubscribersEach];
 Subscriber<DAL::ButtonPressCallback>   s_button_subs[kMaxSubscribersEach];
+Subscriber<DAL::InputActionCallback>   s_input_subs[kMaxSubscribersEach];
 Subscriber<DAL::EspNowInboundCallback> s_esp_subs[kMaxSubscribersEach];
 Subscriber<DAL::DmxInboundCallback>    s_dmx_subs[kMaxSubscribersEach];
 size_t s_audio_sub_count    = 0;
 size_t s_spectrum_sub_count = 0;
 size_t s_button_sub_count   = 0;
+size_t s_input_sub_count    = 0;
 size_t s_esp_sub_count      = 0;
 size_t s_dmx_sub_count      = 0;
 
@@ -177,6 +179,7 @@ void DAL::begin() {
     s_audio_sub_count    = 0;
     s_spectrum_sub_count = 0;
     s_button_sub_count   = 0;
+    s_input_sub_count    = 0;
     s_esp_sub_count      = 0;
     s_dmx_sub_count      = 0;
 
@@ -346,6 +349,18 @@ bool DAL::subscribe_button_presses(const char* target, ButtonPressCallback cb) {
     return true;
 }
 
+// Input actions are derived from button presses by the host's input
+// mapper - same capability gate as subscribe_button_presses, since a
+// host that has buttons is the host that emits InputActions.
+bool DAL::subscribe_input_actions(const char* target, InputActionCallback cb) {
+    if (!target) return false;
+    const DeviceProfile* p = profile_of(target);
+    if (!p || !p->has_input(CapabilityId::ButtonPress)) return false;
+    if (s_input_sub_count >= kMaxSubscribersEach) return false;
+    s_input_subs[s_input_sub_count++] = Subscriber<InputActionCallback>{target, cb};
+    return true;
+}
+
 bool DAL::subscribe_esp_now_inbound(const char* target, EspNowInboundCallback cb) {
     if (!target) return false;
     const DeviceProfile* p = profile_of(target);
@@ -455,6 +470,15 @@ void DAL::deliver_button_press(const char* source, const ButtonPressEvent& ev) {
     for (size_t i = 0; i < s_button_sub_count; ++i) {
         if (std::strcmp(s_button_subs[i].target, source) == 0) {
             s_button_subs[i].cb(source, ev);
+        }
+    }
+}
+
+void DAL::deliver_input_action(const char* source, const hal::InputEvent& ev) {
+    if (!source) return;
+    for (size_t i = 0; i < s_input_sub_count; ++i) {
+        if (std::strcmp(s_input_subs[i].target, source) == 0) {
+            s_input_subs[i].cb(source, ev);
         }
     }
 }
