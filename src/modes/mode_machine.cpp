@@ -481,8 +481,10 @@ struct EspNowBroadcaster {
         const uint32_t now = millis();
         const uint32_t gap = now - last_tx_ms_;
         if (gap < kHeartbeatPeriodMs) return false;
+#ifdef ARDUINO
         Serial.printf("[HBEAT] firing after %lu ms gap since last TX\n",
                       static_cast<unsigned long>(gap));
+#endif
         send_heartbeat();
         return true;
     }
@@ -869,6 +871,7 @@ public:
         // and disarms internally). Skipped during pause so the entire
         // deployment stays silent on a single mute press.
         if (ev.music_event != 0 && !paused_) {
+#ifdef ARDUINO
             const char* name = (ev.music_event == 1) ? "DROP"
                              : (ev.music_event == 2) ? "BREAKDOWN"
                              : (ev.music_event == 3) ? "BUILD"
@@ -877,6 +880,7 @@ public:
                           name,
                           static_cast<unsigned long>(millis()),
                           ev.bass_energy);
+#endif
             broadcaster_.send_music_event(
                 static_cast<transport::espnow::MusicEventType>(ev.music_event));
         }
@@ -896,21 +900,28 @@ public:
         }
         last_beat_ms_ = now;
 
-        // Broadcast to any slaves over ESP-NOW. Two frames per beat:
-        //   - BEAT_DETECTED carries strength + BPM as metadata for any
-        //     slave that wants to drive its own colour scheme (e.g. a
-        //     constellation art piece) or display a BPM readout.
-        //   - LIGHT_COMMAND carries the exact RGB + envelope the master's
-        //     local IR fire used, so a slave that wants to be a literal
-        //     "extra light" in the show can render the same colour with
-        //     the same envelope on its screen.
+        // Broadcast LIGHT_COMMAND to any slaves over ESP-NOW. Carries
+        // the exact RGB + envelope the master's local IR fire used, so
+        // a slave can render the same colour with the same envelope on
+        // its screen and be a literal "extra light" in the show.
+        //
+        // BEAT_DETECTED is intentionally NOT broadcast. The wire format
+        // still defines it (transport::espnow::MessageType::BeatDetected
+        // = 0x01) for forward compatibility, but no current slave
+        // consumes it - all show-rendering on the slave side runs off
+        // LIGHT_COMMAND, which is enough. Sending BEAT_DETECTED too
+        // doubled the per-beat airtime (each frame burns ~3 retransmits
+        // per the Block 5 redundancy strategy) for no visible benefit.
+        // If a future slave needs BPM metadata for, say, a numeric
+        // readout, the right shape is a textual / scalar message type
+        // distinct from the show-effect path - not BEAT_DETECTED.
+        //
         // send is async at the radio layer so this returns quickly; the
         // transmission overlaps with the local screen flash + IR fire
         // below. Skipped when paused so the entire deployment goes
         // silent on a single mute press; the periodic heartbeat keeps
         // slaves' master-loss detection from tripping during a pause.
         if (!paused_) {
-            broadcaster_.send_beat(current_level_, estimated_bpm_);
             uint8_t r=0, g=0, b=0;
             colour_to_rgb(colour_, r, g, b);
             broadcaster_.send_light_command(
