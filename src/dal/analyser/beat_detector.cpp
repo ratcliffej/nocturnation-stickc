@@ -38,22 +38,39 @@ bool BeatDetector::process(const SpectrumFrame& frame, uint32_t now_ms) {
 
         if (!in_refractory) {
             for (size_t b = 0; b < cfg_.watch_count; ++b) {
-                // Mean across the window.
-                float sum = 0.0f;
-                for (size_t i = 0; i < window; ++i) sum += history_[b][i];
-                const float mean = sum / static_cast<float>(window);
-
-                // Variance, then std dev. We use sample variance
-                // (divide by window) rather than unbiased (window-1)
-                // because at small windows the bias correction is
-                // negligible compared to the FFT noise floor and the
-                // simpler form avoids a divide-by-zero edge case.
-                float sq_diff_sum = 0.0f;
+                // Single-pass mean + variance via Welford's online
+                // algorithm. Combines the two history walks (one for
+                // mean, one for sum-of-squared-deviations) into a
+                // single pass, halving the per-band memory traffic
+                // on the audio hot path. We still report sample
+                // variance (M2 / window) rather than unbiased
+                // (M2 / (window - 1)) so the result matches the
+                // pre-Welford behaviour, sub-LSB float reordering
+                // aside.
+                //
+                // Welford recurrence (Knuth TAOCP vol 2 / Welford 1962):
+                //   for each x_i in the window (i = 1..window):
+                //     n     = i
+                //     delta = x_i - mean
+                //     mean += delta / n
+                //     M2   += delta * (x_i - mean_new)
+                //   variance_population = M2 / window
+                //
+                // Output is variance / std_dev numerically equivalent
+                // to the prior two-pass form within float precision;
+                // the existing beat-detector tests are the regression
+                // gate (TEST_ASSERT_EQUAL_FLOAT, tolerance well above
+                // sub-LSB reordering noise).
+                float mean = 0.0f;
+                float m2   = 0.0f;
                 for (size_t i = 0; i < window; ++i) {
-                    const float d = history_[b][i] - mean;
-                    sq_diff_sum += d * d;
+                    const float x     = history_[b][i];
+                    const float delta = x - mean;
+                    mean += delta / static_cast<float>(i + 1);
+                    const float delta2 = x - mean;
+                    m2 += delta * delta2;
                 }
-                const float variance = sq_diff_sum / static_cast<float>(window);
+                const float variance = m2 / static_cast<float>(window);
                 const float std_dev  = std::sqrt(variance);
 
                 const float threshold = mean + cfg_.threshold_k * std_dev;
