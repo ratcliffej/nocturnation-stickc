@@ -175,12 +175,21 @@ bool LocalDriver::begin() {
 
             // Spectrum-frame event: 32 log-spaced magnitudes. Master-
             // local; Epic 4.7 wires effects-side consumers.
-            SpectrumFrameEvent sfe;
-            sfe.timestamp_ms = frame.timestamp_ms;
-            for (size_t i = 0; i < SpectrumFrameEvent::kBands; ++i) {
-                sfe.magnitudes[i] = frame.spectrum[i];
+            //
+            // Epic 4.6 Block 7 (pipeline gating): skip the per-frame
+            // 32-float copy + delivery dispatch when nothing subscribes.
+            // The underlying frame.spectrum still gets computed by the
+            // mic backend and consumed in-pipeline by BeatDetector (above),
+            // so this guard only elides the orphan fan-out - no observable
+            // behaviour change.
+            if (DAL::has_spectrum_frame_subscribers()) {
+                SpectrumFrameEvent sfe;
+                sfe.timestamp_ms = frame.timestamp_ms;
+                for (size_t i = 0; i < SpectrumFrameEvent::kBands; ++i) {
+                    sfe.magnitudes[i] = frame.spectrum[i];
+                }
+                DAL::deliver_spectrum_frame("local", sfe);
             }
-            DAL::deliver_spectrum_frame("local", sfe);
         });
         any_capability_wired = true;
     }

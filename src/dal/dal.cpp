@@ -380,6 +380,23 @@ bool DAL::subscribe_dmx_inbound(const char* target, DmxInboundCallback cb) {
 }
 
 // =============================================================================
+// Subscriber-count queries (Epic 4.6 Block 7 - pipeline gating)
+// =============================================================================
+//
+// The LocalDriver's mic-frame callback uses has_spectrum_frame_subscribers()
+// to decide whether to assemble and dispatch a SpectrumFrameEvent. The
+// underlying frame.spectrum FFT roll-up still runs unconditionally because
+// BeatDetector consumes it in-pipeline.
+
+size_t DAL::spectrum_frame_subscriber_count() {
+    return s_spectrum_sub_count;
+}
+
+bool DAL::has_spectrum_frame_subscribers() {
+    return s_spectrum_sub_count > 0;
+}
+
+// =============================================================================
 // Input lifecycle
 // =============================================================================
 

@@ -196,6 +196,62 @@ static void test_button_press_delivered_to_subscriber(void) {
     TEST_ASSERT_EQUAL_INT(1, call_count);
 }
 
+// -----------------------------------------------------------------------------
+// Spectrum-frame subscriber-count query (Epic 4.6 Block 7 - pipeline gating)
+// -----------------------------------------------------------------------------
+//
+// LocalDriver's mic-frame callback uses DAL::has_spectrum_frame_subscribers()
+// to skip the SpectrumFrameEvent fan-out when nothing's listening. The test
+// HAL above declares Mic without AnalyserSpectrumFrame, so the composed host
+// profile in this env does NOT have SpectrumFrame as an input. That means
+// subscribe_spectrum_frames("local", ...) would fail the capability gate
+// here - the count assertions below register against a fresh device profile
+// that does declare SpectrumFrame instead, exercising the underlying counter
+// directly.
+
+static void test_no_spectrum_subscribers_after_begin(void) {
+    TEST_ASSERT_EQUAL_size_t(0, dal::DAL::spectrum_frame_subscriber_count());
+    TEST_ASSERT_FALSE(dal::DAL::has_spectrum_frame_subscribers());
+}
+
+static const dal::CapabilityId kSpectrumInputs[] = {
+    dal::CapabilityId::SpectrumFrame,
+};
+static const dal::DeviceProfile kSpectrumProfile = {
+    /* type_id                  = */ "SpectrumTestDevice",
+    /* version                  = */ "1.0",
+    /* transport                = */ "spectrum-test",
+    /* output_capabilities      = */ nullptr,
+    /* output_capability_count  = */ 0,
+    /* input_capabilities       = */ kSpectrumInputs,
+    /* input_capability_count   = */ 1,
+    /* supports_groups          = */ false,
+    /* max_group_id             = */ 0,
+};
+
+static void test_spectrum_subscriber_count_increments(void) {
+    TEST_ASSERT_TRUE(dal::DAL::register_device("spec-dev", &kSpectrumProfile, 0));
+    TEST_ASSERT_EQUAL_size_t(0, dal::DAL::spectrum_frame_subscriber_count());
+    TEST_ASSERT_FALSE(dal::DAL::has_spectrum_frame_subscribers());
+
+    auto cb = [](const char*, const dal::SpectrumFrameEvent&) {};
+    TEST_ASSERT_TRUE(dal::DAL::subscribe_spectrum_frames("spec-dev", cb));
+    TEST_ASSERT_EQUAL_size_t(1, dal::DAL::spectrum_frame_subscriber_count());
+    TEST_ASSERT_TRUE(dal::DAL::has_spectrum_frame_subscribers());
+}
+
+static void test_spectrum_subscriber_count_multiple(void) {
+    TEST_ASSERT_TRUE(dal::DAL::register_device("spec-dev", &kSpectrumProfile, 0));
+    auto cb1 = [](const char*, const dal::SpectrumFrameEvent&) {};
+    auto cb2 = [](const char*, const dal::SpectrumFrameEvent&) {};
+    auto cb3 = [](const char*, const dal::SpectrumFrameEvent&) {};
+    TEST_ASSERT_TRUE(dal::DAL::subscribe_spectrum_frames("spec-dev", cb1));
+    TEST_ASSERT_TRUE(dal::DAL::subscribe_spectrum_frames("spec-dev", cb2));
+    TEST_ASSERT_TRUE(dal::DAL::subscribe_spectrum_frames("spec-dev", cb3));
+    TEST_ASSERT_EQUAL_size_t(3, dal::DAL::spectrum_frame_subscriber_count());
+    TEST_ASSERT_TRUE(dal::DAL::has_spectrum_frame_subscribers());
+}
+
 static void test_active_device_listing(void) {
     dal::DAL::register_device("a", &dal::profiles::PixMobX4Gen3_1, 1);
     dal::DAL::register_device("b", &dal::profiles::PixMobX4Gen3_1, 2);
@@ -233,6 +289,9 @@ int main(int, char**) {
     RUN_TEST(test_subscribe_unknown_target_fails);
     RUN_TEST(test_audio_frame_delivered_to_subscriber);
     RUN_TEST(test_button_press_delivered_to_subscriber);
+    RUN_TEST(test_no_spectrum_subscribers_after_begin);
+    RUN_TEST(test_spectrum_subscriber_count_increments);
+    RUN_TEST(test_spectrum_subscriber_count_multiple);
     RUN_TEST(test_active_device_listing);
     return UNITY_END();
 }

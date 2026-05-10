@@ -375,6 +375,19 @@ public:
     static bool subscribe_dmx_inbound      (const char* target, DmxInboundCallback    cb);
 
     // -------------------------------------------------------------------------
+    // Subscriber-count queries (Epic 4.6 Block 7 - pipeline gating).
+    //
+    // Drivers fan-out spectrum frames per FFT cycle; the LocalDriver guards
+    // the SpectrumFrameEvent assembly + dispatch on has_spectrum_frame_subscribers()
+    // so the per-frame 32-float copy and delivery loop are skipped when
+    // nothing is listening. The underlying FFT roll-up that produces
+    // frame.spectrum still runs unconditionally because BeatDetector
+    // consumes it in-pipeline as a behaviour-preserved Epic 4.5 surface.
+    // -------------------------------------------------------------------------
+    static size_t spectrum_frame_subscriber_count();
+    static bool   has_spectrum_frame_subscribers();
+
+    // -------------------------------------------------------------------------
     // Input lifecycle. Some inputs (audio mic) need to be enabled/disabled by
     // orchestration; sample-rate / fft-size hint the underlying backend if it
     // supports configurable parameters. Returns false on unknown target,

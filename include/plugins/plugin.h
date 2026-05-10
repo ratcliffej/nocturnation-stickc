@@ -103,12 +103,19 @@ struct PropertyDef {
 // PowerProfile - what a plugin needs from the audio + display pipeline
 // =============================================================================
 //
-// Block 7 ("Pipeline gating") wires the analyser to skip spectrum FFT
-// and 8-band summary computation when no active consumer needs them.
+// Block 7 ("Pipeline gating") uses these flags to decide which optional
+// per-frame surfaces the framework subscribes to on the plugin's behalf.
 // Plugins declare their needs here.
 struct PowerProfile {
     bool     needs_audio_frames    = true;   // most vis/bindings need beats
-    bool     needs_spectrum_frame  = false;  // 32-band spectrum: opt-in
+    bool     needs_spectrum_frame  = false;  // when true, framework subscribes to
+                                             //  SpectrumFrameEvent. With no
+                                             //  subscriber the per-frame fan-out
+                                             //  copy + dispatch is skipped in
+                                             //  LocalDriver. The underlying FFT
+                                             //  roll-up still runs because
+                                             //  BeatDetector consumes it
+                                             //  in-pipeline.
     bool     needs_8band_summary   = false;  // perceptual bands: opt-in
     uint16_t lcd_refresh_hz_max    = 20;     // most vis. Static 1.
     uint16_t tick_hz               = 0;      // 0 = audio-driven only. >0 = framework calls tick() at this rate.
