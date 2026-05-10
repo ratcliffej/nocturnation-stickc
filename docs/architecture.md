@@ -5,10 +5,10 @@ notion_url: https://www.notion.so/357bd0677405800b891beab0f4e0a976
 notion_id: 357bd0677405800b891beab0f4e0a976
 last_synced: 2026-05-10
 sync_direction: bidirectional
-notion_status: synced (v0.21, slave-only Tildagon + companion-app forward direction)
+notion_status: synced (v0.22, capability-aware analyser + sub-band beat detection + drop detection)
 ---
 
-**Status:** Draft v0.21 - early architecture document, expect substantial revision.
+**Status:** Draft v0.22 - early architecture document, expect substantial revision.
 **Maintainer:** Jason Ratcliffe
 ---
 ## 1. Vision
@@ -87,12 +87,12 @@ The system is a single conceptual pipeline: events flow in, light commands flow 
 <tr>
 <td>**M5StickS3**</td>
 <td>Preferred reference platform; controller, IR Tx + Rx node, ESP-NOW peer</td>
-<td>ESP32-S3-PICO-1-N8R8 (Xtensa LX7). Built-in IR LED (GPIO 46) and IR receiver (GPIO 42), ES8311 audio codec + MEMS mic, 1.14" ST7789P3 screen, 2 buttons + PMIC-managed power, BMI270 IMU, 8 MB PSRAM, native USB-OTG, BLE 5.0. Project's future reference platform now that the Plus2 is EOL.</td>
+<td>ESP32-S3-PICO-1-N8R8 (Xtensa LX7). Built-in IR LED (GPIO 46) and IR receiver (GPIO 42), ES8311 audio codec + MEMS mic, 1.14" ST7789P3 screen, 2 buttons + PMIC-managed power, BMI270 IMU, 8 MB PSRAM, native USB-OTG, BLE 5.0. Project's future reference platform now that the Plus2 is EOL. Audio analyser declares `beat_detection`, `drop_detection`, `spectrum_frame`, `band_summary` (Epic 4.5); declares operating points `[(16000, 512), (32000, 1024), (48000, 1024), (48000, 2048)]` of which only the canonical default is implemented in v0.22; HW-accelerated FFT via esp-dsp.</td>
 </tr>
 <tr>
 <td>**M5StickC Plus2** (legacy)</td>
 <td>Solo controller, IR transmitter node</td>
-<td>ESP32-PICO-V3-02 (Xtensa LX6). Built-in IR LED (GPIO 19), PDM mic via I2S, screen, 2 buttons + AXP192-managed power, MPU6886 IMU, BLE 4.2. Manufacturer EOL; supported as legacy for existing deployments. Same firmware codebase via the HAL backend split.</td>
+<td>ESP32-PICO-V3-02 (Xtensa LX6). Built-in IR LED (GPIO 19), PDM mic via I2S, screen, 2 buttons + AXP192-managed power, MPU6886 IMU, BLE 4.2. Manufacturer EOL; supported as legacy for existing deployments. Same firmware codebase via the HAL backend split. Audio analyser declares the same feature set as the S3 (`beat_detection`, `drop_detection`, `spectrum_frame`, `band_summary`); declares one operating point `[(16000, 512)]` (codec-limited); ANSI-fallback FFT via arduinoFFT.</td>
 </tr>
 <tr>
 <td>**PixMob Aurora-class bracelets**</td>
@@ -280,7 +280,7 @@ Offset  Field             Size  Notes
 <tr>
 <td>0x06</td>
 <td>MUSIC_EVENT</td>
-<td>1 byte: `event_type: u8` (1=DROP, 2=BREAKDOWN, 3=BUILD reserved). Macro-level musical events fired by the master's audio analyser - drops into chorus, breakdowns, etc. - on a separate longer-window pass than per-beat detection. Consumed by the effects pipeline to trigger visually distinctive transitions (whiteouts, palette swaps, brief 100% intensity holds). Receivers that don't understand 0x06 simply ignore it (forward-compatible). Reserved by spec; not yet implemented - lands in Epic 4.5 alongside the sub-band adaptive-threshold beat detection algorithm.</td>
+<td>1 byte: `event_type: u8` (1=DROP, 2=BREAKDOWN, 3=BUILD reserved). Macro-level musical events fired by the master's audio analyser - drops into chorus, breakdowns, etc. - on a separate longer-window pass than per-beat detection. Consumed by the effects pipeline to trigger visually distinctive transitions (whiteouts, palette swaps, brief 100% intensity holds). Receivers that don't understand the event_type byte decode it as Unknown and silently drop the frame (forward-compatible). DROP and BREAKDOWN producers shipped in Epic 4.5; BUILD remains reserved for Epic 4.7's section-detection state machine.</td>
 </tr>
 <tr>
 <td>0xFF</td>
@@ -400,75 +400,47 @@ For PixMob bracelets specifically, group ID is set via the `buildSetGroupId` IR 
 Note that group IDs and the per-device addressing flagged in §4.5 are complementary, not alternative: groups handle coarse "this section vs that section" coordination cheaply, per-device addressing (if and when implemented) handles surgical positioning. A future commercial deployment might use both - group 4 for VIP front rows with per-device addressing within them, group 0 for everyone else as broadcast targets.
 ---
 ## 5. Audio analysis pipeline
-Currently implemented on M5StickC Plus2 in C++. Architecture is platform-portable.
+The analyser is a HAL+DAL capability cluster. Each host's HAL provides FFT magnitudes; the DAL analyser composes them into typed events. Implementation: vendor-neutral pure functions in `src/dal/analyser/` linking unchanged into Plus2 (arduinoFFT), S3 (esp-dsp), and native test builds.
 ### 5.1 Pipeline stages
-1. **Mic capture**: I2S PDM mic, 16 kHz mono, 512-sample windows (~32 ms).
-2. **Volume gate**: mean absolute amplitude; if below `VOLUME_GATE`, skip remaining stages and reset flux state.
-3. **FFT**: 512-point real FFT with Hamming window. Produces 256 magnitude bins.
-4. **Bass-band sum**: bins 2-7 (≈62-220 Hz), giving a single bass-energy scalar.
-5. **Spectral flux**: rectified positive change in bass energy from previous window.
-6. **Adaptive baseline**: asymmetric EMA of flux. Fast attack, slow release.
-7. **Beat decision**: flux > baseline × multiplier AND flux > absolute floor AND time since last beat > refractory.
-8. **BPM tracking**: rolling buffer of inter-beat intervals (IBIs); reject outliers (50-200 BPM range); compute mean.
-### 5.2 Tuning parameters
-<table header-row="true">
-<tr>
-<td>Parameter</td>
-<td>Default</td>
-<td>Notes</td>
-</tr>
-<tr>
-<td>`SAMPLE_RATE`</td>
-<td>16000 Hz</td>
-<td>Standard for ESP32 PDM mics</td>
-</tr>
-<tr>
-<td>`FFT_SIZE`</td>
-<td>512</td>
-<td>~32 ms window</td>
-</tr>
-<tr>
-<td>`BASS_BIN_LO` / `_HI`</td>
-<td>2 / 7</td>
-<td>~62-220 Hz</td>
-</tr>
-<tr>
-<td>`VOLUME_GATE`</td>
-<td>200</td>
-<td>Mean abs amplitude threshold</td>
-</tr>
-<tr>
-<td>`BASELINE_ALPHA`</td>
-<td>0.02</td>
-<td>EMA rate for falling baseline</td>
-</tr>
-<tr>
-<td>`BEAT_MULTIPLIER`</td>
-<td>2.5</td>
-<td>flux must exceed baseline × this</td>
-</tr>
-<tr>
-<td>`FLUX_FLOOR`</td>
-<td>2000</td>
-<td>Absolute minimum flux for a beat</td>
-</tr>
-<tr>
-<td>`BEAT_REFRACTORY_MS`</td>
-<td>200</td>
-<td>Minimum gap between detected beats</td>
-</tr>
-<tr>
-<td>`IBI_BUFFER_SIZE`</td>
-<td>8</td>
-<td>Beats averaged for BPM estimate</td>
-</tr>
-</table>
-### 5.3 Future extensions (not yet implemented)
-- **Multi-band onset detection**: separate flux/threshold for snare (1-3 kHz) and hi-hat bands. Highest impact-to-effort upgrade.
-- **Structural detection**: rolling 1-4s energy and onset-density tracking for chorus/build/drop recognition.
-- **Harmonic analysis (chroma features)**: hue mapping to musical key. Borderline feasible on ESP32.
-- **Source separation (HPSS)**: separating drums from melodic content. Likely requires off-device processing.
+1. **Mic capture**: HAL backend records `fft_size` samples at the host's current operating point (default 16 kHz / 512 samples = ~32 ms window).
+2. **FFT**: real FFT with Hamming window producing `fft_size/2` magnitude bins. Plus2 uses arduinoFFT (double precision); S3 uses esp-dsp ANSI fallback (float, hardware-faster than the Plus2 path).
+3. **Band summaries**: the analyser core computes both surfaces in one pass over the magnitudes:
+    - **3-band B/M/T roll-up**: Bass <250 Hz, Mid 250-2000 Hz, Treble 2 kHz - Nyquist. Cheap surface for kick onset and the audio meter.
+    - **8-band perceptual summary** per Audible Genius music-production reference: Mud (0-20 Hz), Sub Bass (20-60), Bass (60-250), Low Mids (250-500), Midrange (500-2k), High Mids (2k-4k), Presence (4k-6k), Air (6k-20k, truncated at Nyquist below 40 kHz sample rates). Internally consistent: 3-band is a strict aggregation of 8-band.
+4. **Spectrum frame**: 32 log-spaced bands covering [30 Hz, Nyquist). Master-local; not broadcast over ESP-NOW (too heavy at FFT rate).
+5. **Beat detection** (sub-band adaptive threshold): per-band rolling history (40 frames ~= 1 s), mean and variance computed continuously, a watched bass-region band's magnitude exceeding (mean + k × std_dev) fires `BEAT_DETECTED`. Self-calibrating per band so hosts with different mic SNR produce equivalent behavioural output. Tuning history captured in [`include/dal/analyser/beat_detector.h`](https://github.com/ratcliffej/nocturnation-stickc/blob/main/include/dal/analyser/beat_detector.h).
+6. **Drop detection** (long-window energy ratio): short window (~2 s) and long window (~10 s) of bass-roll-up energy. `ratio = short_mean / long_mean > 1.8` fires DROP; `< 0.4` fires BREAKDOWN. Arm/disarm gate prevents sustained energy re-firing across cooldown cycles - DROP is a transition event, not a persistent-state event.
+7. **BPM tracking**: rolling buffer of inter-beat intervals at orchestration layer; reject outliers (50-300 BPM range); compute median.
+### 5.2 Capability surface
+A host's analyser declares a flat set of feature flags from the `Capability` enum (see [`include/hal/hal.h`](https://github.com/ratcliffej/nocturnation-stickc/blob/main/include/hal/hal.h)). Lit by Epic 4.5:
+- `AnalyserBeatDetection` - produces BEAT_DETECTED events
+- `AnalyserDropDetection` - produces MUSIC_EVENT (DROP/BREAKDOWN) events
+- `AnalyserSpectrumFrame` - emits 32-band log-spaced SpectrumFrameEvent (master-local)
+- `AnalyserBandSummary` - emits 3-band B/M/T + 8-band perceptual summary
+
+Reserved for Epic 4.7 (declared as enum constants but not lit on any host yet):
+- `AnalyserMultiBandOnset` - SNARE/HIHAT events
+- `AnalyserSpectralCentroid` - continuous centroid descriptor
+- `AnalyserEnergyEnvelope` - continuous smoothed-RMS descriptor
+- `AnalyserSectionDetection` - SECTION_CHANGE events
+### 5.3 Operating points
+Each host's HAL declares a list of valid `(sample_rate_hz, fft_size)` tuples. Plus2 declares one (codec-limited); S3 declares four (capable of higher sample rates and larger FFTs). The DAL exposes `configure_audio_pipeline(sample_rate_hz, fft_size)` for orchestration to pick a host-declared point. Sample rate controls range (Nyquist); FFT size controls resolution.
+
+In Epic 4.5 only the canonical default `(16000, 512)` is implemented across all hosts; non-default operating points return explicit not-supported. Lighting up the higher operating points (notably S3's 48 kHz / 2048 for full Air-band capture and high resolution) is a future Epic. The API is host-agnostic by design - the same surface serves future phone/PC HAL backends without a rewrite.
+
+Band-layout boundaries are specified in Hz, not bin numbers. Bin assignments are computed at runtime from the current operating point so the same code path produces correct mappings whether the analyser runs at 16 kHz / 512 FFT or 48 kHz / 2048 FFT.
+
+`set_band_layout(preset_name)` ships with `hifi+production` as the only implemented preset (3-band B/M/T + 8-band perceptual concurrent). Named alternative presets (`dnb-4band-with-subbass`, `vocal-emphasis`) and arbitrary JSON-defined ranges via Config Mode are reserved for a future Epic; the stub means future Epics extend rather than re-architect.
+### 5.4 Future extensions (not yet implemented)
+- **Multi-band onset detection** (Epic 4.7): separate adaptive-threshold detectors for snare (~200 Hz - 2 kHz) and hi-hat (~5-8 kHz) bands. Each fires its own event type (SNARE_DETECTED 0x07, HIHAT_DETECTED 0x08).
+- **Continuous descriptors** (Epic 4.7): spectral centroid (where energy is concentrated, mapped to hue), energy envelope (smoothed RMS, mapped to brightness), onset density. Carried over the wire as the rate-limited MUSIC_DESCRIPTOR (0x09) message.
+- **Section detection** (Epic 4.7): rolling 4-8s analysis of the continuous descriptors plus onset density to identify verse / chorus / build-up / breakdown / vocals-only / instrumental-break sections. Fires SECTION_CHANGE (0x0A).
+- **Higher operating points**: implement the S3's declared `(32000, 1024)` / `(48000, 1024)` / `(48000, 2048)` points to capture the 6-20 kHz Air band that's truncated at the 16 kHz default. Same Epic likely hosts the phone or PC HAL backend the API surface was designed to be portable to.
+- **Frequency-response calibration**: Config Mode tool that drives a known sweep through a calibration speaker positioned in front of the mic, measures each band's response, and produces a per-host correction curve. Three uses: diagnose mic faults (resonance peaks, dead bands), compensate for raw-response differences across hosts (Plus2 PDM vs S3 ES8311), and provide objective cross-device-consistency verification distinct from the subjective "feel" check Epic 4.5 currently relies on. Stretch: ship factory-calibration curves baked in for the canonical M5 hosts so out-of-the-box deployments get the compensation without per-device measurement.
+- **Harmonic analysis (chroma features)**: hue mapping to musical key. Borderline feasible on ESP32; better suited to a Mac-side bridge.
+- **Source separation (HPSS)**: separating drums from melodic content. Off-device processing.
 - **ML-based beat tracking**: out of scope for embedded; only viable on Mac via bridge.
+- **Haptic / IMU-driven inputs**: the architecture's mic-driven beat detection captures audio energy but not the physical sensation of a crowd jumping in time, the bass thump felt through the body, or the bracelet wearer's own movement. Hosts with IMU capability (Plus2 BMI270 equivalent, S3 BMI270, Tildagon's IMU) could supply an "audience kinetic energy" channel as an analyser-adjacent capability, complementing the audio surface. Not currently scoped to any Epic; flagged as a direction the architecture should remain compatible with.
 ---
 ## 6. Effects catalogue
 The **effect** is the unit of artistic intent that orchestration produces and that drivers translate to hardware. Each effect describes *what* the lights should do, abstracted from *how* a particular device implements it. A single effect renders differently on a PixMob bracelet (RGB+envelope IR command), a Tildagon badge (animation on six addressable LEDs plus optional screen overlay), and a future RGB-strip device (per-pixel state across many LEDs).
@@ -579,8 +551,12 @@ A reasonable default mapping for the orchestration layer:
 <td>Hue Cycle accelerating, brightness rising</td>
 </tr>
 <tr>
-<td>Drop (large bass spike after build, future)</td>
-<td>Strobe Burst + palette switch</td>
+<td>Drop (MUSIC_EVENT 0x06 event_type 1; bass-energy ratio crossing)</td>
+<td>Strobe Burst + palette switch. Producer ships in Epic 4.5; consumer-side effect binding is Epic 4.7 territory.</td>
+</tr>
+<tr>
+<td>Breakdown (MUSIC_EVENT 0x06 event_type 2; sustained low-energy section)</td>
+<td>Fade to dim ambient palette. Same producer/consumer split as Drop.</td>
 </tr>
 <tr>
 <td>Chorus (sustained higher energy, future)</td>
@@ -1044,6 +1020,7 @@ See the Security RFC for the full design.
 - **v0.19** (2026-05-08): added "Multi-show coexistence: why no universe field" subsection to §4.5. Captures the design decision to deliberately *not* add an Art-Net-style universe / scope field to the frame header in v1, and the reasoning (existing source_id and target_group fields can carry the discrimination load; operational discipline handles the multi-show-on-same-channel case adequately; premature wire-format additions are expensive; v2 via EXTENSION message type 0xFF is the migration path if the need turns out to be real). Recorded so future-you doesn't re-debate it.
 - **v0.20** (2026-05-09): added "Forward direction: companion app and mic-less devices" subsection to §4.5. Pulls together three previously-separate forward directions (BLE carrier in §4.1, K-pop seat-mapping above, distance-based effects via RSSI above) into a single coherent product vision: a mic-less NocturNation device paired with a phone companion app that does audio analysis and sends events via BLE. Captures three commercial angles - cheaper hardware/better margins, home-use retention model (the strategically most important one), and seat-capture for surgical effects. Frames as forward direction only, not committed Epic. Walk-before-run priority captured: 4.5 → 4.6 → 4.7 → 5, then revisit. Also updated §10.3 with the QLC+ canonical-professional-path forward direction (recorded earlier in same session); the longer-term roadmap is now properly structured around what the architecture should remain compatible with rather than what's committed to build.
 - **v0.21** (2026-05-10): two refinements. (1) §3.2 Tildagon entry updated to make explicit that the platform is **slave-only** because it has no microphone. The constraint was previously implicit (derivable from the §8.2 capability requirements) but not stated; making it architectural means the Tildagon receiver app design (Epic 5) is unambiguous about scope and the platform is positioned cleanly as a prototype for the future mic-less companion-app device pattern. (2) §8.2 Autonomous Master row updated to make explicit that hosts without a microphone cannot enter Master Mode and the mode-selection menu should not present it as an option on those platforms - removes a potential UX bug in the Tildagon receiver app where Master Mode could be selected and would then fail silently.
+- **v0.22** (2026-05-10): rewrote §5 Audio analysis pipeline to reflect Epic 4.5's capability-aware analyser surface. Headline changes: (1) §5.1 Pipeline stages restructured around the FFT-magnitudes-to-typed-events flow that the new pure-function analyser core in `src/dal/analyser/` produces, including the 8-band perceptual summary (Audible Genius reference) alongside the restandardised 3-band B/M/T roll-up (now <250 / 250-2000 / 2000-Nyquist Hz, evidence-based split-points from the same reference). (2) New §5.2 Capability surface listing the analyser sub-capability flags lit by Epic 4.5 (`AnalyserBeatDetection`, `AnalyserDropDetection`, `AnalyserSpectrumFrame`, `AnalyserBandSummary`) and the four reserved for Epic 4.7. (3) New §5.3 Operating points covering the host-declared `(sample_rate_hz, fft_size)` tuples, `configure_audio_pipeline()` API, Hz-first band layout (bin assignments computed at runtime from the operating point), and `set_band_layout("hifi+production")` default. (4) §5.4 Future extensions reorganised by Epic, adding **frequency-response calibration** as a Config Mode tool that drives a known sweep through a calibration speaker to produce per-host correction curves - three uses: diagnose mic faults, compensate for raw-response differences across hosts, and provide objective cross-device-consistency verification distinct from the subjective "feel" check Epic 4.5 currently relies on. Also adds **haptic / IMU-driven inputs** as an analyser-adjacent direction the architecture should remain compatible with: the audience-jumping kinetic energy and bracelet-wearer movement that audio doesn't capture. (5) §3.1 platform table: Plus2 and S3 entries now declare their analyser feature set + operating points list. (6) §4.3 MUSIC_EVENT row updated from "reserved by spec; not yet implemented" to "DROP and BREAKDOWN producers shipped in Epic 4.5; BUILD reserved for Epic 4.7". (7) §6.3 effects-mapped table: Drop / Breakdown rows updated to reference MUSIC_EVENT 0x06 wire bytes and clarify the Epic 4.5 producer / Epic 4.7 consumer split.
 
 
 
