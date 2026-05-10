@@ -8,7 +8,7 @@ sync_direction: bidirectional
 notion_status: synced (v0.18, Bluetooth + render_fx + slave-as-target updates)
 ---
 
-**Status:** Draft v0.18 - early architecture document, expect substantial revision.
+**Status:** Draft v0.19 - early architecture document, expect substantial revision.
 **Maintainer:** Jason Ratcliffe
 ---
 ## 1. Vision
@@ -89,9 +89,14 @@ The system is a single conceptual pipeline: events flow in, light commands flow 
 <td>Notes</td>
 </tr>
 <tr>
-<td>**M5StickC Plus2**</td>
+<td>**M5StickS3**</td>
+<td>Preferred reference platform; controller, IR Tx + Rx node, ESP-NOW peer</td>
+<td>ESP32-S3-PICO-1-N8R8 (Xtensa LX7). Built-in IR LED (GPIO 46) and IR receiver (GPIO 42), ES8311 audio codec + MEMS mic, 1.14" ST7789P3 screen, 2 buttons + PMIC-managed power, BMI270 IMU, 8 MB PSRAM, native USB-OTG, BLE 5.0. Project's future reference platform now that the Plus2 is EOL.</td>
+</tr>
+<tr>
+<td>**M5StickC Plus2** (legacy)</td>
 <td>Solo controller, IR transmitter node</td>
-<td>Built-in IR LED (GPIO 19), I2S mic, screen, buttons. ESP32-PICO-V3-02. Production-ready firmware exists.</td>
+<td>ESP32-PICO-V3-02 (Xtensa LX6). Built-in IR LED (GPIO 19), PDM mic via I2S, screen, 2 buttons + AXP192-managed power, MPU6886 IMU, BLE 4.2. Manufacturer EOL; supported as legacy for existing deployments. Same firmware codebase via the HAL backend split.</td>
 </tr>
 <tr>
 <td>**PixMob Aurora-class bracelets**</td>
@@ -276,6 +281,11 @@ Offset  Field             Size  Notes
 <td>0x05</td>
 <td>TIME_SYNC</td>
 <td>5 bytes: `days_since_2026: u16`  • `centiseconds_today: u24` (both little-endian). Broadcast by Tier 3 masters at heartbeat rate; carries wall-clock time for cert validity. Tier 0/1/2 receivers may safely ignore. See Security RFC §6.</td>
+</tr>
+<tr>
+<td>0x06</td>
+<td>MUSIC_EVENT</td>
+<td>1 byte: `event_type: u8` (1=DROP, 2=BREAKDOWN, 3=BUILD reserved). Macro-level musical events fired by the master's audio analyser - drops into chorus, breakdowns, etc. - on a separate longer-window pass than per-beat detection. Consumed by the effects pipeline to trigger visually distinctive transitions (whiteouts, palette swaps, brief 100% intensity holds). Receivers that don't understand 0x06 simply ignore it (forward-compatible). Reserved by spec; not yet implemented - lands in Epic 4.5 alongside the sub-band adaptive-threshold beat detection algorithm.</td>
 </tr>
 <tr>
 <td>0xFF</td>

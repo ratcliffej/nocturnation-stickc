@@ -1,10 +1,10 @@
 ---
 title: "Epic 4: ESP-NOW transport on Stick reference platforms (Plus2 + S3, Tier 0)"
-status: In progress
+status: Done
 notion_url: https://www.notion.so/358bd067740581e3afa8fd061b821638
 notion_id: 358bd067740581e3afa8fd061b821638
-notion_status: In progress
-last_synced: 2026-05-08
+notion_status: Done
+last_synced: 2026-05-10
 sync_direction: bidirectional
 ---
 
@@ -416,3 +416,22 @@ Outstanding follow-ups carried into Block 8 / future Epics:
 - esp-dsp `_aes3` SIMD FFT path on S3 - currently using `_ansi` because `_aes3` produced erratic per-bin magnitudes for our packed-real-as-complex input layout. ANSI path is still meaningfully faster than arduinoFFT (float vs double, better cache behaviour); recovering the SIMD win is a focused investigation.
 - Empirical IR radiation patterns: Plus2 IR LED is omnidirectional, S3 is more focused. Useful for deployment planning - operator can stack a Plus2 + S3 in the same venue with the S3 aimed at the dance floor and the Plus2 doing general fill.
 - Epic 4.5 (sub-band adaptive-threshold beat detection) addresses the Plus2/S3 sensitivity divergence that surfaced during Block 3. Proposed but not yet started.
+
+**Closed 2026-05-10**. Blocks 1-7 functionally complete and hardware-verified on Plus2 master + S3 slave. Block 8 (range + stress empirical session) deferred as ready-when-you-are work - it's a venue / outdoor outing rather than bench code, and gates nothing on the Tildagon receiver path or the audio-algorithm work in Epic 4.5. Two-Stick deployment is now a working show platform: Plus2 in AutonomousMaster mode broadcasts beats to PixMob bracelets via IR while ESP-NOW-coordinating a slave Stick that renders the same colour on its screen and forwards IR to its own bracelet group. Test mode broadcasts on the same channel so manual show triggers reach slaves. The two-channel architecture (channel 1 hobby / channel 11 show) provides the social contract for hackspace + festival co-existence; slaves auto-scan with show priority.
+
+Late additions during Block 7 hardware verification (all on the slave side, all NVS-backed and non-default to avoid surprising existing deployments):
+
+- 16-entry `(source_id, sequence_number)` dedup ring catches the master's 3× redundant TX so each logical frame produces exactly one IR fire / one screen paint.
+- `transport::SignalQuality` sequence-loss-rate tracker (transport-agnostic, 11 native unit tests) drives a 4-bar quality indicator that reflects delivered fidelity rather than RSSI - shipped instead of an RSSI sniffer because the latter would burn battery in dense venues like EMF and gives a less useful signal anyway.
+- 12 px status strip overlay with battery and signal icons stays visible across pulse paints via a configurable `LocalDriver` pulse rect.
+- HAL Display sprite double-buffer (`begin_buffered_paint` / `end_buffered_paint`) batches the strip's ~13 fill_rect+text ops into one SPI burst, eliminating inter-element tearing during strip refresh. Doesn't fix smooth-fade tearing on solid-colour fills (a vsync issue requiring TE pin we don't have) but the API is now in place for any future host with a TE-routed display.
+- Cold-start scan bug fixed: slave now alternates channels 11↔1 from boot in auto mode rather than waiting for `no_signal_` to flip true (which never happened with `rx_count_=0`).
+- Saturating subtract on `(now - last_rx_ms_)` everywhere it appears - fixes a WiFi-task / main-task race that produced spurious NO SIGNAL flickers ~once per pulse cycle (logs showed ages of `4294967275 ms` etc., uint32 underflow).
+
+Honest list of things known incomplete:
+
+- Audio meter on S3 still slightly hot at idle (carry-forward from Block 2 verification).
+- `Btn2` short-press fires once on the long-press-to-back path (could refine `Pressed` → `Clicked` on the relevant short-press handlers; logged but not fixed).
+- 3-device repeater chain not yet hardware-verified (need a third Stick).
+- S3-master + Plus2-slave swap not verified (only Plus2-master + S3-slave verified).
+- Group ID targeting end-to-end with bracelets in a specific group not yet hardware-verified.
