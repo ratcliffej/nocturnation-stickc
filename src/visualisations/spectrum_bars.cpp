@@ -119,6 +119,12 @@ PowerProfile SpectrumBarsVisualisation::power() const {
 
 void SpectrumBarsVisualisation::enter(VisualisationContext& /*ctx*/) {
     last_draw_ms_ = 0;
+    // Clear residue from whatever screen owner ran before us (picker
+    // overlay text, BeatPulse pulse rect, ...). draw_spectrum only
+    // clears the bars region (y=14..134), so y=0..13 would otherwise
+    // keep the picker's "Visualisation" title visible until the next
+    // overlay open.
+    DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
 }
 
 void SpectrumBarsVisualisation::exit(VisualisationContext& /*ctx*/) {}

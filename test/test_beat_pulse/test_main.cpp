@@ -271,6 +271,15 @@ static void test_power_profile(void) {
     TEST_ASSERT_FALSE(p.needs_8band_summary);
 }
 
+// wants_full_screen must stay false: BeatPulse shares the LCD with the
+// mode's chrome (colour title, BPM, flux meter). Flipping this true
+// would suppress all of that and leave the operator with a blank screen
+// between pulses.
+static void test_wants_full_screen_is_false(void) {
+    BeatPulseVisualisation* v = beat_pulse_instance();
+    TEST_ASSERT_FALSE(v->wants_full_screen());
+}
+
 // =============================================================================
 // on_audio_frame with is_beat=true: fires the three-target fan-out in
 // the correct order. The wire envelope is selected by envelope_for_bpm
@@ -520,6 +529,7 @@ int main(int, char**) {
     RUN_TEST(test_required_capabilities_includes_mic);
     RUN_TEST(test_capability_gate_fails_without_mic);
     RUN_TEST(test_power_profile);
+    RUN_TEST(test_wants_full_screen_is_false);
     RUN_TEST(test_on_beat_fires_wire_screen_ir_in_order);
     RUN_TEST(test_non_beat_frame_does_not_render);
     RUN_TEST(test_paused_suppresses_all_render_targets);

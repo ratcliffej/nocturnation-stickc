@@ -265,6 +265,14 @@ static void test_power_profile(void) {
     TEST_ASSERT_EQUAL_UINT16(0,  p.tick_hz);
 }
 
+// wants_full_screen must stay true: SpectrumBars paints the entire
+// LCD itself and the mode's 50 ms chrome draw would otherwise clobber
+// the bars (see hotfix 2026-05-11).
+static void test_wants_full_screen_is_true(void) {
+    SpectrumBarsVisualisation* v = spectrum_bars_instance();
+    TEST_ASSERT_TRUE(v->wants_full_screen());
+}
+
 // =============================================================================
 // context() returns the singleton (Block 11 generalisation).
 // =============================================================================
@@ -464,6 +472,7 @@ int main(int, char**) {
     RUN_TEST(test_properties_schema);
     RUN_TEST(test_capability_gate_open_against_test_host);
     RUN_TEST(test_power_profile);
+    RUN_TEST(test_wants_full_screen_is_true);
     RUN_TEST(test_context_accessor_returns_singleton);
     RUN_TEST(test_on_spectrum_frame_draws_bars);
     RUN_TEST(test_on_spectrum_frame_paused_suppresses_render);

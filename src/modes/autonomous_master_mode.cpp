@@ -490,6 +490,13 @@ void AutonomousMasterMode::draw() {
     if (overlay_ == Overlay::Picker)   { draw_picker();   return; }
     if (overlay_ == Overlay::Settings) { draw_settings(); return; }
 
+    // When the active vis owns the full screen (SpectrumBars and any
+    // future vis that paints over the whole LCD), the mode skips its
+    // BeatPulse-era chrome entirely. Without this guard the 50 ms
+    // loop_tick clear-and-repaint cycle clobbers the vis's bars at
+    // 20 Hz and the operator sees BeatPulse UI over invisible bars.
+    if (active_vis_ != nullptr && active_vis_->wants_full_screen()) return;
+
     DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
 
     // Status strip: small active-vis name at the very top. Size 1 so it

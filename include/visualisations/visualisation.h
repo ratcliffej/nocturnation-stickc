@@ -61,6 +61,18 @@ public:
     //
     // Default: no-op. Vis that don't cache derived state ignore this.
     virtual void on_property_changed(VisualisationContext&, const char* /*key*/) {}
+
+    // Screen-ownership flag (Epic 4.6 hotfix to Block 11). A vis that
+    // returns true claims the master LCD for its own rendering; the
+    // mode skips its BeatPulse-era chrome (colour title, BPM line,
+    // flux meter, footer) so the vis can paint freely. Vis that share
+    // the screen with the mode chrome (BeatPulse) return false and
+    // the mode redraws its UI on a 20 Hz cadence.
+    //
+    // Default: false (mode chrome stays). SpectrumBars overrides to
+    // true. Picker / Settings overlays gate this upstream - while an
+    // overlay is open the mode owns the screen regardless.
+    virtual bool wants_full_screen() const { return false; }
 };
 
 }  // namespace visualisations

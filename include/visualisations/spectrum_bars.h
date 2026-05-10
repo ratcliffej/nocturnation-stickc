@@ -64,6 +64,12 @@ public:
 
     VisualisationContext& context() override;
 
+    // SpectrumBars paints 32 bars across the full master LCD; the
+    // mode's BeatPulse-era chrome (colour title, BPM line, flux meter)
+    // would clobber the bars on every 50 ms loop_tick if it kept
+    // running.
+    bool wants_full_screen() const override { return true; }
+
 private:
     // Last spectrum render time, gated by lcd_refresh_hz_max (30 Hz).
     uint32_t last_draw_ms_ = 0;
