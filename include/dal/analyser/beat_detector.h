@@ -18,12 +18,24 @@
 //   4. A refractory window blocks subsequent firings until the
 //      configured gap has elapsed - prevents one kick triggering
 //      multiple beat events on the same envelope.
-//   5. Watched sub-bands focus on the bass / kick-drum region
-//      (default bands 0-10, covering ~30-215 Hz at the canonical
+//   5. Watched sub-bands focus on the kick-drum fundamental region
+//      (default bands 0-7, covering ~30-150 Hz at the canonical
 //      16 kHz / 512 FFT operating point). Bands above this are
 //      computed but not watched for kick onsets - that's where snare
 //      and hi-hat detection in Epic 4.7 will plug in via separate
 //      detectors over the same spectrum.
+//
+// Tuning history (so future-you doesn't relitigate it):
+//   2026-05-10: initial integration on hardware (Plus2 + S3) with
+//   Vengaboys-class test track. Original defaults (k=1.5, 80 ms
+//   refractory, 11 bands watched 30-215 Hz) over-fired badly: a
+//   112 BPM track read 155 BPM, screen flashed semi-continuously.
+//   Tightened to k=2.5 (matches legacy single-threshold's beat
+//   multiplier; the maker-community 1.5 is per-band-only and
+//   compounds with band count), 200 ms refractory (allows up to
+//   300 BPM, prevents same-kick double-fire as the envelope decays
+//   through neighbouring sub-bands), and 8 watched bands focused
+//   on the kick fundamental at 30-150 Hz.
 //
 // Why "candidate" rather than "beat" in step 3: only the first
 // candidate within the refractory window fires; subsequent candidates
@@ -52,12 +64,20 @@ namespace analyser {
 constexpr size_t kBeatDetectorHistorySize = 40;
 
 // Number of low-frequency sub-bands watched for beat candidates by
-// default. Indices 0-10 of the spectrum frame span ~30-215 Hz at the
-// canonical 16 kHz / 512 FFT operating point - the kick-drum and
-// bass-fundamental region. Higher-frequency bands (snare, hi-hat)
-// are consumed by Epic 4.7's separate onset detectors over the same
-// spectrum.
-constexpr size_t kBeatDetectorDefaultWatchCount = 11;
+// default. Indices 0-7 of the spectrum frame span ~30-150 Hz at the
+// canonical 16 kHz / 512 FFT operating point - the kick-drum
+// fundamental range for pop / rock / dance / drum & bass. Sub-bass
+// (band 0-1) and lower-mid (bands 8-10) are read into history but
+// not watched; including them in the watched set is what caused
+// initial over-firing on hardware (Jason's Vengaboys test, 2026-05-10)
+// where a 112 BPM track read out at ~155 BPM. Each watched band
+// independently risks firing on its own variance, so the false-
+// positive probability compounds with watch count - keep it tight.
+//
+// Higher-frequency onsets (snare ~200-2k Hz, hi-hat ~5-8k Hz) get
+// their own dedicated detectors in Epic 4.7 rather than competing
+// for kick-band attention here.
+constexpr size_t kBeatDetectorDefaultWatchCount = 8;
 
 // Tuning knobs for BeatDetector. Defined as a sibling rather than a
 // nested type so default member initialisers can reference the
@@ -71,16 +91,22 @@ struct BeatDetectorConfig {
 
     // Threshold multiplier. A frame's per-band magnitude must exceed
     // (mean + k × std_dev) of the history to flag the band as a
-    // candidate. Typical range 1.0 - 2.0; default 1.5 tunes mid-range
-    // across the reference samples (kick drum at 60-150 BPM, Vengaboys,
-    // ambient room noise).
-    float    threshold_k   = 1.5f;
+    // candidate. Typical range 2.0 - 3.0; default 2.5 matches the
+    // legacy single-threshold detector's beat multiplier and gives
+    // sensible results on the reference samples without false fires
+    // on noisy bands. The maker-community ESP32 reference work
+    // suggests 1.5 but that's per-band-only - with multiple watched
+    // bands the false-positive rate compounds with band count.
+    float    threshold_k   = 2.5f;
 
     // Refractory period in milliseconds. After a beat fires, no
-    // subsequent beat can fire until this gap elapses. 80 ms is tight
-    // enough to track 240 BPM (250 ms inter-beat interval) while
-    // preventing one kick's envelope from triggering twice.
-    uint32_t refractory_ms = 80;
+    // subsequent beat can fire until this gap elapses. 200 ms allows
+    // up to 300 BPM (well above the 4 Hz / 240 BPM safety cap in
+    // architecture §15.1) and crucially prevents a single kick's
+    // envelope from re-triggering as it decays through different
+    // sub-bands - the failure mode that produced 155-BPM readouts
+    // on a 112-BPM track during Jason's hardware test (2026-05-10).
+    uint32_t refractory_ms = 200;
 
     // Minimum frames before the detector starts firing. Until the
     // history is at least this full, mean and variance are unreliable
