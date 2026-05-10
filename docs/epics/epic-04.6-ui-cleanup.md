@@ -3,8 +3,8 @@ title: "Epic 4.6: Clean architecture and UI polish"
 status: Done
 notion_url: https://www.notion.so/35cbd067740581e4ba55f79eb168ec9d
 notion_id: 35cbd067740581e4ba55f79eb168ec9d
-notion_status: In Progress
-last_synced: 2026-05-10
+notion_status: Done
+last_synced: 2026-05-11
 sync_direction: bidirectional
 ---
 
