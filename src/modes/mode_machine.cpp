@@ -97,6 +97,10 @@ void on_dal_audio_frame(const char*, const AudioFrameEvent& ev) {
     if (s_active_mode) s_active_mode->on_audio_frame(ev);
 }
 
+void on_dal_input_action(const char*, const hal::InputEvent& ev) {
+    if (s_active_mode) s_active_mode->on_input_action(ev);
+}
+
 }  // namespace
 
 // =============================================================================
@@ -122,6 +126,7 @@ ModeId current_last_runtime() {
 void ModeMachine::begin() {
     DAL::subscribe_button_presses("local", &on_dal_button_press);
     DAL::subscribe_audio_frames  ("local", &on_dal_audio_frame);
+    DAL::subscribe_input_actions ("local", &on_dal_input_action);
 
     s_last_runtime = persistence::load_last_runtime_mode();
     DAL::set_driver_enabled("ir-pixmob", persistence::load_ir_enabled());
@@ -155,5 +160,26 @@ const char* ModeMachine::current_name() {
     return s_active_mode ? s_active_mode->name() : "Boot";
 }
 
+#ifndef ARDUINO
+// Native test seam. The Block 10 overlay tests need to reach the
+// AutonomousMasterMode instance to read its internal state via the
+// test_seam accessors on the class; the per-mode singletons live in
+// the anonymous namespace above, so we expose a typed accessor
+// inside this TU. Test TUs reach it via the free-function bridge
+// defined just below in the global namespace.
+AutonomousMasterMode& test_seam_get_autonomous_master() {
+    return s_autonomous_master;
+}
+#endif
+
 }  // namespace modes
 }  // namespace nocturnation
+
+#ifndef ARDUINO
+// Free-function bridge so test TUs can pick up the accessor with a plain
+// extern declaration; mirrors the extern "C" millis() seam at the top
+// of this file. Kept thin: just forwards to the in-namespace symbol.
+nocturnation::modes::AutonomousMasterMode& test_get_autonomous_master() {
+    return nocturnation::modes::test_seam_get_autonomous_master();
+}
+#endif

@@ -1,10 +1,20 @@
-// AutonomousMasterMode implementation (Epic 4.6 Block 8 onwards).
+// AutonomousMasterMode implementation (Epic 4.6 Block 10).
 //
 // Thin shell over the active Visualisation. Mode owns: pause flag,
 // flux/baseline tracking for the on-screen meter, music_event broadcast,
-// status display, lifecycle (audio input + ESP-NOW broadcast). The
-// per-beat render fan-out + BPM tracking + Colour enum all moved to
-// BeatPulseVisualisation.
+// status display, lifecycle (audio input + ESP-NOW broadcast), and the
+// picker / settings overlays. The per-beat render fan-out + BPM tracking
+// + Colour enum live in BeatPulseVisualisation.
+//
+// Block 10 changes since Block 8:
+//   - Active vis is resolved from NVS via persistence::load_active_vis_id
+//     (falls back to "beat-pulse" if the id no longer registers).
+//   - Input handling is InputAction-driven (Mode::on_input_action) rather
+//     than raw button events. The 2-button mapper in HAL emits the
+//     semantic actions; mode_machine.cpp's facade routes them here.
+//   - Picker and Settings overlays consume InputActions and gate the
+//     vis's render fan-out so on-screen overlays don't fight pulse-rect
+//     repaints.
 
 #include "autonomous_master_mode.h"
 
@@ -17,8 +27,11 @@
 #include "visualisations/visualisation_registry.h"
 #include "visualisations/beat_pulse.h"
 #include "hal/input_action.h"
+#include "hal/hal.h"
+#include "plugins/plugin.h"
 
 #include <cstdio>
+#include <cstring>
 
 #ifdef ARDUINO
 #include <Arduino.h>
@@ -30,19 +43,33 @@ namespace nocturnation {
 namespace modes {
 
 using namespace nocturnation::dal;
-using nocturnation::hal::ButtonId;
-using nocturnation::hal::ButtonEvent;
+using nocturnation::hal::InputAction;
+using nocturnation::hal::InputEvent;
 using nocturnation::visualisations::visualisation_registry;
 using nocturnation::visualisations::beat_pulse_colour_label;
-using nocturnation::visualisations::beat_pulse_colour_screen_rgb;
 using nocturnation::visualisations::beat_pulse_estimated_bpm;
 using nocturnation::visualisations::beat_pulse_context;
+using nocturnation::plugins::PropertyDef;
+using nocturnation::plugins::PropertyType;
+using nocturnation::plugins::PropertyValue;
 
 namespace {
 
 constexpr float    kBeatMultiplier = 2.5f;
 constexpr float    kBaselineAlpha  = 0.02f;
 constexpr float    kVolumeGate     = 500.0f;
+
+// True when the host satisfies every capability the vis declares.
+bool vis_capability_gate_open(const visualisations::Visualisation& v) {
+    const hal::CapabilityMask req = v.required_capabilities();
+    if (req.empty()) return true;
+    hal::CapabilityMask host;
+    // Walk the HAL's declared capability list.
+    for (size_t i = 0; i < hal::HAL::capability_count(); ++i) {
+        host.set(hal::HAL::capabilities()[i]);
+    }
+    return req.subset_of(host);
+}
 
 }  // namespace
 
@@ -54,15 +81,16 @@ void AutonomousMasterMode::enter() {
     current_level_     = 0.0f;
     last_draw_ms_      = 0;
     paused_            = false;
+    overlay_           = Overlay::None;
+    overlay_cursor_    = 0;
 
-    // Resolve the active vis. Block 8 hardcodes BeatPulse; Block 10 will
-    // load the last-used vis ID from NVS via persistence::load_active_vis().
-    active_vis_ = visualisation_registry().find("beat-pulse");
-    ctx_        = &beat_pulse_context();
+    resolve_active_vis_from_nvs();
 
     if (ctx_) ctx_->set_paused(paused_);
     if (ctx_) ctx_->mark_entered(millis());
     if (active_vis_ && ctx_) active_vis_->enter(*ctx_);
+
+    refresh_status_label();
 
     DAL::start_audio_input("local", 16000, 512);
     // Channel from NVS. DAL's EspNowBroadcastDriver owns the radio lifecycle
@@ -86,6 +114,53 @@ void AutonomousMasterMode::loop_tick() {
         last_draw_ms_ = now;
     }
 }
+
+void AutonomousMasterMode::resolve_active_vis_from_nvs() {
+    const char* saved = persistence::load_active_vis_id();
+    visualisations::Visualisation* v =
+        visualisation_registry().find(saved);
+    if (!v) {
+        // Saved id no longer resolves (uninstalled / renamed). Fall back
+        // to the canonical default; persist nothing - the saved id stays
+        // valid for the next boot in case the original vis is re-added.
+        v = visualisation_registry().find("beat-pulse");
+    }
+    active_vis_ = v;
+    // For BeatPulse the property bag + context are singletons in the vis
+    // TU. Future vis ship their own; the right ctx is whatever the
+    // active vis tells us via the registry. Today there is only one vis
+    // so a hardcoded ctx is fine; Block 11 will generalise this when
+    // SpectrumBars ships its own context.
+    ctx_ = (v != nullptr) ? &beat_pulse_context() : nullptr;
+}
+
+void AutonomousMasterMode::refresh_status_label() {
+    const char* name = (active_vis_ != nullptr)
+                       ? active_vis_->display_name()
+                       : "";
+    if (!name) name = "";
+
+    // Cap at 10 visible chars + "..." (status strip is narrow so we
+    // truncate aggressively rather than spill into adjacent labels).
+    constexpr size_t kMaxVisible = 10;
+    const size_t n = std::strlen(name);
+    if (n <= kMaxVisible) {
+        std::strncpy(status_label_buf_, name, kStatusLabelCap);
+        status_label_buf_[kStatusLabelCap - 1] = '\0';
+    } else {
+        std::strncpy(status_label_buf_, name, kMaxVisible);
+        status_label_buf_[kMaxVisible]     = '.';
+        status_label_buf_[kMaxVisible + 1] = '.';
+        status_label_buf_[kMaxVisible + 2] = '.';
+        status_label_buf_[kMaxVisible + 3] = '\0';
+    }
+}
+
+#ifndef ARDUINO
+const char* AutonomousMasterMode::active_vis_id_for_tests() const {
+    return (active_vis_ != nullptr) ? active_vis_->id() : "";
+}
+#endif
 
 void AutonomousMasterMode::on_audio_frame(const AudioFrameEvent& ev) {
     current_level_ = ev.overall_rms;
@@ -127,6 +202,15 @@ void AutonomousMasterMode::on_audio_frame(const AudioFrameEvent& ev) {
             static_cast<transport::espnow::MusicEventType>(ev.music_event));
     }
 
+    // Render gating: while a picker / settings overlay is open the
+    // master's local display is taken over by the overlay UI. We skip
+    // the vis's render fan-out so the screen-pulse fade doesn't fight
+    // overlay repaints. The vis's BPM tracking stays internal (it sees
+    // the gate via ctx.paused()-equivalent semantics: we just don't
+    // call on_audio_frame at all). Audio analysis and ESP-NOW broadcast
+    // still run upstream so slaves keep receiving frames.
+    if (overlay_ != Overlay::None) return;
+
     // Forward the frame to the active vis. The vis owns BPM tracking +
     // per-beat render fan-out; pause is mirrored into ctx so the vis
     // can early-return on render without missing BPM tracking.
@@ -135,50 +219,238 @@ void AutonomousMasterMode::on_audio_frame(const AudioFrameEvent& ev) {
     }
 }
 
-void AutonomousMasterMode::on_button_event(const ButtonPressEvent& ev) {
-    // Btn2 (side) short: cycle colour. Synthesise an InputAction::Cycle
-    // event and route it through the vis. Block 10 will replace this
-    // with a real DAL::subscribe_input_actions subscription; for Block 8
-    // the synthesis preserves UX without touching the FSM wiring.
-    if (ev.id == ButtonId::Btn2 && ev.kind == ButtonEvent::Pressed) {
-        if (active_vis_ && ctx_) {
-            const hal::InputEvent ev_in{hal::InputAction::Cycle, millis()};
-            active_vis_->on_input_action(*ctx_, ev_in);
+void AutonomousMasterMode::on_input_action(const InputEvent& ev) {
+    // Picker / Settings act as toggles: a second press of the same
+    // action closes the overlay. Per the input mapper's header
+    // comment ("Picker/Settings as a toggle; menus and overlays
+    // handle their own back semantics") there is no Back gesture.
+    if (overlay_ == Overlay::Picker) {
+        switch (ev.action) {
+            case InputAction::Picker:
+                overlay_ = Overlay::None;
+                draw();
+                return;
+            case InputAction::Cycle: {
+                const size_t n = picker_row_count();
+                if (n > 0) overlay_cursor_ = (overlay_cursor_ + 1) % n;
+                draw();
+                return;
+            }
+            case InputAction::Confirm:
+                on_picker_confirm();
+                return;
+            default:
+                return;
         }
-        draw();
-        return;
     }
-    // Btn1 (front) short: pause / resume toggle. Mirror to ctx so the
-    // vis early-returns on render without missing BPM tracking.
-    //
-    // Block 13 was scheduled to fix a pre-existing bug where pause-toggle
-    // fired a test pulse via pulse_.on_beat() on both the way in and the
-    // way out. The migration moves the Pulse instance into the vis, so
-    // the buggy call site is no longer reachable; the fix lands here a
-    // block early. Pause toggle no longer fires a pulse on either edge -
-    // the architect-recommended behaviour.
-    if (ev.id == ButtonId::Btn1 && ev.kind == ButtonEvent::Pressed) {
-        paused_ = !paused_;
-        if (ctx_) ctx_->set_paused(paused_);
-        return;
+    if (overlay_ == Overlay::Settings) {
+        switch (ev.action) {
+            case InputAction::Settings:
+                overlay_ = Overlay::None;
+                draw();
+                return;
+            case InputAction::Cycle: {
+                const size_t n = settings_row_count();
+                if (n > 0) overlay_cursor_ = (overlay_cursor_ + 1) % n;
+                draw();
+                return;
+            }
+            case InputAction::Confirm:
+                on_settings_confirm();
+                return;
+            default:
+                return;
+        }
     }
-    // Btn2 long-press: back to menu. Two-button UI on both Plus2 and S3 -
-    // BtnPWR is hardware-managed on the S3 (PMIC owns reset/off), so the
-    // firmware UI is consistently BtnA + BtnB across hosts.
-    if (ev.id == ButtonId::Btn2 && ev.kind == ButtonEvent::LongPressed) {
-        ModeMachine::switch_to(ModeId::Menu);
-        return;
+
+    // Overlay::None - base action set.
+    switch (ev.action) {
+        case InputAction::Picker:
+            overlay_        = Overlay::Picker;
+            overlay_cursor_ = 0;
+            draw();
+            return;
+        case InputAction::Settings:
+            overlay_        = Overlay::Settings;
+            overlay_cursor_ = 0;
+            draw();
+            return;
+        case InputAction::Pause:
+            paused_ = !paused_;
+            if (ctx_) ctx_->set_paused(paused_);
+            draw();
+            return;
+        case InputAction::Confirm:
+        case InputAction::Cycle:
+        case InputAction::CyclePrev:
+            // Route to the vis. The vis decides whether to act on it.
+            if (active_vis_ && ctx_) {
+                active_vis_->on_input_action(*ctx_, ev);
+            }
+            draw();
+            return;
+        default:
+            return;
     }
 }
 
+// ---------------------------------------------------------------------------
+// Picker overlay
+// ---------------------------------------------------------------------------
+
+size_t AutonomousMasterMode::picker_row_count() const {
+    return visualisation_registry().count() + 1;   // + "<- Menu"
+}
+
+bool AutonomousMasterMode::picker_row_is_back(size_t row) const {
+    return row == visualisation_registry().count();
+}
+
+void AutonomousMasterMode::on_picker_confirm() {
+    if (picker_row_is_back(overlay_cursor_)) {
+        // "<- Menu" sentinel. Close overlay first so re-entry to
+        // AutonomousMaster starts cleanly, then switch.
+        overlay_ = Overlay::None;
+        ModeMachine::switch_to(ModeId::Menu);
+        return;
+    }
+    visualisations::Visualisation* picked =
+        visualisation_registry().at(overlay_cursor_);
+    if (!picked) {
+        // Out-of-range: shouldn't happen but guard defensively.
+        return;
+    }
+    if (!vis_capability_gate_open(*picked)) {
+        // Greyed entry. Consume the Confirm without changing state.
+        return;
+    }
+    if (picked == active_vis_) {
+        overlay_ = Overlay::None;
+        draw();
+        return;
+    }
+    // Swap active vis. Tear down the old, set new, persist, bring up
+    // new with a fresh entered_at_ms. Keep ctx_ in sync (today only
+    // BeatPulse ships, so beat_pulse_context() is always the right
+    // surface; Block 11+ will route per-vis contexts).
+    if (active_vis_ && ctx_) active_vis_->exit(*ctx_);
+    active_vis_ = picked;
+    persistence::save_active_vis_id(picked->id());
+    ctx_ = &beat_pulse_context();
+    if (ctx_) ctx_->set_paused(paused_);
+    if (ctx_) ctx_->mark_entered(millis());
+    if (ctx_) active_vis_->enter(*ctx_);
+    refresh_status_label();
+    overlay_ = Overlay::None;
+    draw();
+}
+
+// ---------------------------------------------------------------------------
+// Settings overlay
+// ---------------------------------------------------------------------------
+
+size_t AutonomousMasterMode::settings_row_count() const {
+    if (!active_vis_) return 1;             // just "<- Back"
+    const auto props = active_vis_->properties();
+    return props.size + 1;                  // + "<- Back"
+}
+
+bool AutonomousMasterMode::settings_row_is_back(size_t row) const {
+    if (!active_vis_) return row == 0;
+    return row == active_vis_->properties().size;
+}
+
+void AutonomousMasterMode::on_settings_confirm() {
+    if (settings_row_is_back(overlay_cursor_)) {
+        overlay_ = Overlay::None;
+        draw();
+        return;
+    }
+    if (!active_vis_ || !ctx_) return;
+    const auto props = active_vis_->properties();
+    if (overlay_cursor_ >= props.size) return;
+    const PropertyDef& def = props[overlay_cursor_];
+    const PropertyValue cur = ctx_->get_property(def.key);
+    PropertyValue next = cur;
+    switch (def.type) {
+        case PropertyType::Bool:
+            next = PropertyValue::from_bool(!cur.as_bool());
+            break;
+        case PropertyType::Enum: {
+            const uint8_t mn  = def.min_value.as_enum();
+            const uint8_t mx  = def.max_value.as_enum();
+            const uint8_t cur_e = cur.as_enum();
+            const uint8_t range = static_cast<uint8_t>(mx - mn + 1);
+            const uint8_t rel   = static_cast<uint8_t>((cur_e - mn + 1) % range);
+            next = PropertyValue::from_enum(static_cast<uint8_t>(mn + rel));
+            break;
+        }
+        case PropertyType::U8: {
+            const uint8_t mn = def.min_value.as_u8();
+            const uint8_t mx = def.max_value.as_u8();
+            const uint8_t cv = cur.as_u8();
+            const uint8_t nv = (cv >= mx) ? mn : static_cast<uint8_t>(cv + 1);
+            next = PropertyValue::from_u8(nv);
+            break;
+        }
+        case PropertyType::U16: {
+            const uint16_t mn = def.min_value.as_u16();
+            const uint16_t mx = def.max_value.as_u16();
+            const uint16_t cv = cur.as_u16();
+            const uint16_t nv = (cv >= mx) ? mn : static_cast<uint16_t>(cv + 1);
+            next = PropertyValue::from_u16(nv);
+            break;
+        }
+        case PropertyType::Colour: {
+            // Step the high byte (R channel) by 0x40. Cheap, visible,
+            // distinguishable; bracelet hardware just sees a different
+            // packed RGB. No swatch in v1.
+            const uint32_t cv = cur.as_colour();
+            const uint8_t  r  = static_cast<uint8_t>((cv >> 16) & 0xFF);
+            const uint8_t  g  = static_cast<uint8_t>((cv >>  8) & 0xFF);
+            const uint8_t  b  = static_cast<uint8_t>( cv        & 0xFF);
+            const uint8_t  nr = static_cast<uint8_t>(r + 0x40);  // wraps at 256
+            const uint32_t nv = (static_cast<uint32_t>(nr) << 16)
+                              | (static_cast<uint32_t>(g)  <<  8)
+                              |  static_cast<uint32_t>(b);
+            next = PropertyValue::from_colour(nv);
+            break;
+        }
+    }
+    ctx_->set_property(def.key, next);
+    // Note: BeatPulse caches its colour inside the pulse_ animator and
+    // refreshes it from the bag on the next on_input_action(Cycle) call.
+    // Editing via the Settings overlay bypasses that path - the cached
+    // colour stays stale until the next overlay-out Cycle, or until
+    // enter() re-syncs. For Block 10 this is acceptable (the visible
+    // surface during Settings is the overlay, not the pulse-rect); a
+    // future block can add a typed on_property_changed hook on the vis
+    // to remove the asymmetry. Surfaced as a follow-up in the brief.
+    draw();
+}
+
+// ---------------------------------------------------------------------------
+// Render
+// ---------------------------------------------------------------------------
+
 void AutonomousMasterMode::draw() {
+    if (overlay_ == Overlay::Picker)   { draw_picker();   return; }
+    if (overlay_ == Overlay::Settings) { draw_settings(); return; }
+
     DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
+
+    // Status strip: small active-vis name at the very top. Size 1 so it
+    // doesn't fight the size-3 colour title below it.
+    if (status_label_buf_[0] != '\0') {
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 0, status_label_buf_, YELLOW, BLACK, 1});
+    }
 
     char title[32];
     std::snprintf(title, sizeof(title), " %s%s",
                   beat_pulse_colour_label(), paused_ ? " : Muted" : "");
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
-        10, 5, title, WHITE, BLACK, 3});
+        10, 12, title, WHITE, BLACK, 3});
 
     char bpm[24];
     const float est = beat_pulse_estimated_bpm();
@@ -188,7 +460,7 @@ void AutonomousMasterMode::draw() {
         std::snprintf(bpm, sizeof(bpm), " BPM: ---");
     }
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
-        10, 40, bpm, WHITE, BLACK, 2});
+        10, 45, bpm, WHITE, BLACK, 2});
 
     // Batt + IR fire counter on one line. IR count is <=4 chars with k/M
     // suffix above 10000 so the line stays within 240 px at size 2.
@@ -204,7 +476,7 @@ void AutonomousMasterMode::draw() {
     std::snprintf(batt, sizeof(batt), "Batt: %d%% IR: %s",
                   DAL::battery_level("local"), ir_buf);
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
-        10, 70, batt, WHITE, BLACK, 2});
+        10, 75, batt, WHITE, BLACK, 2});
 
     // Flux meter (frame + bar + threshold marker), composed from
     // FillRect primitives.
@@ -232,6 +504,115 @@ void AutonomousMasterMode::draw() {
         DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
             thrX, meterY - 2, 1, meterH + 4, RED});
     }
+}
+
+void AutonomousMasterMode::draw_picker() {
+    DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 5, "Visualisation", WHITE, BLACK, 2});
+
+    const size_t vis_count = visualisation_registry().count();
+    const size_t rows = picker_row_count();
+    int y = 30;
+    for (size_t i = 0; i < rows; ++i) {
+        const bool sel = (i == overlay_cursor_);
+        char buf[40];
+        if (i < vis_count) {
+            visualisations::Visualisation* v = visualisation_registry().at(i);
+            const bool gated = !vis_capability_gate_open(*v);
+            std::snprintf(buf, sizeof(buf), "%s %s%s",
+                          sel ? ">" : " ",
+                          v->display_name(),
+                          gated ? " (-)" : "");
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, y, buf,
+                sel   ? YELLOW : (gated ? RED : WHITE),
+                BLACK, 2});
+        } else {
+            // "<- Menu" sentinel.
+            std::snprintf(buf, sizeof(buf), "%s %s",
+                          sel ? ">" : " ", "<- Menu");
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, y, buf, sel ? YELLOW : WHITE, BLACK, 2});
+        }
+        y += 18;
+    }
+
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 128, "B: cycle  A: select", WHITE, BLACK, 1});
+}
+
+void AutonomousMasterMode::draw_settings() {
+    DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 5, "Settings", WHITE, BLACK, 2});
+
+    int y = 30;
+    if (active_vis_ && ctx_) {
+        const auto props = active_vis_->properties();
+        if (props.size == 0) {
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, y, "No settings", WHITE, BLACK, 2});
+            y += 18;
+        }
+        for (size_t i = 0; i < props.size; ++i) {
+            const PropertyDef& def = props[i];
+            const PropertyValue v  = ctx_->get_property(def.key);
+            const bool sel = (i == overlay_cursor_);
+            char buf[40];
+            switch (def.type) {
+                case PropertyType::Bool:
+                    std::snprintf(buf, sizeof(buf), "%s %s: %s",
+                                  sel ? ">" : " ",
+                                  def.display_name,
+                                  v.as_bool() ? "ON" : "OFF");
+                    break;
+                case PropertyType::Enum: {
+                    const uint8_t idx = v.as_enum();
+                    const char* nm = (def.enum_names != nullptr)
+                        ? def.enum_names[idx - def.min_value.as_enum()]
+                        : "?";
+                    std::snprintf(buf, sizeof(buf), "%s %s: %s",
+                                  sel ? ">" : " ", def.display_name, nm);
+                    break;
+                }
+                case PropertyType::U8:
+                    std::snprintf(buf, sizeof(buf), "%s %s: %u%s",
+                                  sel ? ">" : " ", def.display_name,
+                                  (unsigned)v.as_u8(),
+                                  def.unit ? def.unit : "");
+                    break;
+                case PropertyType::U16:
+                    std::snprintf(buf, sizeof(buf), "%s %s: %u%s",
+                                  sel ? ">" : " ", def.display_name,
+                                  (unsigned)v.as_u16(),
+                                  def.unit ? def.unit : "");
+                    break;
+                case PropertyType::Colour:
+                    std::snprintf(buf, sizeof(buf), "%s %s: 0x%06lX",
+                                  sel ? ">" : " ", def.display_name,
+                                  (unsigned long)(v.as_colour() & 0xFFFFFF));
+                    break;
+            }
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, y, buf, sel ? YELLOW : WHITE, BLACK, 2});
+            y += 18;
+        }
+    }
+
+    // "<- Back" row sentinel.
+    {
+        const size_t back_row = settings_row_count() - 1;
+        const bool sel = (overlay_cursor_ == back_row);
+        char buf[24];
+        std::snprintf(buf, sizeof(buf), "%s %s",
+                      sel ? ">" : " ", "<- Back");
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, y, buf, sel ? YELLOW : WHITE, BLACK, 2});
+    }
+
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 128, "B: cycle  A: act", WHITE, BLACK, 1});
 }
 
 }  // namespace modes

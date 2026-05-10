@@ -17,6 +17,7 @@
 
 #include <cstdint>
 #include "dal/dal.h"
+#include "hal/input_action.h"
 
 namespace nocturnation {
 namespace modes {
@@ -70,6 +71,12 @@ public:
 
     virtual void on_button_event(const dal::ButtonPressEvent&) {}
     virtual void on_audio_frame (const dal::AudioFrameEvent&)  {}
+    // Semantic input action delivered via the host's InputActionMapper
+    // (Block 4) and routed by ModeMachine's DAL::subscribe_input_actions
+    // facade. Modes that have migrated to semantic input (Block 10
+    // onwards) override this; legacy modes continue to handle raw
+    // ButtonPressEvents until they migrate.
+    virtual void on_input_action(const hal::InputEvent&)       {}
 };
 
 // =============================================================================

@@ -8,6 +8,7 @@
 #include <unity.h>
 #include <cstring>
 #include "hal/hal.h"
+#include "hal/input_action.h"
 #include "dal/dal.h"
 #include "modes/mode_machine.h"
 
@@ -62,6 +63,16 @@ using modes::test_seam::set_millis;
 
 static void inject_button_press(hal::ButtonId id, hal::ButtonEvent kind) {
     dal::DAL::deliver_button_press("local", dal::ButtonPressEvent{id, kind});
+}
+
+// AutonomousMasterMode migrated to InputAction-driven control in Block 10;
+// the raw Btn2-LongPressed -> Menu handler is gone (the picker holds a
+// "<- Menu" row that the operator reaches via Picker + Confirm). Tests
+// that need to leave AutonomousMaster inject the semantic actions
+// directly here. The other runtime modes still consume raw button events.
+static void inject_input_action(hal::InputAction action) {
+    dal::DAL::deliver_input_action("local",
+        hal::InputEvent{action, /*timestamp_ms=*/0});
 }
 
 void setUp(void) {
@@ -129,11 +140,15 @@ static void test_menu_cycle_wraps(void) {
 }
 
 static void test_long_press_btnb_returns_to_menu_from_each_runtime_mode(void) {
-    // From AutonomousMaster
+    // From AutonomousMaster (Block 10): InputAction::Picker opens the
+    // picker overlay; with no vis registered in this test env the
+    // picker contains only the "<- Menu" sentinel at cursor=0, so a
+    // straight Confirm switches to Menu.
     ModeMachine::switch_to(ModeId::AutonomousMaster);
     TEST_ASSERT_EQUAL_INT((int)ModeId::AutonomousMaster,
                           (int)ModeMachine::current());
-    inject_button_press(hal::ButtonId::Btn2, hal::ButtonEvent::LongPressed);
+    inject_input_action(hal::InputAction::Picker);
+    inject_input_action(hal::InputAction::Confirm);
     TEST_ASSERT_EQUAL_INT((int)ModeId::Menu, (int)ModeMachine::current());
 
     // From Slave

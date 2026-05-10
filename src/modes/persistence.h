@@ -63,6 +63,20 @@ void             save_slave_channel(uint8_t c);
 bool             load_slave_repeat_enabled();
 void             save_slave_repeat_enabled(bool e);
 
+// Active master-side visualisation id. AutonomousMasterMode resolves the
+// returned id against visualisation_registry() on enter(); if the saved
+// id no longer resolves to a registered vis (uninstalled, renamed) the
+// mode falls back to the canonical "beat-pulse" default. The returned
+// pointer is into a static buffer owned by this TU and is valid until
+// the next call to load_active_vis_id() - copy or strdup if you need to
+// hold onto it across other persistence calls.
+//
+// Plugin id() is capped at 12 chars by convention (the 15-char NVS
+// namespace limit minus the "nv_" prefix), so the 16-byte storage here
+// has comfortable headroom.
+const char*      load_active_vis_id();
+void             save_active_vis_id(const char* id);
+
 // One-shot NVS migration from pre-Block-9 keys to their new homes.
 // Called from ModeMachine::begin() BEFORE enter_mode(Boot) so the
 // property bags populated here are visible when SlaveMode is later

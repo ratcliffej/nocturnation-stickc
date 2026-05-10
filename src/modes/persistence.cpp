@@ -131,6 +131,39 @@ void save_slave_repeat_enabled(bool e) {
     prefs.end();
 }
 
+// Active visualisation id. Stored as a string under "noct/active_vis";
+// 16-byte read buffer is comfortable for the 12-char id() cap. Default
+// is "beat-pulse" because that is the only vis registered today and the
+// canonical fallback when a saved id no longer resolves.
+namespace {
+constexpr size_t kActiveVisBufSize = 16;
+char             s_active_vis_buf[kActiveVisBufSize] = "beat-pulse";
+}
+
+const char* load_active_vis_id() {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/true);
+    size_t n = prefs.getString("active_vis",
+                                s_active_vis_buf,
+                                kActiveVisBufSize);
+    prefs.end();
+    if (n == 0) {
+        std::strncpy(s_active_vis_buf, "beat-pulse", kActiveVisBufSize);
+        s_active_vis_buf[kActiveVisBufSize - 1] = '\0';
+    }
+    return s_active_vis_buf;
+}
+
+void save_active_vis_id(const char* id) {
+    if (!id) return;
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/false);
+    prefs.putString("active_vis", id);
+    prefs.end();
+    std::strncpy(s_active_vis_buf, id, kActiveVisBufSize);
+    s_active_vis_buf[kActiveVisBufSize - 1] = '\0';
+}
+
 void migrate_legacy_nvs_keys() {
     // slv_ir_grp -> PixMobIrBinding "group" property. The legacy key
     // lived in the "noct" namespace; the new home is the binding's
@@ -182,6 +215,8 @@ uint8_t s_native_slave_channel    = 0;
 bool    s_native_slave_repeat_en  = false;
 bool    s_native_legacy_slv_ir_grp_present = false;
 uint8_t s_native_legacy_slv_ir_grp_value   = 0;
+constexpr size_t kActiveVisBufSize = 16;
+char    s_native_active_vis[kActiveVisBufSize] = "beat-pulse";
 }  // namespace
 
 ModeId           load_last_runtime_mode() { return kDefaultRuntimeMode; }
@@ -199,6 +234,16 @@ void             save_slave_channel(uint8_t c)  {
 }
 bool             load_slave_repeat_enabled()           { return s_native_slave_repeat_en; }
 void             save_slave_repeat_enabled(bool e)     { s_native_slave_repeat_en = e; }
+
+const char* load_active_vis_id() {
+    return s_native_active_vis;
+}
+
+void save_active_vis_id(const char* id) {
+    if (!id) return;
+    std::strncpy(s_native_active_vis, id, kActiveVisBufSize);
+    s_native_active_vis[kActiveVisBufSize - 1] = '\0';
+}
 
 void migrate_legacy_nvs_keys() {
     if (s_native_legacy_slv_ir_grp_present) {
@@ -221,6 +266,8 @@ void clear_native_persistence() {
     s_native_slave_repeat_en           = false;
     s_native_legacy_slv_ir_grp_present = false;
     s_native_legacy_slv_ir_grp_value   = 0;
+    std::strncpy(s_native_active_vis, "beat-pulse", kActiveVisBufSize);
+    s_native_active_vis[kActiveVisBufSize - 1] = '\0';
 }
 }  // namespace test_seam
 
