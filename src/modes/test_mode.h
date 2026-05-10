@@ -1,8 +1,8 @@
 // TestMode - the §8.5 test-mode catalogue plus a Set Group ID helper.
 //
 // Two-level UI: enter Test Mode -> sub-test list. Btn2 cycles, Btn1 launches.
-// Inside a sub-test, button bindings are sub-test-specific and PWR-hold
-// returns to the sub-test list (not the main menu); a second PWR-hold from
+// Inside a sub-test, button bindings are sub-test-specific and B-hold
+// returns to the sub-test list (not the main menu); a second B-hold from
 // the sub-test list returns to the main menu.
 //
 // The seven sub-tests:

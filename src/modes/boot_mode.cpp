@@ -6,6 +6,7 @@
 #include "dal/dal.h"
 
 #include <cstdio>
+#include <cstring>
 
 #ifdef ARDUINO
 #include <Arduino.h>
@@ -22,7 +23,21 @@ using nocturnation::hal::ButtonEvent;
 
 namespace {
 
-constexpr uint32_t kBootCountdownMs = 5000;
+// Splash countdown trimmed from 5 s to 3 s in Block 13 - 5 s felt
+// overlong when an operator just wants to land in the persisted
+// runtime mode. Three full-second tick changes still give clear
+// "press button now" affordance without dragging the boot phase.
+constexpr uint32_t kBootCountdownMs = 3000;
+
+// Build identifier shown bottom-right of the splash. Picks up a
+// compile-time FIRMWARE_VERSION define if the build system supplies
+// one (Block 14 close-out will wire it through platformio.ini); falls
+// back to the in-source Epic tag otherwise so we never ship a blank.
+#ifdef FIRMWARE_VERSION
+constexpr const char* kSplashVersion = FIRMWARE_VERSION;
+#else
+constexpr const char* kSplashVersion = "v0.4-epic46";
+#endif
 
 }
 
@@ -100,19 +115,47 @@ void BootMode::draw_static() {
         kTitleX, kTitleY + 28, "Open-source crowd lighting.",
         WHITE, BLACK, 1});
 
+    // Target-mode label sits just above the centred countdown digit.
+    char target[24];
+    std::snprintf(target, sizeof(target), "Entering %s",
+                  mode_label(persistence::current_last_runtime()));
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        kTitleX, 60, target, WHITE, BLACK, 1});
+
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         kTitleX, 115, "press any btn for menu", WHITE, BLACK, 1});
+
+    // Bottom-right corner status block: firmware build identifier plus
+    // current battery percent. Size 1 white. Painted once in draw_static
+    // (only-on-enter) since the splash window is short enough that
+    // battery percent drift isn't worth a periodic refresh. Right-edge
+    // anchored: kSplashVersion is short (e.g. "v0.4-epic46" = 11 chars
+    // = 66 px at size 1) so we align by guessing length-times-6 from
+    // the right margin.
+    const int batt = DAL::battery_level("local");
+    char status[32];
+    if (batt < 0) {
+        std::snprintf(status, sizeof(status), "%s  --%%", kSplashVersion);
+    } else {
+        std::snprintf(status, sizeof(status), "%s  %d%%",
+                      kSplashVersion, batt);
+    }
+    const int status_chars = (int)std::strlen(status);
+    const int status_x = 240 - status_chars * 6 - 4;   // 6 px/char at size 1
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        status_x, 125, status, WHITE, BLACK, 1});
 }
 
 void BootMode::draw_countdown(uint8_t seconds) {
-    // Fixed-width format ("X in N s" - one digit) so subsequent draws
-    // overwrite the previous text cell-for-cell with no flicker.
-    char buf[24];
-    std::snprintf(buf, sizeof(buf), "%s in %u s",
-                  mode_label(persistence::current_last_runtime()),
-                  (unsigned)seconds);
+    // Centred single yellow digit at size 3. Size-3 char cells are 18 px
+    // wide; one digit -> x = (240 - 18) / 2 = 111. Painted with a
+    // BLACK background so the previous frame's digit is overwritten in
+    // place without flicker.
+    char buf[4];
+    std::snprintf(buf, sizeof(buf), "%u", (unsigned)seconds);
+    constexpr int kCountdownX = (240 - kCharW3) / 2;
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
-        kTitleX, 75, buf, WHITE, BLACK, 2});
+        kCountdownX, 80, buf, YELLOW, BLACK, 3});
 }
 
 void BootMode::draw_pulsing_n(uint8_t step) {

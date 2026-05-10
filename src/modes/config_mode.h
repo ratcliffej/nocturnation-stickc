@@ -3,7 +3,7 @@
 // Two-level navigation: top-level submenu list -> submenu items. Btn2
 // cycles selection at either level. Btn1 enters a submenu from the top
 // level, and activates an item within a submenu (toggling, cycling, or
-// triggering depending on item type). PWR-hold pops one level (submenu
+// triggering depending on item type). B-hold pops one level (submenu
 // -> top, top -> mode menu).
 //
 // Pre-Epic-4 / pre-Epic-7 status: the menu *shape* is built out per spec

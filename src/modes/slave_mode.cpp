@@ -57,7 +57,7 @@ void SlaveMode::enter() {
     last_msg_type_    = 0xFF;
     radio_active_     = false;
     no_signal_        = false;
-    last_strip_draw_ms_ = 0;
+    last_pip_draw_ms_ = 0;
 
     // Load operator-configured preferences from NVS. Channel preference
     // picks hobby (1) / show (11) / advanced (6) / auto-scan (0) per
@@ -75,15 +75,18 @@ void SlaveMode::enter() {
                             : slave_channel_pref_;
     last_chan_switch_ms_  = millis();
 
-    // Reserve a 12 px status strip at the top of the screen so the
-    // battery + signal-strength icons stay visible while pulses paint
-    // the rest of the screen. LocalDriver paints fill_rect within
-    // these bounds; the strip is ours to draw into.
-    dal::local_driver_instance()->set_pulse_rect(
-        0, kStripHeight, 240, 135 - kStripHeight);
+    // Block 13: pulse rect runs full-screen. The 38x12 px status pip
+    // (top-right corner) paints OVER the pulse on its own cadence; the
+    // pulse may briefly paint underneath between pip refreshes, which
+    // is accepted in exchange for full-screen colour impact during a
+    // show. reset_pulse_rect() is the explicit "no strip exclusion"
+    // signal - LocalDriver's default is also full-screen, but calling
+    // it makes the contract obvious to readers and survives any
+    // future change to the default.
+    dal::local_driver_instance()->reset_pulse_rect();
 
     DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
-    draw_status_strip();    // initial paint so the strip exists
+    draw_status_pip();      // initial paint so the pip exists
 
     // Activate output bindings whose required capabilities the host
     // supports. Walks the registry, gates each one on
@@ -200,8 +203,8 @@ void SlaveMode::loop_tick() {
                       (unsigned long)age_since_rx);
 #endif
         DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
-        draw_status_strip();
         draw_no_signal_body();
+        draw_status_pip();      // pip paints last so it sits on top
         last_draw_ms_ = now;
         return;
     }
@@ -227,12 +230,15 @@ void SlaveMode::loop_tick() {
         }
     }
 
-    // Status strip refreshes ~2x per second; the icons read battery
-    // level + signal age both of which change slowly enough that
-    // higher refresh rates would just waste SPI cycles.
-    if (now - last_strip_draw_ms_ > kStripRefreshMs) {
-        draw_status_strip();
-        last_strip_draw_ms_ = now;
+    // Status pip refreshes at 10 Hz. The pip overlays a full-screen
+    // pulse rect (Block 13 layout) so pulses can repaint over it
+    // between refreshes; 10 Hz keeps the pip reading as steady even
+    // when a vis is repainting underneath at ~30 Hz, while bounding
+    // the SPI write rate (~7 fill_rects per pip refresh, batched
+    // into one burst via begin_buffered_paint).
+    if (now - last_pip_draw_ms_ > kPipRefreshMs) {
+        draw_status_pip();
+        last_pip_draw_ms_ = now;
     }
 
     // NO SIGNAL diagnostic body in the pulse-rect area (no pulses
@@ -396,10 +402,14 @@ void SlaveMode::on_recv(const hal::ESPNowMessage& m) {
 }
 
 // ---------------------------------------------------------------------
-// Status strip: always-visible 12 px band at the top of the screen.
-// Battery icon on the right, 4-bar signal indicator just left of it.
-// Painted into pixels (0,0)..(239,11) which are excluded from the
-// LocalDriver's pulse rect.
+// Status pip: always-visible 38x12 px overlay anchored to the top-right
+// corner. Compact horizontal arrangement - small coloured signal dot
+// (red/amber/green per bar count) plus a battery glyph. Block 13
+// replaced the previous full-width 12 px strip with this pip so the
+// pulse rect can run full-screen for maximum show impact. The pip
+// paints over whatever the pulse last drew underneath it; pulses may
+// repaint over the pip between pip refreshes - the 10 Hz pip cadence
+// in loop_tick is fast enough that operators read the pip as steady.
 // ---------------------------------------------------------------------
 
 // Frame-age proxy. Used as a cold-start fallback before the quality
@@ -437,49 +447,43 @@ int SlaveMode::signal_bars() const {
     return (q < a) ? q : a;
 }
 
-void SlaveMode::draw_status_strip() {
-    // Buffered paint session: the ~13 fill_rect + text ops that make
-    // up this strip refresh batch into a single sprite, then push to
-    // the panel as one SPI burst. Without this each op writes
-    // independently to the panel and a panel scan-out crossing one
-    // of those windows shows tear lines between elements.
+void SlaveMode::draw_status_pip() {
+    // Buffered paint session: the ~7 fill_rects that compose the pip
+    // batch into a single sprite, then push to the panel as one SPI
+    // burst. Without this each op writes independently to the panel
+    // and a panel scan-out crossing one of those windows would show
+    // tear lines between elements.
     auto* ld = dal::local_driver_instance();
     const bool buffered =
-        ld->begin_buffered_paint(0, 0, 240, kStripHeight);
+        ld->begin_buffered_paint(kPipX, kPipY, kPipWidth, kPipHeight);
 
-    // Wipe the strip black so we can repaint icons cleanly without
-    // residue from whatever was there last refresh.
+    // Wipe the pip black. The pip needs an opaque background because
+    // a full-screen pulse may have painted any colour underneath it
+    // since our last refresh; without the wipe, signal/battery
+    // colours would composite against arbitrary backgrounds.
     DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
-        0, 0, 240, kStripHeight, BLACK});
+        kPipX, kPipY, kPipWidth, kPipHeight, BLACK});
 
-    // Mode label, left.
-    DAL::fire_display_show_text("local", DisplayShowTextEvent{
-        2, 2, no_signal_ ? "NO SIG" : "Slave",
-        no_signal_ ? RED : WHITE, BLACK, 1});
+    // Signal dot on the left of the pip. ~6 px diameter using a 6x6
+    // fill_rect (square approximation is fine at this size). Colour
+    // codes per spec: 4 bar = green, 2-3 bar = amber, 0-1 bar = red.
+    const int bars       = signal_bars();
+    const uint16_t dot_c = (bars >= 4) ? GREEN
+                         : (bars >= 2) ? YELLOW
+                         :               RED;
+    const int dot_x = kPipX + 2;
+    const int dot_y = kPipY + 3;
+    DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
+        dot_x, dot_y, 6, 6, dot_c});
 
-    // Signal bars: 4 vertical bars at heights 2/4/6/8 px, 2 px wide
-    // each, lit count = signal_bars. Anchored at the right of the
-    // strip just inside the battery icon. Bar count comes from the
-    // sequence-loss-rate quality tracker (transport::SignalQuality)
-    // with a frame-age fallback for cold start.
-    const int sig_x   = 198;   // top-left of the signal-bars region
-    const int sig_top = 2;
-    const int bars    = signal_bars();
-    for (int i = 0; i < 4; ++i) {
-        const int bar_h = 2 + i * 2;          // 2,4,6,8
-        const int bar_y = sig_top + (8 - bar_h);
-        const uint16_t color = (i < bars) ? GREEN : 0x4208;  // dim grey for unlit
-        DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
-            sig_x + i * 4, bar_y, 2, bar_h, color});
-    }
-
-    // Battery icon on the right: 24 x 8 outline + tip + filled
-    // proportion.
-    const int batt_x = 214;
-    const int batt_y = 2;
-    const int batt_w = 22;
+    // Battery glyph on the right: 16 px wide outline + tip + fill.
+    // Sits flush against the right edge of the pip with the tip
+    // poking just past kPipWidth - 2, well within the 38 px budget.
+    const int batt_w = 14;             // body width
     const int batt_h = 8;
-    // Outline (top, bottom, left, right via 1-px fill_rects).
+    const int batt_x = kPipX + kPipWidth - batt_w - 2;   // 2 px tip + edge
+    const int batt_y = kPipY + 2;
+    // Outline (1-px fill_rects on all four sides).
     DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
         batt_x, batt_y, batt_w, 1, WHITE});
     DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
@@ -513,26 +517,40 @@ void SlaveMode::draw_status_strip() {
     }
 }
 
-// Diagnostic body shown only while NO SIGNAL is active. The pulse-
-// rect area below the strip is otherwise black (no incoming pulses)
-// so we have the whole screen below the strip to spend on text.
+// Diagnostic body shown only while NO SIGNAL is active. No incoming
+// pulses are arriving in this state so the whole screen below the pip
+// is ours to spend on text. Block 13 reflowed this for hierarchy:
+// size-3 "NO SIGNAL" headline near the top (just below the pip),
+// then a related group of size-1 diagnostic lines (channel, rx total,
+// last rx age), then the gesture hint anchored at the bottom.
 void SlaveMode::draw_no_signal_body() {
     char line[40];
 
+    // Headline: centred horizontally just below the pip. Size-3 char
+    // cell is 18 px wide; "NO SIGNAL" is 9 chars -> 162 px wide ->
+    // (240 - 162) / 2 = 39 px left margin.
+    constexpr int kHeadlineX = (240 - 9 * 18) / 2;
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
-        10, 30, "NO SIGNAL", RED, BLACK, 3});
+        kHeadlineX, 20, "NO SIGNAL", RED, BLACK, 3});
+
+    // Diagnostic block. 14 px line spacing keeps related lines grouped
+    // without crowding (size-1 char height is 8 px; 14 px gives breathing
+    // room and aligns visually with the headline-to-body gap).
+    constexpr int kDiagX     = 10;
+    constexpr int kDiagY     = 60;
+    constexpr int kLineStep  = 14;
 
     std::snprintf(line, sizeof(line), "ch %u %s%s",
                   (unsigned)current_listen_chan_,
                   radio_active_ ? "listening" : "off",
                   slave_channel_pref_ == 0 ? " (scan)" : "");
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
-        10, 70, line, WHITE, BLACK, 1});
+        kDiagX, kDiagY, line, WHITE, BLACK, 1});
 
     std::snprintf(line, sizeof(line), "rx total: %lu",
                   (unsigned long)rx_count_);
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
-        10, 84, line, WHITE, BLACK, 1});
+        kDiagX, kDiagY + kLineStep, line, WHITE, BLACK, 1});
 
     if (rx_count_ > 0) {
         const uint32_t now = millis();
@@ -540,11 +558,16 @@ void SlaveMode::draw_no_signal_body() {
         std::snprintf(line, sizeof(line), "last rx: %lu ms ago    ",
                       (unsigned long)age);
         DAL::fire_display_show_text("local", DisplayShowTextEvent{
-            10, 98, line, RED, BLACK, 1});
+            kDiagX, kDiagY + 2 * kLineStep, line, RED, BLACK, 1});
     }
 
+    // Gesture hint anchored at the bottom of the screen. SlaveMode is
+    // still on raw ButtonEvent (it hasn't migrated to InputAction yet),
+    // and its on_button_event routes Btn2 LongPressed straight to
+    // ModeMachine::switch_to(Menu) - so "B-hold: menu" is literally
+    // what the gesture does.
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
-        10, 122, "B-hold: menu", WHITE, BLACK, 1});
+        kDiagX, 122, "B-hold: menu", WHITE, BLACK, 1});
 }
 
 }  // namespace modes

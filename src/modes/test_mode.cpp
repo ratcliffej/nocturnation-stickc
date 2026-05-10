@@ -157,7 +157,8 @@ void TestMode::draw_menu() {
     // top margin = 132 px, just inside the 135 px display. When the
     // sub-test list grows past 8, the cursor scrolls the visible
     // window via menu_view_offset_. Title and bottom hint dropped to
-    // make room; PWR-hold returns to the main mode menu, and B/A
+    // make room; B-hold returns to the main mode menu (handled in
+    // handle_button_at_menu via Btn2 LongPressed), and B/A
     // conventions match the other menus.
     const size_t visible = (kSubTestCount < kMenuVisible)
                                ? kSubTestCount : kMenuVisible;

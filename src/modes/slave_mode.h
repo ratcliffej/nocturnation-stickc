@@ -47,17 +47,28 @@ private:
     // effect through this state; for now we just display NO SIGNAL.
     static constexpr uint32_t kNoSignalMs          = 3000;
 
-    // Status strip (always-visible 12 px band at the top with battery +
-    // signal-strength icons). Pulse rect is set to the area BELOW this
-    // strip during enter() so pulses don't repaint over the icons.
-    static constexpr int      kStripHeight         = 12;
-    static constexpr uint32_t kStripRefreshMs      = 500;
+    // Status pip (always-visible 38x12 px overlay anchored to the top-
+    // right corner with a signal-strength dot + battery glyph). Block 13
+    // replaced the full-width 12 px strip with a compact pip so the
+    // pulse rect can run full-screen for maximum colour impact during a
+    // show. The pip paints OVER the pulse rect on each refresh - the
+    // pulse may briefly paint underneath between pip refreshes, accepted
+    // trade-off given the alternative was losing always-on status. Pip
+    // refresh cadence is 100 ms (10 Hz): fast enough to read as steady
+    // when full-screen pulses repaint at ~30 Hz; slow enough to keep the
+    // SPI write budget bounded (~7 fill_rects per refresh, batched into
+    // one burst via begin_buffered_paint).
+    static constexpr int      kPipWidth            = 38;
+    static constexpr int      kPipHeight           = 12;
+    static constexpr int      kPipX                = 240 - kPipWidth;
+    static constexpr int      kPipY                = 0;
+    static constexpr uint32_t kPipRefreshMs        = 100;
 
     bool      radio_active_       = false;
     uint32_t  rx_count_           = 0;
     uint32_t  last_rx_ms_         = 0;
     uint32_t  last_draw_ms_       = 0;
-    uint32_t  last_strip_draw_ms_ = 0;
+    uint32_t  last_pip_draw_ms_   = 0;
     uint8_t   last_source_id_     = 0;
     uint8_t   last_msg_type_      = 0xFF;
     bool      no_signal_          = false;   // sticky once threshold crossed
@@ -147,7 +158,7 @@ private:
     int signal_bars_from_age() const;
     int signal_bars() const;
 
-    void draw_status_strip();
+    void draw_status_pip();
     void draw_no_signal_body();
 };
 

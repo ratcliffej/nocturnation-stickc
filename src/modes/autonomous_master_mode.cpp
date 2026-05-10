@@ -557,6 +557,16 @@ void AutonomousMasterMode::draw() {
         DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
             thrX, meterY - 2, 1, meterH + 4, RED});
     }
+
+    // Operator hint footer for the active vis root. Block 13 footer
+    // standardisation: state the actual gesture mapping for this layer
+    // (B = vis-specific cycle, A-hold = open settings overlay, B-hold =
+    // open picker). The pulse-rect repaint will overdraw this between
+    // loop_tick frames; the 50 ms draw cadence puts it back. Size 1 to
+    // keep the line under 240 px (~38 char budget).
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        4, 128, "B: cycle  A-hold: set  B-hold: pick",
+        WHITE, BLACK, 1});
 }
 
 void AutonomousMasterMode::draw_picker() {
@@ -592,7 +602,8 @@ void AutonomousMasterMode::draw_picker() {
     }
 
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
-        10, 128, "B: cycle  A: select", WHITE, BLACK, 1});
+        10, 128, "B: cycle  A: select  B-hold: close",
+        WHITE, BLACK, 1});
 }
 
 void AutonomousMasterMode::draw_settings() {
@@ -665,7 +676,8 @@ void AutonomousMasterMode::draw_settings() {
     }
 
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
-        10, 128, "B: cycle  A: act", WHITE, BLACK, 1});
+        10, 128, "B: cycle  A: edit  A-hold: close",
+        WHITE, BLACK, 1});
 }
 
 }  // namespace modes

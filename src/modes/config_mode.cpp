@@ -144,7 +144,7 @@ void ConfigMode::draw_top() {
             sel ? YELLOW : WHITE, BLACK, 2});
     }
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
-        10, 122, "B: cycle  A: enter  PWR: back",
+        10, 122, "B: cycle  A: select  B-hold: back",
         WHITE, BLACK, 1});
 }
 
@@ -217,7 +217,7 @@ void ConfigMode::draw_stub(const char* title,
             sel ? YELLOW : WHITE, BLACK, 2});
     }
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
-        10, 122, "B: cycle  PWR: back",
+        10, 122, "B: cycle  B-hold: back",
         WHITE, BLACK, 1});
 }
 
@@ -266,7 +266,7 @@ void ConfigMode::draw_display() {
             sel ? YELLOW : WHITE, BLACK, 2});
     }
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
-        10, 122, "A: toggle  B-hold: back",
+        10, 122, "B: cycle  A: select  B-hold: back",
         WHITE, BLACK, 1});
 }
 
@@ -328,7 +328,7 @@ void ConfigMode::draw_ir() {
             sel ? YELLOW : WHITE, BLACK, 2});
     }
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
-        10, 122, "B: cycle  A: act  B-hold: back",
+        10, 122, "B: cycle  A: select  B-hold: back",
         WHITE, BLACK, 1});
 }
 
@@ -438,7 +438,7 @@ void ConfigMode::draw_espnow() {
         10, 80, "(applies on mode entry)",
         WHITE, BLACK, 1});
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
-        10, 122, "B: cycle  A: change  B-hold: back",
+        10, 122, "B: cycle  A: select  B-hold: back",
         WHITE, BLACK, 1});
 }
 
@@ -448,7 +448,7 @@ void ConfigMode::draw_espnow() {
 //   Group Target    Btn1 advances + fires to groups 1..5 in turn
 //
 // Two-level navigation within the submenu: menu lists the items, Btn1
-// drills into a workflow screen. PWR-hold pops one level (workflow ->
+// drills into a workflow screen. B-hold pops one level (workflow ->
 // menu -> Config top).
 // -------------------------------------------------------------------------
 
@@ -521,7 +521,7 @@ void ConfigMode::draw_pixmob_menu() {
             sel ? YELLOW : WHITE, BLACK, 2});
     }
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
-        10, 122, "B: cycle  A: enter  PWR: back",
+        10, 122, "B: cycle  A: select  B-hold: back",
         WHITE, BLACK, 1});
 }
 
@@ -542,9 +542,8 @@ void ConfigMode::draw_pixmob_set_group() {
             10, 70, "isolate target!", YELLOW, BLACK, 1});
     }
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
-        10, 95, "B: cycle  A: send", WHITE, BLACK, 1});
-    DAL::fire_display_show_text("local", DisplayShowTextEvent{
-        10, 128, "B-hold: back", WHITE, BLACK, 1});
+        10, 128, "B: cycle  A: send  B-hold: back",
+        WHITE, BLACK, 1});
 }
 
 void ConfigMode::draw_pixmob_group_tgt() {
@@ -557,9 +556,8 @@ void ConfigMode::draw_pixmob_group_tgt() {
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         10, 50, buf, WHITE, BLACK, 2});
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
-        10, 90, "A: fire + advance", WHITE, BLACK, 1});
-    DAL::fire_display_show_text("local", DisplayShowTextEvent{
-        10, 128, "B-hold: back", WHITE, BLACK, 1});
+        10, 128, "A: fire + advance  B-hold: back",
+        WHITE, BLACK, 1});
 }
 
 // -------------------------------------------------------------------------
@@ -629,7 +627,7 @@ void ConfigMode::draw_system() {
             10, 30 + (int)i * 16, buf, fg, BLACK, 2});
     }
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
-        10, 122, "B: cycle  A: act  PWR: back",
+        10, 122, "B: cycle  A: select  B-hold: back",
         WHITE, BLACK, 1});
 }
 
