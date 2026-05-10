@@ -44,6 +44,23 @@ public:
     virtual void on_spectrum_frame(VisualisationContext&, const dal::SpectrumFrameEvent&) {}
     virtual void on_input_action  (VisualisationContext&, const hal::InputEvent&)         {}
     virtual void tick             (VisualisationContext&, uint32_t now_ms)                {}
+
+    // Singleton context accessor (Epic 4.6 Block 11). Each concrete vis
+    // owns a single VisualisationContext singleton in its translation
+    // unit; the framework (AutonomousMasterMode picker / settings path)
+    // routes events through this accessor so it scales to any number of
+    // registered visualisations without hardcoding per-id branches.
+    virtual VisualisationContext& context() = 0;
+
+    // Property-change notification (Epic 4.6 Block 11). The framework's
+    // Settings overlay calls this after every successful set_property()
+    // so a vis can re-sync any cached state derived from a property
+    // value. BeatPulse uses this to refresh effects::Pulse's cached
+    // colour - editing "color" via Settings would otherwise stay stale
+    // inside pulse_ until the next Cycle action.
+    //
+    // Default: no-op. Vis that don't cache derived state ignore this.
+    virtual void on_property_changed(VisualisationContext&, const char* /*key*/) {}
 };
 
 }  // namespace visualisations

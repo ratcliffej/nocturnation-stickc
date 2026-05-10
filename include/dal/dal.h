@@ -374,6 +374,15 @@ public:
     static bool subscribe_esp_now_inbound  (const char* target, EspNowInboundCallback cb);
     static bool subscribe_dmx_inbound      (const char* target, DmxInboundCallback    cb);
 
+    // Drop all spectrum-frame subscriptions for `target` (Epic 4.6 Block 11).
+    // Added so AutonomousMasterMode can flip Block 7's pipeline gate live
+    // when switching between vis with and without
+    // PowerProfile::needs_spectrum_frame. Returns the count removed.
+    // Subscribe surfaces for other event channels remain one-shot (no
+    // unsubscribe) until a similar gate-flip need surfaces - we don't
+    // generalise speculatively.
+    static size_t unsubscribe_spectrum_frames(const char* target);
+
     // -------------------------------------------------------------------------
     // Subscriber-count queries (Epic 4.6 Block 7 - pipeline gating).
     //

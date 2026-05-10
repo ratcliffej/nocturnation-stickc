@@ -39,6 +39,15 @@
 extern "C" uint32_t millis();
 #endif
 
+// Spectrum-frame routing callback (Epic 4.6 Block 11). Defined at
+// namespace scope in mode_machine.cpp so AutonomousMasterMode can pass
+// it to DAL::subscribe_spectrum_frames at vis-activation time without
+// ModeMachine itself needing to subscribe at begin() (which would pin
+// has_spectrum_frame_subscribers() to true and defeat Block 7's gate).
+namespace nocturnation { namespace modes {
+void on_dal_spectrum_frame(const char*, const dal::SpectrumFrameEvent&);
+} }
+
 namespace nocturnation {
 namespace modes {
 
@@ -48,7 +57,6 @@ using nocturnation::hal::InputEvent;
 using nocturnation::visualisations::visualisation_registry;
 using nocturnation::visualisations::beat_pulse_colour_label;
 using nocturnation::visualisations::beat_pulse_estimated_bpm;
-using nocturnation::visualisations::beat_pulse_context;
 using nocturnation::plugins::PropertyDef;
 using nocturnation::plugins::PropertyType;
 using nocturnation::plugins::PropertyValue;
@@ -91,6 +99,11 @@ void AutonomousMasterMode::enter() {
     if (active_vis_ && ctx_) active_vis_->enter(*ctx_);
 
     refresh_status_label();
+    // Subscribe to spectrum frames iff the active vis declares it
+    // needs them. Drives Block 7's pipeline gate live - vis without
+    // needs_spectrum_frame leave the FFT path's per-frame fan-out
+    // skipped in LocalDriver.
+    sync_spectrum_subscription(/*active=*/true);
 
     DAL::start_audio_input("local", 16000, 512);
     // Channel from NVS. DAL's EspNowBroadcastDriver owns the radio lifecycle
@@ -103,6 +116,11 @@ void AutonomousMasterMode::enter() {
 
 void AutonomousMasterMode::exit() {
     if (active_vis_ && ctx_) active_vis_->exit(*ctx_);
+    // Always drop any spectrum subscription we may have installed in
+    // enter() / picker_confirm. The mode loses the radio + audio
+    // pipeline on exit; spectrum subscribers leaking past would pin
+    // Block 7's gate.
+    sync_spectrum_subscription(/*active=*/false);
     DAL::stop_audio_input("local");
     esp_now_broadcast_driver_instance()->stop_broadcast();
 }
@@ -126,12 +144,12 @@ void AutonomousMasterMode::resolve_active_vis_from_nvs() {
         v = visualisation_registry().find("beat-pulse");
     }
     active_vis_ = v;
-    // For BeatPulse the property bag + context are singletons in the vis
-    // TU. Future vis ship their own; the right ctx is whatever the
-    // active vis tells us via the registry. Today there is only one vis
-    // so a hardcoded ctx is fine; Block 11 will generalise this when
-    // SpectrumBars ships its own context.
-    ctx_ = (v != nullptr) ? &beat_pulse_context() : nullptr;
+    // Per-vis context lookup (Block 11). Each concrete vis owns its
+    // own VisualisationContext singleton and exposes it through the
+    // base-class context() accessor; the mode no longer hardcodes a
+    // specific accessor. Picker switch path (on_picker_confirm) goes
+    // through the same call.
+    ctx_ = (v != nullptr) ? &v->context() : nullptr;
 }
 
 void AutonomousMasterMode::refresh_status_label() {
@@ -217,6 +235,35 @@ void AutonomousMasterMode::on_audio_frame(const AudioFrameEvent& ev) {
     if (active_vis_ && ctx_) {
         active_vis_->on_audio_frame(*ctx_, ev);
     }
+}
+
+void AutonomousMasterMode::on_spectrum_frame(const SpectrumFrameEvent& ev) {
+    // Mirror the overlay guard from on_audio_frame: while a picker /
+    // settings overlay is open the screen is owned by the overlay UI,
+    // so the vis's spectrum render would fight repaints. We just drop
+    // the event - no internal state to update (unlike BPM tracking on
+    // the audio path).
+    if (overlay_ != Overlay::None) return;
+
+    if (active_vis_ && ctx_) {
+        active_vis_->on_spectrum_frame(*ctx_, ev);
+    }
+}
+
+void AutonomousMasterMode::sync_spectrum_subscription(bool active) {
+    // Always unsubscribe first so we start from a known state and the
+    // subscriber count is monotonic per (active_vis, active) pair.
+    // The DAL's unsubscribe is idempotent (returns 0 if nothing matches).
+    DAL::unsubscribe_spectrum_frames("local");
+
+    if (!active) return;
+    if (!active_vis_) return;
+    if (!active_vis_->power().needs_spectrum_frame) return;
+
+    // (Re-)subscribe via the namespace-scope routing callback in
+    // mode_machine.cpp; the callback fans out to s_active_mode-> on_spectrum_frame
+    // which lands back in this class's override above.
+    DAL::subscribe_spectrum_frames("local", &on_dal_spectrum_frame);
 }
 
 void AutonomousMasterMode::on_input_action(const InputEvent& ev) {
@@ -334,12 +381,19 @@ void AutonomousMasterMode::on_picker_confirm() {
     // BeatPulse ships, so beat_pulse_context() is always the right
     // surface; Block 11+ will route per-vis contexts).
     if (active_vis_ && ctx_) active_vis_->exit(*ctx_);
+    // Drop the outgoing vis's spectrum subscription before swapping so
+    // the gate goes false transiently between vis (and stays false if
+    // the incoming vis doesn't need spectrum).
+    sync_spectrum_subscription(/*active=*/false);
+
     active_vis_ = picked;
     persistence::save_active_vis_id(picked->id());
-    ctx_ = &beat_pulse_context();
+    // Pick up the incoming vis's own singleton context (Block 11).
+    ctx_ = &picked->context();
     if (ctx_) ctx_->set_paused(paused_);
     if (ctx_) ctx_->mark_entered(millis());
     if (ctx_) active_vis_->enter(*ctx_);
+    sync_spectrum_subscription(/*active=*/true);
     refresh_status_label();
     overlay_ = Overlay::None;
     draw();
@@ -418,14 +472,13 @@ void AutonomousMasterMode::on_settings_confirm() {
         }
     }
     ctx_->set_property(def.key, next);
-    // Note: BeatPulse caches its colour inside the pulse_ animator and
-    // refreshes it from the bag on the next on_input_action(Cycle) call.
-    // Editing via the Settings overlay bypasses that path - the cached
-    // colour stays stale until the next overlay-out Cycle, or until
-    // enter() re-syncs. For Block 10 this is acceptable (the visible
-    // surface during Settings is the overlay, not the pulse-rect); a
-    // future block can add a typed on_property_changed hook on the vis
-    // to remove the asymmetry. Surfaced as a follow-up in the brief.
+    // Block 11: notify the active vis so it can re-sync any cached
+    // state derived from the property value (e.g. BeatPulse's
+    // effects::Pulse colour cache). Without this, an edit to a
+    // property like BeatPulse's "color" via Settings would stay stale
+    // inside the vis until the next Cycle action. Vis that don't
+    // cache anything ignore the hook (base-class default no-op).
+    active_vis_->on_property_changed(*ctx_, def.key);
     draw();
 }
 

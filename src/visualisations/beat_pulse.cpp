@@ -16,6 +16,8 @@
 #include "dal/dal.h"
 #include "pixmob_protocol.h"
 
+#include <cstring>
+
 #ifdef ARDUINO
 #include <Arduino.h>
 #else
@@ -225,6 +227,17 @@ void BeatPulseVisualisation::sync_pulse_colour(VisualisationContext& ctx) {
     pulse_.set_colour(r, g, b);
 }
 
+void BeatPulseVisualisation::on_property_changed(VisualisationContext& ctx,
+                                                  const char* key) {
+    // Settings-overlay edits route here. Re-sync the colour cached
+    // inside effects::Pulse so the next beat fires the freshly-edited
+    // colour rather than the value last read on Cycle / enter().
+    // Cheap: just re-reads the bag and writes the three uint8s.
+    if (key != nullptr && std::strcmp(key, "color") == 0) {
+        sync_pulse_colour(ctx);
+    }
+}
+
 void BeatPulseVisualisation::update_bpm_from_buffer() {
     if (ibi_count_ < 3) return;
     uint32_t sorted[kIbiBufferSize];
@@ -254,6 +267,10 @@ VisualisationContext   s_ctx(s_instance, s_bag);
 BeatPulseVisualisation* beat_pulse_instance()     { return &s_instance; }
 PropertyBag&            beat_pulse_property_bag() { return s_bag; }
 VisualisationContext&   beat_pulse_context()      { return s_ctx; }
+
+VisualisationContext& BeatPulseVisualisation::context() {
+    return s_ctx;
+}
 
 const char* beat_pulse_colour_label() {
     const Colour c =

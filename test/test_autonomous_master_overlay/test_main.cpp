@@ -22,6 +22,7 @@
 #include "visualisations/visualisation_context.h"
 #include "visualisations/visualisation_registry.h"
 #include "visualisations/beat_pulse.h"
+#include "visualisations/spectrum_bars.h"
 #include "modes/mode_machine.h"
 
 // AutonomousMasterMode is a private header inside src/modes/. The test
@@ -43,6 +44,7 @@ using modes::test_seam::set_millis;
 using modes::AutonomousMasterMode;
 using visualisations::visualisation_registry;
 using visualisations::beat_pulse_instance;
+using visualisations::spectrum_bars_instance;
 using plugins::PropertyBag;
 using plugins::PropertyValue;
 
@@ -84,6 +86,11 @@ static constexpr Capability kCapabilities[] = {
     Capability::Display,
     Capability::Buttons,
     Capability::AnalyserBeatDetection,
+    // Block 11: needed so DAL composes SpectrumFrame as a host input
+    // capability, which subscribe_spectrum_frames gates on. The
+    // gate-flip test needs the subscribe to succeed when SpectrumBars
+    // activates so has_spectrum_frame_subscribers() can flip true.
+    Capability::AnalyserSpectrumFrame,
 };
 static constexpr size_t kCapabilityCount =
     sizeof(kCapabilities) / sizeof(kCapabilities[0]);
@@ -158,7 +165,11 @@ void setUp(void) {
     // Register the canonical BeatPulse vis - matches main.cpp's startup
     // wiring. Tests that exercise the "no vis registered" fallback path
     // can clear the registry locally inside the test body.
+    // Block 11 added SpectrumBars; register both in the order main.cpp
+    // does so the picker's index space is BeatPulse=0, SpectrumBars=1,
+    // "<- Menu"=2.
     visualisation_registry().register_plugin(beat_pulse_instance());
+    visualisation_registry().register_plugin(spectrum_bars_instance());
 
     dal::DAL::begin();
     ModeMachine::begin();
@@ -196,10 +207,13 @@ static void test_picker_cycle_advances_cursor_and_wraps(void) {
     inject_input_action(hal::InputAction::Picker);
     TEST_ASSERT_EQUAL_size_t(0u, m->overlay_cursor_for_tests());
 
-    // Registry has 1 vis ("beat-pulse"); picker_row_count = 2
-    // (vis + "<- Menu" sentinel).
+    // Registry has 2 vis ("beat-pulse" + "spec-bars"); picker_row_count
+    // = 3 (2 vis + "<- Menu" sentinel). Cycle wraps after the third row.
     inject_input_action(hal::InputAction::Cycle);
     TEST_ASSERT_EQUAL_size_t(1u, m->overlay_cursor_for_tests());
+
+    inject_input_action(hal::InputAction::Cycle);
+    TEST_ASSERT_EQUAL_size_t(2u, m->overlay_cursor_for_tests());
 
     inject_input_action(hal::InputAction::Cycle);
     TEST_ASSERT_EQUAL_size_t(0u, m->overlay_cursor_for_tests());   // wrap
@@ -223,7 +237,8 @@ static void test_picker_confirm_vis_row_persists_selection(void) {
 
 static void test_picker_back_menu_row_switches_to_menu(void) {
     inject_input_action(hal::InputAction::Picker);
-    // Cycle once to land on "<- Menu" (row index 1 with one vis).
+    // Cycle twice to land on "<- Menu" (row index 2 with two vis).
+    inject_input_action(hal::InputAction::Cycle);
     inject_input_action(hal::InputAction::Cycle);
     inject_input_action(hal::InputAction::Confirm);
     TEST_ASSERT_EQUAL_INT((int)ModeId::Menu, (int)ModeMachine::current());
@@ -328,6 +343,99 @@ static void test_persisted_picker_selection_survives_round_trip(void) {
 }
 
 // =============================================================================
+// Block 11: picker switches between BeatPulse and SpectrumBars; selection
+// persists across mode round-trip; Block 7 pipeline gate flips with the
+// active vis's PowerProfile.needs_spectrum_frame; settings-overlay edits
+// route through on_property_changed.
+// =============================================================================
+
+static void test_picker_confirm_switches_to_spectrum_bars(void) {
+    auto* m = master_instance();
+    // Default active vis on first enter is BeatPulse.
+    TEST_ASSERT_EQUAL_STRING("beat-pulse", m->active_vis_id_for_tests());
+
+    inject_input_action(hal::InputAction::Picker);
+    // Cycle once to land on SpectrumBars (row 1).
+    inject_input_action(hal::InputAction::Cycle);
+    inject_input_action(hal::InputAction::Confirm);
+
+    TEST_ASSERT_EQUAL_INT((int)ModeId::AutonomousMaster,
+                          (int)ModeMachine::current());
+    TEST_ASSERT_EQUAL_STRING("spec-bars", m->active_vis_id_for_tests());
+    TEST_ASSERT_EQUAL_STRING("spec-bars",
+        modes::persistence::load_active_vis_id());
+}
+
+static void test_picker_confirm_switches_back_to_beat_pulse(void) {
+    auto* m = master_instance();
+    // First switch to SpectrumBars.
+    inject_input_action(hal::InputAction::Picker);
+    inject_input_action(hal::InputAction::Cycle);
+    inject_input_action(hal::InputAction::Confirm);
+    TEST_ASSERT_EQUAL_STRING("spec-bars", m->active_vis_id_for_tests());
+
+    // Reopen picker; cursor resets to 0 (BeatPulse). Confirm switches back.
+    inject_input_action(hal::InputAction::Picker);
+    inject_input_action(hal::InputAction::Confirm);
+    TEST_ASSERT_EQUAL_STRING("beat-pulse", m->active_vis_id_for_tests());
+    TEST_ASSERT_EQUAL_STRING("beat-pulse",
+        modes::persistence::load_active_vis_id());
+}
+
+static void test_nvs_round_trip_loads_spectrum_bars(void) {
+    // Pre-seed NVS with "spec-bars" then re-enter AutonomousMaster.
+    modes::persistence::save_active_vis_id("spec-bars");
+    ModeMachine::switch_to(ModeId::Menu);
+    ModeMachine::switch_to(ModeId::AutonomousMaster);
+
+    auto* m = master_instance();
+    TEST_ASSERT_EQUAL_STRING("spec-bars", m->active_vis_id_for_tests());
+}
+
+static void test_block7_gate_flips_with_active_vis(void) {
+    // BeatPulse is the default active vis; its PowerProfile declares
+    // needs_spectrum_frame=false, so no spectrum subscriber installed.
+    TEST_ASSERT_FALSE(dal::DAL::has_spectrum_frame_subscribers());
+
+    // Switch to SpectrumBars via the picker - gate should flip true.
+    inject_input_action(hal::InputAction::Picker);
+    inject_input_action(hal::InputAction::Cycle);
+    inject_input_action(hal::InputAction::Confirm);
+    TEST_ASSERT_TRUE(dal::DAL::has_spectrum_frame_subscribers());
+
+    // Switch back to BeatPulse - gate should flip false again.
+    inject_input_action(hal::InputAction::Picker);
+    inject_input_action(hal::InputAction::Confirm);
+    TEST_ASSERT_FALSE(dal::DAL::has_spectrum_frame_subscribers());
+}
+
+static void test_mode_exit_drops_spectrum_subscription(void) {
+    // Activate SpectrumBars, then leave AutonomousMaster. The subscription
+    // must drop so the gate goes false while no master is hosting.
+    inject_input_action(hal::InputAction::Picker);
+    inject_input_action(hal::InputAction::Cycle);
+    inject_input_action(hal::InputAction::Confirm);
+    TEST_ASSERT_TRUE(dal::DAL::has_spectrum_frame_subscribers());
+
+    ModeMachine::switch_to(ModeId::Menu);
+    TEST_ASSERT_FALSE(dal::DAL::has_spectrum_frame_subscribers());
+}
+
+static void test_settings_edit_invokes_on_property_changed(void) {
+    // Settings-overlay edit to BeatPulse's "color" must re-sync the
+    // colour cached inside effects::Pulse. We can't observe Pulse's
+    // r_/g_/b_ directly, but we can observe the IR fan-out byte
+    // shape on the next beat - covered in the dedicated beat_pulse
+    // test env. Here we sanity-check the bag value bump.
+    auto& bag = visualisations::beat_pulse_property_bag();
+    bag.set("color", PropertyValue::from_enum(1));   // Red
+
+    inject_input_action(hal::InputAction::Settings);
+    inject_input_action(hal::InputAction::Confirm);   // edit row 0 -> 2 (Green)
+    TEST_ASSERT_EQUAL_UINT8(2, bag.get("color").as_enum());
+}
+
+// =============================================================================
 // Main
 // =============================================================================
 
@@ -344,5 +452,12 @@ int main(int, char**) {
     RUN_TEST(test_settings_back_row_closes_overlay);
     RUN_TEST(test_unknown_saved_id_falls_back_to_beat_pulse);
     RUN_TEST(test_persisted_picker_selection_survives_round_trip);
+    // Block 11 coverage.
+    RUN_TEST(test_picker_confirm_switches_to_spectrum_bars);
+    RUN_TEST(test_picker_confirm_switches_back_to_beat_pulse);
+    RUN_TEST(test_nvs_round_trip_loads_spectrum_bars);
+    RUN_TEST(test_block7_gate_flips_with_active_vis);
+    RUN_TEST(test_mode_exit_drops_spectrum_subscription);
+    RUN_TEST(test_settings_edit_invokes_on_property_changed);
     return UNITY_END();
 }

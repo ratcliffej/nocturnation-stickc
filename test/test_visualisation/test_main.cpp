@@ -172,6 +172,16 @@ public:
                             const dal::SpectrumFrameEvent&)                         override { ++spectrum_calls; }
     void on_input_action  (VisualisationContext&, const hal::InputEvent&)          override { ++input_calls;    }
     void tick             (VisualisationContext&, uint32_t now)                    override { ++tick_calls; last_tick_ms = now; }
+    // Block 11 added a pure-virtual context() accessor on Visualisation.
+    // This test stub creates its own bag/context on-the-fly elsewhere;
+    // the accessor returns a function-static singleton that's never
+    // actually exercised by the cases below but exists so the class
+    // remains instantiable.
+    VisualisationContext& context() override {
+        static PropertyBag bag(*this);
+        static VisualisationContext c(*this, bag);
+        return c;
+    }
 
     void reset() {
         enter_calls = exit_calls = audio_calls = spectrum_calls = input_calls = tick_calls = 0;
@@ -197,6 +207,11 @@ public:
     const char* display_name() const override { return "Demanding"; }
     CapabilityMask required_capabilities() const override {
         return make_capability_mask(Capability::AnalyserSpectrumFrame);
+    }
+    VisualisationContext& context() override {
+        static PropertyBag bag(*this);
+        static VisualisationContext c(*this, bag);
+        return c;
     }
 };
 
@@ -449,6 +464,11 @@ class BareVis : public Visualisation {
 public:
     const char* id()           const override { return "bare"; }
     const char* display_name() const override { return "Bare"; }
+    VisualisationContext& context() override {
+        static PropertyBag bag(*this);
+        static VisualisationContext c(*this, bag);
+        return c;
+    }
 };
 }  // namespace
 

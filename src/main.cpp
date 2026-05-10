@@ -18,6 +18,7 @@
 #include "modes/mode_machine.h"
 #include "visualisations/visualisation_registry.h"
 #include "visualisations/beat_pulse.h"
+#include "visualisations/spectrum_bars.h"
 #include "output_bindings/output_binding_registry.h"
 #include "output_bindings/local_display.h"
 #include "output_bindings/pixmob_ir.h"
@@ -33,11 +34,14 @@ void setup() {
 
     nocturnation::dal::DAL::begin();
 
-    // Register master-side visualisations (Epic 4.6 Block 8). Block 10
-    // will add SpectrumBars + the picker; for now BeatPulse is the only
-    // registered vis and AutonomousMasterMode resolves it by id on enter.
+    // Register master-side visualisations. BeatPulse landed in Block 8;
+    // SpectrumBars in Block 11. Order matters for the picker UI:
+    // BeatPulse first so it's the default cursor row on a fresh boot
+    // before NVS has anything saved.
     nocturnation::visualisations::visualisation_registry().register_plugin(
         nocturnation::visualisations::beat_pulse_instance());
+    nocturnation::visualisations::visualisation_registry().register_plugin(
+        nocturnation::visualisations::spectrum_bars_instance());
 
     // Register slave-side output bindings (Epic 4.6 Block 9). SlaveMode
     // walks this registry on enter() and activates every binding whose

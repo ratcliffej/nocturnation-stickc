@@ -44,8 +44,9 @@ public:
     void enter() override;
     void exit() override;
     void loop_tick() override;
-    void on_audio_frame (const dal::AudioFrameEvent& ev) override;
-    void on_input_action(const hal::InputEvent&      ev) override;
+    void on_audio_frame   (const dal::AudioFrameEvent&    ev) override;
+    void on_spectrum_frame(const dal::SpectrumFrameEvent& ev) override;
+    void on_input_action  (const hal::InputEvent&         ev) override;
 
     // Test accessors. Native test envs reach into these to verify the
     // overlay state machine and the status-strip label content without
@@ -95,6 +96,14 @@ private:
 
     void resolve_active_vis_from_nvs();
     void refresh_status_label();
+
+    // Block 7 pipeline gate driver. Pass active=true to (re-)subscribe
+    // when the active vis declares needs_spectrum_frame, false to drop
+    // any installed subscription. Idempotent: the unsubscribe path is
+    // a no-op when nothing's installed. Called from enter() / exit() /
+    // on_picker_confirm so the gate flips live as the active vis
+    // changes.
+    void sync_spectrum_subscription(bool active);
 
     void draw();
     void draw_picker();

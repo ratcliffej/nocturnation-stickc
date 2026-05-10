@@ -43,6 +43,11 @@ public:
     void exit (VisualisationContext&) override;
     void on_audio_frame (VisualisationContext&, const dal::AudioFrameEvent&) override;
     void on_input_action(VisualisationContext&, const hal::InputEvent&)      override;
+    void on_property_changed(VisualisationContext&, const char* key)         override;
+
+    // Per-vis context accessor (Block 11). Returns the BeatPulse-owned
+    // VisualisationContext singleton defined in beat_pulse.cpp.
+    VisualisationContext& context() override;
 
     // Status-display accessor: current BPM tracked by the vis. AutonomousMaster
     // draw() reads this through beat_pulse_estimated_bpm() so the mode's status

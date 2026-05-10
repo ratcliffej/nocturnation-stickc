@@ -71,6 +71,12 @@ public:
 
     virtual void on_button_event(const dal::ButtonPressEvent&) {}
     virtual void on_audio_frame (const dal::AudioFrameEvent&)  {}
+    // Spectrum-frame routing (Epic 4.6 Block 11). Mirrors on_audio_frame:
+    // ModeMachine subscribes once to DAL::subscribe_spectrum_frames at
+    // begin() and routes incoming events to the active mode. Modes that
+    // host a Visualisation declaring needs_spectrum_frame in its
+    // PowerProfile forward to the vis from this hook.
+    virtual void on_spectrum_frame(const dal::SpectrumFrameEvent&) {}
     // Semantic input action delivered via the host's InputActionMapper
     // (Block 4) and routed by ModeMachine's DAL::subscribe_input_actions
     // facade. Modes that have migrated to semantic input (Block 10

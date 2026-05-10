@@ -424,6 +424,92 @@ static void test_registry_registration(void) {
 }
 
 // =============================================================================
+// Block 11: per-vis context() accessor returns the singleton.
+// =============================================================================
+
+static void test_context_accessor_returns_singleton(void) {
+    BeatPulseVisualisation* v = beat_pulse_instance();
+    VisualisationContext& a = v->context();
+    VisualisationContext& b = beat_pulse_context();
+    TEST_ASSERT_EQUAL_PTR(&a, &b);
+}
+
+// =============================================================================
+// Block 11: stale-colour bug fix.
+//
+// Property bag's "color" is mutated WITHOUT going through on_input_action
+// (mirrors the Settings-overlay path) and then on_property_changed is
+// called by the framework. The very next on_audio_frame(is_beat=true) must
+// fire the NEW colour to "all-pixmobs", not the colour cached by enter().
+// =============================================================================
+
+static void test_property_changed_resyncs_pulse_colour_on_next_beat(void) {
+    BeatPulseVisualisation* v = beat_pulse_instance();
+    PropertyBag& bag          = beat_pulse_property_bag();
+    VisualisationContext& ctx = beat_pulse_context();
+
+    // Start with Red (1). enter() syncs pulse_ to Red.
+    bag.set("color", PropertyValue::from_enum(1));
+    v->enter(ctx);
+
+    // Simulate Settings-overlay edit: write Blue (3) directly into the
+    // bag (no Cycle action), then fire the on_property_changed hook.
+    bag.set("color", PropertyValue::from_enum(3));
+    v->on_property_changed(ctx, "color");
+
+    g_ir_driver.reset();
+    g_espnow_driver.reset();
+
+    // Next beat must hit IR with BLUE bytes (0x00,0x00,0xFF), not red.
+    AudioFrameEvent ev{};
+    ev.is_beat = true;
+    v->on_audio_frame(ctx, ev);
+
+    TEST_ASSERT_EQUAL_INT(1, g_ir_driver.rgb_pulse_count());
+    auto ir = g_ir_driver.last_rgb_pulse();
+    TEST_ASSERT_EQUAL_UINT8(0x00, ir.r);
+    TEST_ASSERT_EQUAL_UINT8(0x00, ir.g);
+    TEST_ASSERT_EQUAL_UINT8(0xFF, ir.b);
+
+    // And the wire-side colour comes straight from the bag in
+    // on_audio_frame, so it's the new colour too.
+    auto wire = g_espnow_driver.last_rgb_pulse();
+    TEST_ASSERT_EQUAL_UINT8(0x00, wire.r);
+    TEST_ASSERT_EQUAL_UINT8(0x00, wire.g);
+    TEST_ASSERT_EQUAL_UINT8(0xFF, wire.b);
+
+    v->exit(ctx);
+}
+
+// Behaviour preservation: unrelated keys passed to on_property_changed
+// must not touch the pulse colour cache.
+static void test_property_changed_ignores_unrelated_keys(void) {
+    BeatPulseVisualisation* v = beat_pulse_instance();
+    PropertyBag& bag          = beat_pulse_property_bag();
+    VisualisationContext& ctx = beat_pulse_context();
+
+    bag.set("color", PropertyValue::from_enum(1));   // Red
+    v->enter(ctx);
+
+    // Fire on_property_changed with a bogus key. The internal pulse_
+    // cache must stay Red, observable via the next beat's IR fire.
+    v->on_property_changed(ctx, "not-a-real-key");
+
+    g_ir_driver.reset();
+    AudioFrameEvent ev{};
+    ev.is_beat = true;
+    v->on_audio_frame(ctx, ev);
+
+    TEST_ASSERT_EQUAL_INT(1, g_ir_driver.rgb_pulse_count());
+    auto ir = g_ir_driver.last_rgb_pulse();
+    TEST_ASSERT_EQUAL_UINT8(0xFF, ir.r);
+    TEST_ASSERT_EQUAL_UINT8(0x00, ir.g);
+    TEST_ASSERT_EQUAL_UINT8(0x00, ir.b);
+
+    v->exit(ctx);
+}
+
+// =============================================================================
 // main
 // =============================================================================
 
@@ -440,5 +526,9 @@ int main(int, char**) {
     RUN_TEST(test_cycle_action_advances_and_wraps);
     RUN_TEST(test_non_cycle_action_ignored);
     RUN_TEST(test_registry_registration);
+    // Block 11 coverage.
+    RUN_TEST(test_context_accessor_returns_singleton);
+    RUN_TEST(test_property_changed_resyncs_pulse_colour_on_next_beat);
+    RUN_TEST(test_property_changed_ignores_unrelated_keys);
     return UNITY_END();
 }

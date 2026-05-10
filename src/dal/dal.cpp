@@ -340,6 +340,23 @@ bool DAL::subscribe_spectrum_frames(const char* target, SpectrumFrameCallback cb
     return true;
 }
 
+size_t DAL::unsubscribe_spectrum_frames(const char* target) {
+    if (!target) return 0;
+    // Compact in place: shift any non-matching entries down, drop matches.
+    size_t removed = 0;
+    size_t write = 0;
+    for (size_t read = 0; read < s_spectrum_sub_count; ++read) {
+        if (std::strcmp(s_spectrum_subs[read].target, target) == 0) {
+            ++removed;
+            continue;
+        }
+        if (write != read) s_spectrum_subs[write] = s_spectrum_subs[read];
+        ++write;
+    }
+    s_spectrum_sub_count = write;
+    return removed;
+}
+
 bool DAL::subscribe_button_presses(const char* target, ButtonPressCallback cb) {
     if (!target) return false;
     const DeviceProfile* p = profile_of(target);

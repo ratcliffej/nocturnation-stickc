@@ -103,6 +103,19 @@ void on_dal_input_action(const char*, const hal::InputEvent& ev) {
 
 }  // namespace
 
+// Spectrum-frame routing (Epic 4.6 Block 11). Symmetric to the audio
+// callback in the anonymous namespace above, but exposed at namespace
+// scope so AutonomousMasterMode can pass it to DAL::subscribe_spectrum_frames
+// at vis-activation time. ModeMachine does NOT subscribe to spectrum
+// frames globally at begin() - that would pin
+// DAL::has_spectrum_frame_subscribers() to true and defeat Block 7's
+// pipeline gate. AutonomousMasterMode subscribes/unsubscribes on vis
+// activation based on the active vis's PowerProfile.needs_spectrum_frame
+// flag, so the gate flips live with the picker.
+void on_dal_spectrum_frame(const char*, const SpectrumFrameEvent& ev) {
+    if (s_active_mode) s_active_mode->on_spectrum_frame(ev);
+}
+
 // =============================================================================
 // Persistence accessors over the local statics.
 // =============================================================================
