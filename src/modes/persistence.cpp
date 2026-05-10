@@ -5,6 +5,9 @@
 
 #include "persistence.h"
 
+#include "output_bindings/pixmob_ir.h"
+#include "plugins/property_bag.h"
+
 #ifdef ARDUINO
 #include <Arduino.h>
 #include <Preferences.h>
@@ -93,6 +96,63 @@ void save_master_channel(uint8_t c) {
     prefs.end();
 }
 
+// Slave channel: 0 = auto (dual-channel scan with show priority); 1 / 6 /
+// 11 = locked. Validated on read so an out-of-range value persisted by an
+// older build can't push SlaveMode into an invalid state.
+uint8_t load_slave_channel() {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/true);
+    uint8_t c = prefs.getUChar("slv_chan", 0);
+    prefs.end();
+    if (c != 0 && c != 1 && c != 6 && c != 11) c = 0;
+    return c;
+}
+
+void save_slave_channel(uint8_t c) {
+    if (c != 0 && c != 1 && c != 6 && c != 11) c = 0;
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/false);
+    prefs.putUChar("slv_chan", c);
+    prefs.end();
+}
+
+bool load_slave_repeat_enabled() {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/true);
+    bool e = prefs.getBool("slv_repeat", false);   // default OFF
+    prefs.end();
+    return e;
+}
+
+void save_slave_repeat_enabled(bool e) {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/false);
+    prefs.putBool("slv_repeat", e);
+    prefs.end();
+}
+
+void migrate_legacy_nvs_keys() {
+    // slv_ir_grp -> PixMobIrBinding "group" property. The legacy key
+    // lived in the "noct" namespace; the new home is the binding's
+    // own NVS namespace ("nb_pixmob-ir") via PropertyBag::set(). After
+    // a successful migration we remove the legacy key so a re-run is
+    // a no-op (operator factory-resets via ConfigMode > System >
+    // Factory Reset, which prefs.clear()s the whole "noct" namespace).
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/false);
+    if (prefs.isKey("slv_ir_grp")) {
+        uint8_t g = prefs.getUChar("slv_ir_grp", 0);
+        if (g > 5) g = 0;
+        // Write through the binding's property bag so the value lives
+        // under the "nb_pixmob-ir" namespace with key "group" - the
+        // bag is also what PixMobIrBinding::on_light_command reads.
+        nocturnation::output_bindings::pixmob_ir_property_bag().set(
+            "group", plugins::PropertyValue::from_enum(g));
+        prefs.remove("slv_ir_grp");
+    }
+    prefs.end();
+}
+
 AudioCalibration load_calibration() {
     Preferences prefs;
     prefs.begin("noct", /*readOnly=*/true);
@@ -111,6 +171,19 @@ void save_calibration(const AudioCalibration& c) {
     prefs.end();
 }
 #else
+// Native test stubs. The slave-channel / repeater values are held in
+// process-static memory so test fixtures can seed values via save_*
+// and exercise SlaveMode's enter() against the same load_* helpers
+// that the firmware path uses. The legacy-key migration delegates to
+// a process-static "noct/slv_ir_grp" stand-in that tests seed via
+// the helper at the bottom of this block.
+namespace {
+uint8_t s_native_slave_channel    = 0;
+bool    s_native_slave_repeat_en  = false;
+bool    s_native_legacy_slv_ir_grp_present = false;
+uint8_t s_native_legacy_slv_ir_grp_value   = 0;
+}  // namespace
+
 ModeId           load_last_runtime_mode() { return kDefaultRuntimeMode; }
 void             save_last_runtime_mode(ModeId)  {}
 bool             load_ir_enabled()             { return true; }
@@ -119,6 +192,38 @@ bool             load_screen_pulse_enabled()    { return true; }
 void             save_screen_pulse_enabled(bool) {}
 uint8_t          load_master_channel()          { return 1; }
 void             save_master_channel(uint8_t) {}
+uint8_t          load_slave_channel()           { return s_native_slave_channel; }
+void             save_slave_channel(uint8_t c)  {
+    if (c != 0 && c != 1 && c != 6 && c != 11) c = 0;
+    s_native_slave_channel = c;
+}
+bool             load_slave_repeat_enabled()           { return s_native_slave_repeat_en; }
+void             save_slave_repeat_enabled(bool e)     { s_native_slave_repeat_en = e; }
+
+void migrate_legacy_nvs_keys() {
+    if (s_native_legacy_slv_ir_grp_present) {
+        uint8_t g = s_native_legacy_slv_ir_grp_value;
+        if (g > 5) g = 0;
+        nocturnation::output_bindings::pixmob_ir_property_bag().set(
+            "group", plugins::PropertyValue::from_enum(g));
+        s_native_legacy_slv_ir_grp_present = false;
+        s_native_legacy_slv_ir_grp_value   = 0;
+    }
+}
+
+namespace test_seam {
+void seed_legacy_slv_ir_grp(uint8_t g) {
+    s_native_legacy_slv_ir_grp_present = true;
+    s_native_legacy_slv_ir_grp_value   = g;
+}
+void clear_native_persistence() {
+    s_native_slave_channel             = 0;
+    s_native_slave_repeat_en           = false;
+    s_native_legacy_slv_ir_grp_present = false;
+    s_native_legacy_slv_ir_grp_value   = 0;
+}
+}  // namespace test_seam
+
 AudioCalibration load_calibration()       { return kCalibrationDefault; }
 void             save_calibration(const AudioCalibration&) {}
 #endif

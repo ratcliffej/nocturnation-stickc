@@ -1,8 +1,11 @@
 // Shared NVS persistence helpers used by ModeMachine + multiple modes.
 //
-// Slave-only NVS helpers (slv_ir_grp, slv_chan, slv_repeat) are NOT here;
-// they live in slave_mode.cpp's anonymous namespace because no other mode
-// reads or writes them.
+// Slave-only NVS keys (slv_chan, slv_repeat) are owned here as of
+// Epic 4.6 Block 9 because both SlaveMode and ConfigMode read/write them
+// and the per-mode anonymous-namespace copies were drifting. The third
+// slave key (slv_ir_grp) is gone - migrated to PixMobIrBinding's
+// property bag (NVS namespace "nb_pixmob-ir", key "group") via
+// migrate_legacy_nvs_keys() on first boot after the upgrade.
 
 #pragma once
 
@@ -47,6 +50,33 @@ void             save_screen_pulse_enabled(bool e);
 uint8_t          load_master_channel();
 void             save_master_channel(uint8_t c);
 
+// Slave ESP-NOW channel preference. 0 = auto (dual-channel scan with
+// show priority), 1 / 6 / 11 = locked to that channel. Defaults to 0.
+// SlaveMode reads on enter(); ConfigMode mutates from the operator menu.
+uint8_t          load_slave_channel();
+void             save_slave_channel(uint8_t c);
+
+// Slave repeater mode. When enabled, slave rebroadcasts each unique
+// frame with hop_count + 1 (capped at spec §4.3's 3-hop limit). Off
+// by default. Receive-rebroadcast is an ESP-NOW transport concern, not
+// an output-binding concern, so it stays a slave-mode setting.
+bool             load_slave_repeat_enabled();
+void             save_slave_repeat_enabled(bool e);
+
+// One-shot NVS migration from pre-Block-9 keys to their new homes.
+// Called from ModeMachine::begin() BEFORE enter_mode(Boot) so the
+// property bags populated here are visible when SlaveMode is later
+// entered. Idempotent: removes legacy keys after migrating so the
+// second call is a no-op.
+//
+// Current migrations:
+//   noct/slv_ir_grp -> nb_pixmob-ir/group  (Block 9; slave IR forward
+//                                           group moved from a slave-
+//                                           mode private NVS key to
+//                                           PixMobIrBinding's property
+//                                           bag).
+void             migrate_legacy_nvs_keys();
+
 AudioCalibration load_calibration();
 void             save_calibration(const AudioCalibration& c);
 
@@ -61,6 +91,17 @@ AudioCalibration& current_calibration();
 // label + the "switch to last runtime" target), Menu (default cursor)
 // and Config (System submenu read-out).
 ModeId current_last_runtime();
+
+#ifndef ARDUINO
+// Native test seam. The slave-mode persistence helpers fall through to
+// process-static storage on native; tests reach in via these helpers to
+// seed legacy-key state (for migrate_legacy_nvs_keys coverage) and to
+// reset the static between test cases.
+namespace test_seam {
+void seed_legacy_slv_ir_grp(uint8_t g);
+void clear_native_persistence();
+}  // namespace test_seam
+#endif
 
 }  // namespace persistence
 }  // namespace modes

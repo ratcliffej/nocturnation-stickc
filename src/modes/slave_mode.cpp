@@ -2,15 +2,18 @@
 
 #include "slave_mode.h"
 
+#include "persistence.h"
 #include "dal/dal.h"
 #include "../dal/drivers/local_driver.h"   // for set_pulse_rect / pulse_enabled
+#include "output_bindings/output_binding_registry.h"
+#include "output_bindings/local_display.h"
+#include "output_bindings/pixmob_ir.h"
 
 #include <cstdio>
 #include <cstring>
 
 #ifdef ARDUINO
 #include <Arduino.h>
-#include <Preferences.h>
 #else
 extern "C" uint32_t millis();
 #endif
@@ -21,56 +24,29 @@ namespace modes {
 using namespace nocturnation::dal;
 using nocturnation::hal::ButtonId;
 using nocturnation::hal::ButtonEvent;
+using nocturnation::output_bindings::output_binding_registry;
+using nocturnation::output_bindings::OutputBinding;
+using nocturnation::output_bindings::OutputBindingContext;
+using nocturnation::output_bindings::pixmob_ir_instance;
+using nocturnation::output_bindings::pixmob_ir_context;
+using nocturnation::output_bindings::local_display_instance;
+using nocturnation::output_bindings::local_display_context;
 
 namespace {
 
-// =============================================================================
-// Slave-only NVS helpers (slv_ir_grp, slv_chan, slv_repeat).
-//
-// Live here rather than in the shared persistence module because no other
-// mode reads or writes them - keeping them local matches "the mode that
-// owns the setting also owns the NVS key" discipline.
-// =============================================================================
-
-#ifdef ARDUINO
-// Slave-mode IR forward group. 0 = broadcast (all-pixmobs), 1..5 = specific
-// PixMob group. Defaults to 0 to preserve the historical broadcast behaviour;
-// operators with multiple slaves in one venue should configure each one to a
-// different group via Config > IR > Slave Group to avoid IR airspace fights.
-uint8_t load_slave_ir_group() {
-    Preferences prefs;
-    prefs.begin("noct", /*readOnly=*/true);
-    uint8_t g = prefs.getUChar("slv_ir_grp", 0);
-    prefs.end();
-    if (g > 5) g = 0;
-    return g;
+// Per-binding context lookup. The framework owns one OutputBindingContext
+// per registered binding singleton (declared alongside the binding's
+// instance + property_bag accessors). The walk in enter() pairs each
+// binding with its own context here. Falls back to nullptr for any
+// binding that wasn't expected at registration time - those still get
+// activated but with no per-binding context (their on_light_command
+// has to operate context-free or skip work; the two we ship today
+// always have a context).
+OutputBindingContext* context_for(const OutputBinding* binding) {
+    if (binding == pixmob_ir_instance())      return &pixmob_ir_context();
+    if (binding == local_display_instance())  return &local_display_context();
+    return nullptr;
 }
-
-uint8_t load_slave_channel() {
-    Preferences prefs;
-    prefs.begin("noct", /*readOnly=*/true);
-    uint8_t c = prefs.getUChar("slv_chan", 0);   // 0 = auto/scan
-    prefs.end();
-    if (c != 0 && c != 1 && c != 6 && c != 11) c = 0;
-    return c;
-}
-
-// Slave repeater mode: when enabled, slave rebroadcasts each unique
-// frame with hop_count + 1 (capped at spec §4.3's 3-hop limit). Off
-// by default - operator opts in for venue range extension. Persisted
-// as `slv_repeat`.
-bool load_slave_repeat_enabled() {
-    Preferences prefs;
-    prefs.begin("noct", /*readOnly=*/true);
-    bool e = prefs.getBool("slv_repeat", false);   // default OFF
-    prefs.end();
-    return e;
-}
-#else
-uint8_t load_slave_ir_group()       { return 0; }
-uint8_t load_slave_channel()        { return 0; }
-bool    load_slave_repeat_enabled() { return false; }
-#endif
 
 }  // namespace
 
@@ -83,13 +59,13 @@ void SlaveMode::enter() {
     no_signal_        = false;
     last_strip_draw_ms_ = 0;
 
-    // Load operator-configured preferences from NVS. IR group lets
-    // multiple slaves in one venue avoid IR airspace fights; channel
-    // preference picks hobby (1) / show (11) / advanced (6) / auto-
-    // scan (0) per spec §4.5.
-    slave_ir_group_      = load_slave_ir_group();
-    slave_channel_pref_  = load_slave_channel();
-    slave_repeat_en_     = load_slave_repeat_enabled();
+    // Load operator-configured preferences from NVS. Channel preference
+    // picks hobby (1) / show (11) / advanced (6) / auto-scan (0) per
+    // spec §4.5. The slv_ir_grp setting moved to PixMobIrBinding's
+    // property bag in Block 9; ConfigMode > IR > Slave Group mutates
+    // it there and on_light_command reads it inline.
+    slave_channel_pref_  = persistence::load_slave_channel();
+    slave_repeat_en_     = persistence::load_slave_repeat_enabled();
     quality_.reset();
 
     // Auto-scan starts on channel 11 (show priority) per spec §4.5.
@@ -109,6 +85,27 @@ void SlaveMode::enter() {
     DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
     draw_status_strip();    // initial paint so the strip exists
 
+    // Activate output bindings whose required capabilities the host
+    // supports. Walks the registry, gates each one on
+    // required_capabilities().subset_of(host_caps), and calls
+    // binding->enter(ctx) on each accepted entry. Block 9 ships two
+    // bindings (LocalDisplayBinding + PixMobIrBinding); the soft cap
+    // of kMaxActiveBindings (4) gives near-future bindings room.
+    active_binding_count_ = 0;
+    auto& reg = output_binding_registry();
+    for (size_t i = 0; i < reg.count() && active_binding_count_ < kMaxActiveBindings; ++i) {
+        OutputBinding* b = reg.at(i);
+        if (!b) continue;
+        OutputBindingContext* bctx = context_for(b);
+        if (!bctx) continue;     // unknown binding; skip until wiring lands
+        if (!b->required_capabilities().subset_of(bctx->host_caps())) {
+            continue;
+        }
+        bctx->mark_entered(millis());
+        b->enter(*bctx);
+        active_bindings_[active_binding_count_++] = ActiveBinding{b, bctx};
+    }
+
     if (auto* radio = hal::HAL::esp_now()) {
         radio->set_recv_callback([this](const hal::ESPNowMessage& m) {
             this->on_recv(m);
@@ -118,13 +115,13 @@ void SlaveMode::enter() {
         if (!radio_active_) {
             Serial.println("[espnow] slave begin() failed");
         } else {
-            Serial.printf("[espnow] slave up: ch=%u (pref=%s, ir_grp=%u)\n",
+            Serial.printf("[espnow] slave up: ch=%u (pref=%s, bindings=%u)\n",
                           (unsigned)current_listen_chan_,
                           slave_channel_pref_ == 0 ? "auto"
                           : slave_channel_pref_ == 1 ? "1 hobby"
                           : slave_channel_pref_ == 11 ? "11 show"
                           : "6 custom",
-                          (unsigned)slave_ir_group_);
+                          (unsigned)active_binding_count_);
         }
 #endif
     }
@@ -135,6 +132,16 @@ void SlaveMode::exit() {
         if (auto* radio = hal::HAL::esp_now()) radio->end();
         radio_active_ = false;
     }
+    // Drain active bindings in reverse order so the last one entered
+    // is the first to exit (mirrors a typical scope stack discipline).
+    for (size_t i = active_binding_count_; i-- > 0;) {
+        auto& slot = active_bindings_[i];
+        if (slot.binding && slot.ctx) {
+            slot.binding->exit(*slot.ctx);
+        }
+        slot = ActiveBinding{};
+    }
+    active_binding_count_ = 0;
     // Restore full-screen pulse rect for whichever mode comes next.
     dal::local_driver_instance()->reset_pulse_rect();
 }
@@ -147,7 +154,7 @@ void SlaveMode::loop_tick() {
     // WiFi task where it would crash the S3.
     if (pending_light_) {
         pending_light_ = false;
-        render_light(pending_light_payload_);
+        fan_out_light_command(pending_light_payload_);
     }
 
     // Drain any pending repeater rebroadcast. Same deferred pattern -
@@ -262,25 +269,16 @@ void SlaveMode::mark_seen(uint8_t src, uint8_t seq) {
 
 // -------------------------------------------------------------------------
 // Slave-as-target-device: an inbound LIGHT_COMMAND fans out to every
-// locally-available lighting output via render_fx, each fail-silent if
-// its transport / driver isn't enabled. No auto-forwarding inside
-// render_fx itself - keeps each call to one job and respects the IR
-// mute toggle (Config > IR > Enable, which gates the ir-pixmob driver
-// via DAL::set_driver_enabled).
-//
-// Current targets:
-//   "local"       -> screen on the StickC; future LED on simpler devices,
-//                    screen + onboard LEDs on Tildagon.
-//   "all-pixmobs" -> IR broadcast to PixMob bracelets in range. TEMPORARY
-//                    target choice for Block 3.5 - Block 4 should switch
-//                    to "group-N" where N is the slave's NVS-configured
-//                    group, so two slaves on different groups don't fight
-//                    over the same airspace. Brand-independent rename of
-//                    "all-pixmobs" / "group-N" defers to its own focused
-//                    refactor pass; see project_pixmob_free_endgame memory.
+// active OutputBinding. Each binding owns one render surface (e.g.
+// LocalDisplayBinding -> screen on the StickC; PixMobIrBinding -> IR
+// to bracelets in the slave's configured group). Bindings are
+// fail-silent if their underlying transport / driver isn't enabled;
+// neither auto-forwards from inside render_fx - keeps each call to one
+// job and respects toggles like IR mute (Config > IR > Enable, which
+// gates the ir-pixmob driver via DAL::set_driver_enabled).
 // -------------------------------------------------------------------------
 
-void SlaveMode::render_light(const transport::espnow::LightCommandPayload& p) {
+void SlaveMode::fan_out_light_command(const transport::espnow::LightCommandPayload& p) {
     RgbPulseEvent ev{};
     ev.r       = p.r;
     ev.g       = p.g;
@@ -290,33 +288,11 @@ void SlaveMode::render_light(const transport::espnow::LightCommandPayload& p) {
     ev.release = static_cast<pixmob::Time>(p.release);
     ev.chance  = static_cast<pixmob::Chance>(p.chance);
 
-    // Local light surface (screen on the StickC).
-    DAL::render_fx("local", ev);
-
-    // IR forward to bracelets in this slave's configured group.
-    // Group 0 = broadcast to all PixMobs (compatible with bracelets
-    // that haven't been programmed with a specific group); 1..5 =
-    // specific group, lets two slaves in the same venue avoid
-    // bombarding all bracelets in IR range. Operator picks via
-    // Config > IR > Slave Group; persisted to NVS as slv_ir_grp.
-    // Fail-silent if IR is muted (Config > IR > Enable) or this
-    // host has no IR Tx capability.
-    const char* ir_target = ir_target_name(slave_ir_group_);
-    DAL::render_fx(ir_target, ev);
-}
-
-// Map group id (0..5) -> registered DAL device name. Group 0 maps to
-// "all-pixmobs" for full-broadcast behaviour; 1..5 map to the per-group
-// devices DAL::begin() registers.
-const char* SlaveMode::ir_target_name(uint8_t group_id) {
-    switch (group_id) {
-        case 0:  return "all-pixmobs";
-        case 1:  return "group-1";
-        case 2:  return "group-2";
-        case 3:  return "group-3";
-        case 4:  return "group-4";
-        case 5:  return "group-5";
-        default: return "all-pixmobs";
+    for (size_t i = 0; i < active_binding_count_; ++i) {
+        const auto& slot = active_bindings_[i];
+        if (slot.binding && slot.ctx) {
+            slot.binding->on_light_command(*slot.ctx, ev);
+        }
     }
 }
 

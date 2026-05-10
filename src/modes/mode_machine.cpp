@@ -128,6 +128,13 @@ void ModeMachine::begin() {
     dal::local_driver_instance()->set_pulse_enabled(
         persistence::load_screen_pulse_enabled());
     s_calibration  = persistence::load_calibration();
+
+    // One-shot migration of legacy NVS keys to their post-Block-9 homes.
+    // Must run BEFORE the first enter_mode() so any later transition
+    // into SlaveMode finds PixMobIrBinding's "group" property already
+    // populated from the legacy slv_ir_grp key.
+    persistence::migrate_legacy_nvs_keys();
+
     s_active_mode  = nullptr;          // force enter() in enter_mode()
     enter_mode(ModeId::Boot);
 }

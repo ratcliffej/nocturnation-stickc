@@ -13,11 +13,14 @@
 
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 
 #include "modes/mode_machine.h"
 #include "hal/hal.h"
+#include "output_bindings/output_binding.h"
+#include "output_bindings/output_binding_context.h"
 #include "transport/espnow/frame.h"
 #include "transport/quality.h"
 
@@ -59,9 +62,22 @@ private:
     uint8_t   last_msg_type_      = 0xFF;
     bool      no_signal_          = false;   // sticky once threshold crossed
 
-    // Slave IR forward group (0=broadcast/all-pixmobs, 1..5=specific).
-    // Loaded from NVS on enter() so the operator's choice survives reboot.
-    uint8_t   slave_ir_group_     = 0;
+    // Active output bindings. Walked at enter() against
+    // output_binding_registry(): each binding whose
+    // required_capabilities() are a subset of host_caps() gets added
+    // here paired with its own context, and its enter() called. Drained
+    // in exit(). Inbound LIGHT_COMMAND frames decoded in on_recv fan
+    // out via loop_tick() to every active binding's on_light_command.
+    // Soft cap of 4 - we ship two concrete bindings (LocalDisplay +
+    // PixMobIr) today; the headroom covers near-future additions
+    // (DMX-out, Tildagon LED ring) without resizing.
+    struct ActiveBinding {
+        output_bindings::OutputBinding*        binding = nullptr;
+        output_bindings::OutputBindingContext* ctx     = nullptr;
+    };
+    static constexpr size_t kMaxActiveBindings = 4;
+    std::array<ActiveBinding, kMaxActiveBindings> active_bindings_{};
+    size_t                                        active_binding_count_ = 0;
 
     // Channel preference: 0 = auto (dual-channel scan with show priority),
     // 1 / 6 / 11 = locked to that channel. Loaded from NVS on enter().
@@ -119,9 +135,12 @@ private:
     bool seen_recently(uint8_t src, uint8_t seq) const;
     void mark_seen(uint8_t src, uint8_t seq);
 
-    void render_light(const transport::espnow::LightCommandPayload& p);
-
-    static const char* ir_target_name(uint8_t group_id);
+    // Convert a decoded LIGHT_COMMAND payload into an RgbPulseEvent
+    // and fan out to every active OutputBinding. The fan-out is the
+    // pre-migration render_light() body's two render_fx calls, now
+    // owned by LocalDisplayBinding + PixMobIrBinding respectively
+    // (Block 9).
+    void fan_out_light_command(const transport::espnow::LightCommandPayload& p);
 
     void on_recv(const hal::ESPNowMessage& m);
 

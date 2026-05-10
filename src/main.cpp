@@ -18,6 +18,9 @@
 #include "modes/mode_machine.h"
 #include "visualisations/visualisation_registry.h"
 #include "visualisations/beat_pulse.h"
+#include "output_bindings/output_binding_registry.h"
+#include "output_bindings/local_display.h"
+#include "output_bindings/pixmob_ir.h"
 
 void setup() {
     // Bring up the USB-CDC / UART console. Required before any Serial.printf
@@ -35,6 +38,16 @@ void setup() {
     // registered vis and AutonomousMasterMode resolves it by id on enter.
     nocturnation::visualisations::visualisation_registry().register_plugin(
         nocturnation::visualisations::beat_pulse_instance());
+
+    // Register slave-side output bindings (Epic 4.6 Block 9). SlaveMode
+    // walks this registry on enter() and activates every binding whose
+    // required capabilities the host supports. LocalDisplayBinding
+    // owns the "local" render surface (screen); PixMobIrBinding owns
+    // IR forward to bracelets in this slave's configured group.
+    nocturnation::output_bindings::output_binding_registry().register_plugin(
+        nocturnation::output_bindings::local_display_instance());
+    nocturnation::output_bindings::output_binding_registry().register_plugin(
+        nocturnation::output_bindings::pixmob_ir_instance());
 
     nocturnation::modes::ModeMachine::begin();
 }

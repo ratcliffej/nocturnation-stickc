@@ -1,0 +1,44 @@
+// LocalDisplayBinding - slave-side local-screen render of inbound
+// LIGHT_COMMAND events.
+//
+// Migrated from SlaveMode::render_light's first `DAL::render_fx("local",
+// ev)` line in Epic 4.6 Block 9. The pre-migration SlaveMode fired
+// render_fx("local", ev) unconditionally for every decoded
+// LIGHT_COMMAND payload, which routed through LocalDriver to paint the
+// pulse rect. This binding owns that responsibility now: on_light_command
+// forwards the same event to the same "local" target.
+//
+// No properties yet. Future blocks may add brightness / pulse-rect
+// overrides; the property bag scaffolding is in place via the binding's
+// "nb_local-display" NVS namespace whenever those land.
+//
+// Power profile: defaults (event-driven; no audio/spectrum/tick needs).
+// Capability requirements: Display.
+
+#pragma once
+
+#include "output_bindings/output_binding.h"
+#include "plugins/property_bag.h"
+
+namespace nocturnation {
+namespace output_bindings {
+
+class LocalDisplayBinding : public OutputBinding {
+public:
+    const char* id()           const override { return "local-display"; }
+    const char* display_name() const override { return "Local Display"; }
+
+    hal::CapabilityMask required_capabilities() const override;
+
+    void on_light_command(OutputBindingContext&,
+                           const dal::RgbPulseEvent&) override;
+};
+
+// Singletons. main.cpp registers via:
+//   output_binding_registry().register_plugin(local_display_instance());
+LocalDisplayBinding*  local_display_instance();
+plugins::PropertyBag& local_display_property_bag();
+OutputBindingContext& local_display_context();
+
+}  // namespace output_bindings
+}  // namespace nocturnation

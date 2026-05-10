@@ -5,6 +5,8 @@
 #include "persistence.h"
 #include "dal/dal.h"
 #include "../dal/drivers/local_driver.h"   // for set_pulse_enabled gating
+#include "output_bindings/pixmob_ir.h"
+#include "plugins/property_bag.h"
 
 #include <cstdio>
 
@@ -22,69 +24,24 @@ using namespace nocturnation::dal;
 using nocturnation::hal::ButtonId;
 using nocturnation::hal::ButtonEvent;
 
-// ConfigMode reads/writes the slave NVS keys (IR group, channel, repeat)
-// directly from its own anonymous namespace - those keys logically belong
-// to SlaveMode but ConfigMode is the operator surface that mutates them.
-// Slave's enter() loads them into in-memory state on next mode transition.
+// ConfigMode reads/writes operator-mutable settings. Channel + repeat
+// for the slave route through persistence:: shared helpers (Block 9);
+// the slave's IR forward group rides PixMobIrBinding's property bag.
 namespace {
 
-#ifdef ARDUINO
+// Slave IR group cycles 0..5 via the binding's "group" property. Read
+// hits the bag's NVS-backed (or, on native, in-memory) value; write
+// clamps via PropertyValue::from_enum and the bag's bounds check.
 uint8_t load_slave_ir_group() {
-    Preferences prefs;
-    prefs.begin("noct", /*readOnly=*/true);
-    uint8_t g = prefs.getUChar("slv_ir_grp", 0);
-    prefs.end();
-    if (g > 5) g = 0;
-    return g;
+    return nocturnation::output_bindings::pixmob_ir_property_bag()
+        .get("group").as_enum();
 }
 
 void save_slave_ir_group(uint8_t g) {
     if (g > 5) g = 0;
-    Preferences prefs;
-    prefs.begin("noct", /*readOnly=*/false);
-    prefs.putUChar("slv_ir_grp", g);
-    prefs.end();
+    nocturnation::output_bindings::pixmob_ir_property_bag().set(
+        "group", plugins::PropertyValue::from_enum(g));
 }
-
-uint8_t load_slave_channel() {
-    Preferences prefs;
-    prefs.begin("noct", /*readOnly=*/true);
-    uint8_t c = prefs.getUChar("slv_chan", 0);
-    prefs.end();
-    if (c != 0 && c != 1 && c != 6 && c != 11) c = 0;
-    return c;
-}
-
-void save_slave_channel(uint8_t c) {
-    if (c != 0 && c != 1 && c != 6 && c != 11) c = 0;
-    Preferences prefs;
-    prefs.begin("noct", /*readOnly=*/false);
-    prefs.putUChar("slv_chan", c);
-    prefs.end();
-}
-
-bool load_slave_repeat_enabled() {
-    Preferences prefs;
-    prefs.begin("noct", /*readOnly=*/true);
-    bool e = prefs.getBool("slv_repeat", false);
-    prefs.end();
-    return e;
-}
-
-void save_slave_repeat_enabled(bool e) {
-    Preferences prefs;
-    prefs.begin("noct", /*readOnly=*/false);
-    prefs.putBool("slv_repeat", e);
-    prefs.end();
-}
-#else
-uint8_t load_slave_ir_group()           { return 0; }
-void    save_slave_ir_group(uint8_t)    {}
-uint8_t load_slave_channel()            { return 0; }
-void    save_slave_channel(uint8_t)     {}
-bool    load_slave_repeat_enabled()     { return false; }
-void    save_slave_repeat_enabled(bool) {}
-#endif
 
 }  // namespace
 
@@ -438,10 +395,12 @@ void ConfigMode::handle_espnow(const ButtonPressEvent& ev) {
                     cycle_master_channel(persistence::load_master_channel()));
                 break;
             case EspNowItem::SlaveChannel:
-                save_slave_channel(cycle_slave_channel(load_slave_channel()));
+                persistence::save_slave_channel(
+                    cycle_slave_channel(persistence::load_slave_channel()));
                 break;
             case EspNowItem::SlaveRepeat:
-                save_slave_repeat_enabled(!load_slave_repeat_enabled());
+                persistence::save_slave_repeat_enabled(
+                    !persistence::load_slave_repeat_enabled());
                 break;
         }
         // New value applies on next AutonomousMaster / SlaveMode enter().
@@ -461,9 +420,9 @@ void ConfigMode::draw_espnow() {
     std::snprintf(m_line, sizeof(m_line), "Master: %s",
                   master_channel_label(persistence::load_master_channel()));
     std::snprintf(s_line, sizeof(s_line), "Slave:  %s",
-                  slave_channel_label(load_slave_channel()));
+                  slave_channel_label(persistence::load_slave_channel()));
     std::snprintf(r_line, sizeof(r_line), "Repeat: %s",
-                  load_slave_repeat_enabled() ? "ON" : "OFF");
+                  persistence::load_slave_repeat_enabled() ? "ON" : "OFF");
     const char* lines[kEspNowFunctionalItemCount] = { m_line, s_line, r_line };
 
     for (size_t i = 0; i < kEspNowFunctionalItemCount; ++i) {
