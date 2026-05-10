@@ -1,6 +1,6 @@
 ---
 title: "Epic 4.6: Clean architecture and UI polish"
-status: In Progress
+status: Done
 notion_url: https://www.notion.so/35cbd067740581e4ba55f79eb168ec9d
 notion_id: 35cbd067740581e4ba55f79eb168ec9d
 notion_status: In Progress
@@ -222,3 +222,11 @@ Originally proposed as a UI-cleanup-only Epic. Scope expanded 2026-05-10 after a
 The architecture stream lands first because the UI work touches the same files and would be redone otherwise. Tildagon-specific implementation is explicitly out of scope; the architecture is *designed with Tildagon in mind* (input abstraction supports its 6 buttons; OutputBinding supports its different display) but no Tildagon code lands here.
 
 Total estimated effort: ~9-10 days of focused work across 14 blocks. Larger than 4.5 but lands a properly composable architecture that future Epics extend rather than patch.
+
+### Close-out (2026-05-10)
+
+Epic 4.6 shipped all 14 blocks per-block-committed. Final test count: **274 native tests across 15 envs**, all passing. Both firmware envs (`m5stack-stickcplus2`, `m5stack-stickcs3`) build green. PixMob byte-parity tests stayed identical from Block 1 through Block 14, confirming the behaviour-preservation contract held across the architectural migration. The single canonical `FIRMWARE_VERSION` macro lives in `include/firmware_version.h` and is now `v0.5` (was an inconsistent mix of `"v0.4-epic46"` on the splash and `"1.0.0"` in the System config screen).
+
+Headline outcomes: master-side `Visualisation` and slave-side `OutputBinding` plug-in surfaces both shipped; 2 vis (`BeatPulseVisualisation`, `SpectrumBarsVisualisation`) and 2 bindings (`LocalDisplayBinding`, `PixMobIrBinding`) ship today; `InputAction` semantic input layer ready for the Tildagon's 6 buttons; pipeline gating live (spectrum-frame fan-out gated on visualisation `PowerProfile.needs_spectrum_frame`); per-vis NVS-backed property bags via `noct/<plugin-kind>/<id>/<key>`; ESP-NOW broadcaster lifted from per-mode helper to a proper Driver behind `render_fx("esp-now-broadcast", ev)`.
+
+Deferred to follow-up Epics (no functional gap; flagged in spec §5.4 and the project-context memory): true ESP32 light-sleep windows on top of the `PowerProfile` declarations; slave-side modem-sleep between heartbeats; the `transport_protocol_groupfilter` device-naming sweep (waits for a second IR-protocol consumer); the four `AnalyserMultiBandOnset` / `AnalyserSpectralCentroid` / `AnalyserEnergyEnvelope` / `AnalyserSectionDetection` capability flags are reserved enum constants with a documentation block flagging them as no-host-declared until Epic 4.7 lands the producing analysers.

@@ -2,6 +2,7 @@
 
 #include "config_mode.h"
 
+#include "firmware_version.h"
 #include "persistence.h"
 #include "dal/dal.h"
 #include "../dal/drivers/local_driver.h"   // for set_pulse_enabled gating
@@ -53,7 +54,6 @@ constexpr const char* ConfigMode::kIrItems[];
 constexpr const char* ConfigMode::kEspNowItems[];
 constexpr const char* ConfigMode::kWifiItems[];
 constexpr const char* ConfigMode::kDmxItems[];
-constexpr const char* ConfigMode::kFirmwareVersion;
 
 void ConfigMode::enter() {
     level_         = Level::Top;
@@ -599,7 +599,8 @@ void ConfigMode::draw_system() {
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         10, 5, "System", WHITE, BLACK, 2});
 
-    char fw[28]; std::snprintf(fw, sizeof(fw), "Firmware: %s", kFirmwareVersion);
+    char fw[28]; std::snprintf(fw, sizeof(fw), "Firmware: %s",
+                               ::nocturnation::kFirmwareVersion);
     char dm[28]; std::snprintf(dm, sizeof(dm), "Default: %s",
                                mode_label_short(persistence::current_last_runtime()));
     char br[28];

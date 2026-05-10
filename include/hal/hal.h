@@ -54,8 +54,23 @@ enum class Capability : uint8_t {
     AnalyserDropDetection,    // produces MUSIC_EVENT (DROP / BREAKDOWN) events
     AnalyserSpectrumFrame,    // emits 32-band log-spaced SpectrumFrameEvent
     AnalyserBandSummary,      // emits 3-band B/M/T + 8-band perceptual summary
-    // Reserved for Epic 4.7 (declared so the enum is stable; not yet listed
-    // by any host's capability set):
+    // -------------------------------------------------------------------------
+    // RESERVED for Epic 4.7. **No host should declare any of these today.**
+    //
+    // These four enum constants are placeholders for analyser sub-capabilities
+    // that Epic 4.7 will introduce. The analysers that *produce* the
+    // corresponding events do not yet exist anywhere in the codebase, so
+    // declaring one of these in a HAL backend's capability set today is
+    // meaningless: the framework will believe the capability is available, but
+    // no data will ever flow. Worse, a future visualisation whose PowerProfile
+    // requires one of these capabilities will appear enabled in the picker yet
+    // silently never get the data it asks for.
+    //
+    // They are listed here (rather than added in Epic 4.7) only so the enum
+    // numbering stays stable: visualisations and tests can reference the names
+    // today without recompiling the whole tree when Epic 4.7 lands the
+    // analysers that finally back them.
+    // -------------------------------------------------------------------------
     AnalyserMultiBandOnset,   // SNARE/HIHAT events alongside BEAT_DETECTED
     AnalyserSpectralCentroid, // continuous centroid descriptor
     AnalyserEnergyEnvelope,   // continuous smoothed-RMS descriptor

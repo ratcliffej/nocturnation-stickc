@@ -412,7 +412,9 @@ The analyser is a HAL+DAL capability cluster. Each host's HAL provides FFT magni
 6. **Drop detection** (long-window energy ratio): short window (~2 s) and long window (~10 s) of bass-roll-up energy. `ratio = short_mean / long_mean > 1.8` fires DROP; `< 0.4` fires BREAKDOWN. Arm/disarm gate prevents sustained energy re-firing across cooldown cycles - DROP is a transition event, not a persistent-state event.
 7. **BPM tracking**: rolling buffer of inter-beat intervals at orchestration layer; reject outliers (50-300 BPM range); compute median.
 
-**Pipeline gating** (Epic 4.6 Block 7): the `SpectrumFrameEvent` fan-out is gated on whether any subscribers are registered. When nothing is listening, the per-frame 32-float copy and dispatch are skipped in `LocalDriver`. The underlying FFT roll-up that produces `frame.spectrum` still runs unconditionally because `BeatDetector` consumes the 32-band magnitudes in-pipeline; gating the FFT itself would silently break beat detection. The larger Plus2 CPU savings observed in Epic 4.6 come from Block 12's analyser micro-optimisations (constant hoisting in the spectrum-frame compositor), not from this gate.
+**Pipeline gating** (Epic 4.6 Block 7, refined Blocks 8 / 11): the `SpectrumFrameEvent` fan-out is consumer-gated. The active `Visualisation`'s `PowerProfile` declares whether it needs spectrum frames (`needs_spectrum_frame=true`); the spectrum-event dispatch path only fires when at least one consumer is subscribed via that declaration. When no active vis asks for spectrum data (e.g. `BeatPulseVisualisation`, which only needs `is_beat` from the audio frame), the per-frame 32-float copy and dispatch are skipped in `LocalDriver`; switching to a vis that does need it (`SpectrumBarsVisualisation`) flips the gate live. The analyser surface itself didn't grow — `compute_spectrum_frame()` is the same pure function — the dispatch gate is what's new.
+
+The underlying FFT roll-up that produces `frame.spectrum` still runs unconditionally inside the mic backend because `BeatDetector` consumes the 32-band magnitudes in-pipeline; gating the FFT itself would silently break beat detection. The larger Plus2 CPU savings observed in Epic 4.6 come from Block 12's analyser micro-optimisations (constant hoisting in the spectrum-frame compositor, precomputed bin→Hz LUT, single-pass Welford variance in BeatDetector), not from this gate.
 ### 5.2 Capability surface
 A host's analyser declares a flat set of feature flags from the `Capability` enum (see [`include/hal/hal.h`](https://github.com/ratcliffej/nocturnation-stickc/blob/main/include/hal/hal.h)). Lit by Epic 4.5:
 - `AnalyserBeatDetection` - produces BEAT_DETECTED events
@@ -664,6 +666,22 @@ display.show_idle()                   # default ambient
 ```
 The StickC Plus2 implements these by drawing on its LCD; the Tildagon implements them on its round screen (and may extend with circle-specific effects); the Atom Lite ignores them (no display); the Core2 might present them as a richer console-style UI.
 This abstraction is not yet implemented and is on the medium-term roadmap. For v1 of the spec, display behaviour is platform-specific and not part of the cross-device protocol.
+### 7.6 Plug-in surfaces (Epic 4.6)
+Epic 4.6 made the rendering pipeline pluggable on both sides of the wire. The host code never bakes in *which* visualisation runs on the master or *which* render destinations a slave drives - those are plug-ins discovered from registries at boot.
+
+**Master-side: `Visualisation` plug-ins.** A visualisation is the artistic logic that turns analyser events (audio frames, spectrum frames, beats) into a sequence of `render_fx` calls. The contract lives in [`include/visualisations/visualisation.h`](https://github.com/ratcliffej/nocturnation-stickc/blob/main/include/visualisations/visualisation.h): each vis declares its id, display name, required capabilities, a property schema (Block 3's `PropertyDef`), and a `PowerProfile` (which analyser surfaces it consumes). At runtime it receives a `VisualisationContext` exposing `render_fx(target, ev)`, property-bag accessors, the host's `CapabilityMask`, paused state, and time helpers. Hook surface: `enter/exit/on_audio_frame/on_spectrum_frame/on_input_action/tick`.
+
+Two visualisations ship today: `BeatPulseVisualisation` (the migrated single-colour beat pulse from Epics 1-4.5, `primary_colour` persisted via property bag) and `SpectrumBarsVisualisation` (live 32-band bars on the LCD with a manual band-fire trigger). The active visualisation is chosen at runtime via the picker overlay (Btn2 long), persisted to NVS under `noct/active_vis`, and respects capability gating — a vis whose `required_capabilities` aren't present on the host appears greyed in the picker. `AutonomousMasterMode` is a thin shell: it owns the broadcaster lifecycle and pause toggle, holds a pointer to the active vis, and forwards events.
+
+**Master-side asymmetry to slaves** (intentional). The master does **not** auto-bind a `LocalDisplayBinding`. Whether the master LCD participates in the show is a per-visualisation choice. `BeatPulseVisualisation` paints the LCD with the same pulse-rect it broadcasts to slaves; `SpectrumBarsVisualisation` paints bars instead; a future "headless master" vis could leave the LCD as status-only. The slave's LCD is a render destination by default (via `LocalDisplayBinding`); the master's LCD is something the visualisation chooses to claim as part of its show.
+
+**Slave-side: `OutputBinding` plug-ins.** An output binding consumes `RenderEvent`s and turns them into hardware action. The contract lives in [`include/output_bindings/output_binding.h`](https://github.com/ratcliffej/nocturnation-stickc/blob/main/include/output_bindings/output_binding.h): same Plugin base as Visualisation, same property-bag and capability machinery. Differences from Visualisation: bindings have no `render_fx` accessor (they *are* the render destination, calling `render_fx` from one would be circular) and their hook surface is `on_light_command` rather than `on_audio_frame`. `SlaveMode` is a thin shell that fans inbound `LIGHT_COMMAND` events out to every registered binding.
+
+Two bindings ship today: `LocalDisplayBinding` (paints the slave's LCD full-bleed with the broadcast colour and ASR envelope - the "display-as-light" behaviour from Epic 4) and `PixMobIrBinding` (IR + PixMob protocol with a `group` property, 0=broadcast/all-pixmobs, 1-5=specific group). Both can run simultaneously; either can be disabled in Config to limit the slave to one output. The legacy NVS keys (`slv_ir_grp`) migrated one-shot to the per-binding namespace at first boot.
+
+Future hosts add their own bindings without touching slave code: Tildagon (Epic 5) will ship a `TildagonLedRingBinding` for its six perimeter RGB LEDs; a DMX deployment (Epic 7) lands a `DmxOutputBinding`; a BLE-controlled bracelet line lands a `BleBinding`. None of those require a recompile of `SlaveMode`.
+
+**Shared infrastructure** (Block 3): a `Plugin` base class providing id, display name, capability requirements, NVS-backed `PropertyBag` (namespace `nv_<id>` for visualisations, `nb_<id>` for output bindings; plugin id capped at 12 chars so the namespace stays under NVS's 15-char limit), and `PowerProfile` declaration. Templated `Registry<T>` machinery with explicit `register_plugin()` calls in `setup()` (no static-init magic). Both Visualisation and OutputBinding extend the same base.
 ---
 ## 8. Node operating modes and UI
 Every Nocturnation node runs the same conceptual state machine, regardless of hardware platform. The UI surface differs (StickC Plus2 has 3 buttons + screen; Tildagon has 6 buttons + round screen; Atom Lite has 1 button + 1 LED) but the *modes* and the *transitions between them* are common.
@@ -780,8 +798,49 @@ For hardware validation and bracelet setup verification. Each test fires a known
 <td>Limited UI; uses LED colour to indicate mode (red=Master, blue=Slave, white=Test). Long-press to cycle modes; single-press for default action within mode. Config done via serial console or one-shot "setup mode" via button held during boot.</td>
 </tr>
 </table>
-### 8.7 Open design questions
-- **Boot countdown duration**: 5s fixed, configurable, or platform-dependent?
+### 8.7 InputAction abstraction (Epic 4.6 Block 4)
+The UI surface differs across hosts (StickC Plus2 + S3 = 2 buttons in practice once the power button is excluded; Tildagon = 6 buttons; Atom Lite = 1 button), so Epic 4.6 introduced a semantic input layer that visualisations and the framework UI consume regardless of host. Physical button-to-action mapping is the HAL's concern; everything above the HAL deals in `InputAction` events.
+
+The canonical action set lives in [`include/hal/input_action.h`](https://github.com/ratcliffej/nocturnation-stickc/blob/main/include/hal/input_action.h):
+
+```c++
+enum class InputAction : uint8_t {
+    None,
+    Confirm,    // primary "accept / fire" gesture
+    Cycle,      // step forward through a choice list
+    CyclePrev,  // step backward (unbound on 2-button hosts)
+    Pause,      // toggle pause
+    Settings,   // open per-vis settings overlay
+    Picker,     // open vis-picker overlay
+    AuxA,       // reserved for richer hosts
+    AuxB,       // reserved for richer hosts
+};
+```
+
+For 2-button hosts (Plus2 + S3), the mapping lives in [`src/hal/input_action_mapper_2btn.cpp`](https://github.com/ratcliffej/nocturnation-stickc/blob/main/src/hal/input_action_mapper_2btn.cpp):
+
+| Physical event | Action |
+|---|---|
+| Btn1 short click | `Confirm` |
+| Btn1 long press | `Settings` |
+| Btn1 double-click | `Pause` |
+| Btn2 short click | `Cycle` |
+| Btn2 long press | `Picker` |
+
+For 6-button hosts (Tildagon, Epic 5) a sibling mapper will land that emits the same canonical action set from a different physical layout (`CyclePrev` / `AuxA` / `AuxB` become reachable). Visualisation code never sees the physical event — it sees only `InputAction` — so a vis written against the StickC layout runs unchanged on the Tildagon.
+
+Both `ButtonPressEvent` and `InputEvent` fire from the same physical event during the migration window, so legacy modes that subscribe directly to button presses (Config, Menu, Test) continue to work alongside vis code that subscribes only to actions.
+
+### 8.8 Modal overlays in Autonomous Master Mode (Epic 4.6 Blocks 10-11)
+`AutonomousMasterMode` runs the active visualisation full-screen by default but exposes two operator overlays without leaving the mode:
+
+- **Picker overlay** (opened by `InputAction::Picker`): lists every registered `Visualisation`, marks the active one, greys out any vis whose `required_capabilities` are not present on this host. `InputAction::Cycle` steps through the list; `InputAction::Confirm` selects and dismisses; a second `Picker` press dismisses without changing selection. The chosen vis id persists to NVS (`noct/active_vis`) so the same vis returns on next boot.
+- **Settings overlay** (opened by `InputAction::Settings`): renders an auto-generated settings UI from the active vis's `properties()` schema (PropertyType=Bool toggles, Colour cycles through the named palette, Enum cycles through `enum_names`, U8/U16 step on Cycle). A visualisation can override `render_settings_ui()` if the auto-generated form isn't sufficient; `SpectrumBarsVisualisation` uses the auto-generated UI today. A second `Settings` press dismisses.
+
+Both overlays are toggles owned by the mode, not the vis - the vis only learns about gestures it actually receives (`InputAction::Confirm` and `InputAction::Cycle` while no overlay is open). This keeps each visualisation's gesture handling minimal while letting the framework UI evolve independently. The fallback "exit to Menu" gesture (Btn2 long historically; now the Picker gesture) is dropped from the master: the operator returns to the mode menu via `Btn2 long` on the Picker overlay's "back" entry, keeping overlay open/close consistent.
+
+### 8.9 Open design questions
+- **Boot countdown duration**: 5s fixed, configurable, or platform-dependent? (Block 13 reduced to 3 s; revisit if user feedback flags it as too short.)
 - **How does a Slave node indicate "I'm not receiving"?** Idle effect after timeout is the default; should there also be a visual cue (flashing red dot on screen, etc.)?
 ---
 ## 9. Deployment topologies

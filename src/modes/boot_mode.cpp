@@ -2,6 +2,7 @@
 
 #include "boot_mode.h"
 
+#include "firmware_version.h"
 #include "persistence.h"
 #include "dal/dal.h"
 
@@ -29,15 +30,12 @@ namespace {
 // "press button now" affordance without dragging the boot phase.
 constexpr uint32_t kBootCountdownMs = 3000;
 
-// Build identifier shown bottom-right of the splash. Picks up a
-// compile-time FIRMWARE_VERSION define if the build system supplies
-// one (Block 14 close-out will wire it through platformio.ini); falls
-// back to the in-source Epic tag otherwise so we never ship a blank.
-#ifdef FIRMWARE_VERSION
-constexpr const char* kSplashVersion = FIRMWARE_VERSION;
-#else
-constexpr const char* kSplashVersion = "v0.4-epic46";
-#endif
+// Build identifier shown bottom-right of the splash. Sourced from the
+// single canonical FIRMWARE_VERSION macro in include/firmware_version.h
+// (Block 14 unified the splash and the System config screen on one
+// value); the build system may still override via -DFIRMWARE_VERSION on
+// one-off builds.
+constexpr const char* kSplashVersion = ::nocturnation::kFirmwareVersion;
 
 }
 
@@ -129,9 +127,9 @@ void BootMode::draw_static() {
     // current battery percent. Size 1 white. Painted once in draw_static
     // (only-on-enter) since the splash window is short enough that
     // battery percent drift isn't worth a periodic refresh. Right-edge
-    // anchored: kSplashVersion is short (e.g. "v0.4-epic46" = 11 chars
-    // = 66 px at size 1) so we align by guessing length-times-6 from
-    // the right margin.
+    // anchored: kSplashVersion is short (e.g. "v0.5" = 4 chars = 24 px
+    // at size 1) so we align by guessing length-times-6 from the right
+    // margin.
     const int batt = DAL::battery_level("local");
     char status[32];
     if (batt < 0) {

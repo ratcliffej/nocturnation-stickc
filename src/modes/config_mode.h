@@ -172,8 +172,6 @@ private:
 
     static const char* mode_label_short(ModeId m);
 
-    static constexpr const char* kFirmwareVersion = "1.0.0";
-
     void draw();
 };
 
