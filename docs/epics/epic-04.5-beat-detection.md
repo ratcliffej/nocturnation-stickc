@@ -1,12 +1,54 @@
 ---
 title: "Epic 4.5: Capability-aware audio analyser with sub-band adaptive-threshold beat detection"
-status: Proposed
+status: Done
 notion_url: https://www.notion.so/35bbd0677405816fa9fbd0306100c794
 notion_id: 35bbd0677405816fa9fbd0306100c794
-notion_status: Proposed
+notion_status: Done
 last_synced: 2026-05-10
 sync_direction: bidirectional
 ---
+
+## Closed 2026-05-10
+
+Cross-device hardware verification (Plus2 + S3 in Master mode listening to the same audio) confirms behavioural equivalence: same beat pattern, same response. BPM tracking matches actual song tempo (was reading 155 from a 112 BPM track on tuning round 1; reads correctly after round 2). DROP fires on chorus drops; BREAKDOWN fires on quiet sections.
+
+**Blocks shipped:**
+
+- **Block 1** — Audio sample harness: synthetic generators (sine / kick-train / noise / silence) + 16-bit PCM mono WAV I/O + `native_audio` test env (`2c8e11d`).
+- **Block 2** — Capability-aware analyser surface: pure DAL analyser core, Capability flags + extended AudioFrame, mic-backend wiring + SpectrumFrameEvent + DAL stubs (`484adaa`, `801d3ab`, `46131c6`).
+- **Block 3** — Sub-band adaptive-threshold beat detection: `BeatDetector` class + native tests, integration into LocalDriver, two rounds of hardware-driven tuning (`61eee9c`, `98a687b`, `ee96830`, `ddf7f3a`).
+- **Block 4** — Drop and breakdown detection + MUSIC_EVENT 0x06: `DropDetector` with arm/disarm gate, ESP-NOW wire format, master-side broadcast (`42cef9b`, `69e3d52`, `06f7996`).
+- **Block 5** — Cross-device hardware verification (Plus2 + S3 side-by-side).
+- **Block 6** — Architecture spec v0.22 (`48857dc`, plus follow-up additions in `10a6a7b`).
+
+**Settled tuning parameters:**
+
+- BeatDetector: `threshold_k=2.2`, `refractory_ms=200`, `watch_count=8` (bands 0-7 covering ~30-150 Hz), `warmup_frames=8`.
+- DropDetector: `drop_ratio=1.8`, `breakdown_ratio=0.4`, `cooldown_ms=4000`, `short_window=80` (~2 s), `long_window=400` (~10 s); arm/disarm gate prevents sustained-state re-firing.
+
+**Late additions during Block 5 verification:**
+
+- **MUSIC_EVENT serial logging** (`653366b`): grep-friendly `[MUSIC] DROP at <ms>` line so DROP/BREAKDOWN fires are visible during live testing without trawling hex dumps.
+- **Heartbeat-fire diagnostic** (`e680c61`): `[HBEAT] firing after <ms> gap` so the skip-if-recent contract is observable from serial output.
+- **BeatDetector tuning round 2** (`ddf7f3a`): `threshold_k` 2.5 → 2.2 to catch soft kicks following louder ones (mechanism: post-kick history elevation raises threshold for ~1 s; structural fix flagged as future direction).
+- **BEAT_DETECTED master broadcast removed** (`10a6a7b`): slaves consume LIGHT_COMMAND for show rendering; BEAT_DETECTED's BPM/strength metadata had no current consumer, so doubling per-kick airtime was net negative. Wire format definition retained for future re-enable.
+- **Spec future-extensions additions** (`10a6a7b`): detector-layer placement (DAL vs orchestration architectural retrospective), source-separation directions (Demucs / Spleeter / Neuraliser-class with phone-side / Mac-bridge / cue-file architectures captured).
+
+**Honest list of known incomplete:**
+
+- **DROP detection is sporadic on tracks without clear bass dynamics.** Works reliably on EDM / pop chorus drops; less reliable on tracks with uniform energy or genres where "drop" doesn't manifest as a bass-energy ratio shift. The proper "what is a drop" answer needs the multi-band onset + spectral centroid + section-detection machinery in Epic 4.7. Documented in spec §5.4.
+- **Beat detection occasionally misses softer kicks following louder ones.** Round 2 tuning (k=2.2) reduces but doesn't eliminate. The structural fix (outlier-rejecting mean: exclude individual loud spikes from contributing to the history's mean while still counting them for variance) is flagged in `beat_detector.h`'s tuning-history block as out-of-scope; revisit in Epic 4.7 or as a focused refinement.
+- **Coldplay tribute regression test** not specifically run during Block 5; planned as a smoke test before the next gig.
+- **Frequency-response calibration** not implemented (Config Mode tool that drives a sweep through a calibration speaker to measure raw mic response per host). Captured in spec §5.4.
+- **Higher operating points** (S3 declares 32k/48k variants) not implemented; only canonical 16k/512 is wired up. Future Epic.
+- **Spectrum-frame consumers** — the 32-band log-spaced spectrum is computed and delivered as `SpectrumFrameEvent` every FFT cycle but no current consumer subscribes. Epic 4.6 (Diagnostic UI hifi-style 8-band rendering) and Epic 4.7 (FX modulators) are the natural homes.
+
+**Wire-protocol surface change** (vs Epic 4):
+
+- **Added**: MUSIC_EVENT (0x06) carrying `event_type: u8` (1=DROP, 2=BREAKDOWN, 3=BUILD reserved). Forward-compatible: receivers decode unknown event_type bytes as Unknown and silently drop.
+- **Removed from broadcast**: BEAT_DETECTED (0x01). Encoder/decoder retained; type/payload reserved for future re-enable.
+
+Total native test count: 140 across 7 envs (`native`, `native_dal`, `native_modes`, `native_effects`, `native_espnow`, `native_audio`, `native_analyser`), all passing. Both firmware envs (`m5stack-stickcplus2`, `m5stack-stickcs3`) build cleanly.
 
 ## Related Documents
 
