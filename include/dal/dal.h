@@ -422,6 +422,7 @@ public:
 namespace profiles {
 
 extern const DeviceProfile PixMobX4Gen3_1;
+extern const DeviceProfile EspNowBroadcast;
 
 }  // namespace profiles
 

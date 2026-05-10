@@ -5,7 +5,8 @@
 #include "persistence.h"
 #include "dal/dal.h"
 #include "effects/effects.h"
-#include "../dal/drivers/local_driver.h"   // for cancel_pulse / is_pulse_active
+#include "../dal/drivers/local_driver.h"               // for cancel_pulse / is_pulse_active
+#include "../dal/drivers/espnow_broadcast_driver.h"    // for start/stop_broadcast
 
 #include <cmath>
 #include <cstdio>
@@ -67,7 +68,8 @@ void TestMode::enter() {
     // broadcast over ESP-NOW so any slave on the configured show
     // channel renders the colour and forwards IR to its own bracelets,
     // just like during a real show.
-    broadcaster_.begin(persistence::load_master_channel());
+    dal::esp_now_broadcast_driver_instance()->start_broadcast(
+        persistence::load_master_channel());
     return_to_menu();
 }
 
@@ -75,7 +77,7 @@ void TestMode::exit() {
     if (active_test_ == SubTest::AudioLive
      || active_test_ == SubTest::Calibrate)   DAL::stop_audio_input("local");
     dal::local_driver_instance()->cancel_pulse();
-    broadcaster_.end();
+    dal::esp_now_broadcast_driver_instance()->stop_broadcast();
     active_test_ = SubTest::None;
 }
 
@@ -90,16 +92,11 @@ void TestMode::loop_tick() {
         case SubTest::Calibrate:   tick_calibrate(now);                      break;
         default: break;
     }
-    // Drain any pending redundant retransmits scheduled by the test's
-    // initial fire (per spec §4.3 master reliability redundancy).
-    broadcaster_.pump_retransmits();
-    // Heartbeat the master-alive signal at 1 Hz throughout Test mode -
-    // not just during a sub-test fire. Without this, sitting in the
-    // test menu (or in gaps between pulse-test steps longer than the
-    // slave's 3 s no-signal threshold) makes the slave declare
-    // NO SIGNAL even though we're actively running. Skip-if-recent
-    // means the actual bandwidth cost during music is roughly nil.
-    broadcaster_.maybe_send_heartbeat();
+    // Redundant-retransmit pump + 1 Hz skip-if-recent heartbeat now run
+    // from EspNowBroadcastDriver::loop_tick (which DAL::loop_tick drives
+    // every main-loop iteration). Test mode keeps broadcasting through
+    // gaps between sub-test fires because the driver stays active across
+    // the whole mode lifetime - start_broadcast lives in enter().
     // Post-pulse status redraw. While a pulse is animating the screen is
     // the light surface (LocalDriver paints frame-by-frame). When the
     // pulse terminates LocalDriver paints a final BLACK frame; we then
@@ -280,7 +277,7 @@ void TestMode::fire_cycle_step(bool fade) {
         c.r, c.g, c.b, attack, sustain, release, pixmob::CHANCE_100};
     DAL::render_fx("all-pixmobs", ev);
     DAL::render_fx("local",       ev);  // screen; gated by Config > Display > Pulse
-    broadcaster_.send_light_command(/*target_group=*/0, ev);
+    DAL::render_fx("esp-now-broadcast", ev);
     last_step_ms_ = millis();
 }
 
@@ -335,7 +332,7 @@ void TestMode::tick_rainbow(uint32_t now) {
         pixmob::CHANCE_100};
     DAL::render_fx("all-pixmobs", ev);
     DAL::render_fx("local",       ev);
-    broadcaster_.send_light_command(/*target_group=*/0, ev);
+    DAL::render_fx("esp-now-broadcast", ev);
 }
 
 void TestMode::draw_rainbow_screen() {
@@ -376,7 +373,7 @@ void TestMode::tick_sparkle(uint32_t now) {
     DAL::render_fx("all-pixmobs", ev);
     DAL::render_fx("local",       ev);   // LocalDriver rolls CHANCE_50
                                          // independently, like a bracelet
-    broadcaster_.send_light_command(/*target_group=*/0, ev);
+    DAL::render_fx("esp-now-broadcast", ev);
     last_step_ms_ = now;
     // Status text redraws via the post-pulse hook in loop_tick.
 }
@@ -410,7 +407,7 @@ void TestMode::fire_whiteout() {
         pixmob::CHANCE_100};
     DAL::render_fx("all-pixmobs", ev);
     DAL::render_fx("local",       ev);
-    broadcaster_.send_light_command(/*target_group=*/0, ev);
+    DAL::render_fx("esp-now-broadcast", ev);
 }
 
 void TestMode::draw_whiteout() {

@@ -8,7 +8,6 @@
 #include <cstdint>
 
 #include "modes/mode_machine.h"          // public header in include/
-#include "espnow_broadcaster.h"          // co-located in src/modes/
 #include "effects/effects.h"
 
 namespace nocturnation {
@@ -43,8 +42,10 @@ private:
 
     // Channel comes from NVS (Config > ESP-NOW > Master Channel) per
     // spec §4.5: 1 = hobby (default), 11 = show, 6 = advanced override.
-
-    EspNowBroadcaster broadcaster_;
+    // The radio itself lives in EspNowBroadcastDriver - this mode just
+    // starts/stops broadcast in its enter/exit lifecycle and hits the
+    // wire via DAL::render_fx("esp-now-broadcast", ...) and the driver's
+    // send_music_event() entry point.
 
     autonomous_master_detail::Colour colour_ =
         autonomous_master_detail::Colour::Red;

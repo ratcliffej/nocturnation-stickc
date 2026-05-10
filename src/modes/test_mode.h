@@ -24,7 +24,6 @@
 #include <cstdint>
 
 #include "modes/mode_machine.h"          // public header in include/
-#include "espnow_broadcaster.h"          // co-located in src/modes/
 
 namespace nocturnation {
 namespace modes {
@@ -98,8 +97,9 @@ private:
     uint32_t rainbow_last_step_ms_ = 0;
 
     // Test mode broadcasts on the same channel AutonomousMaster uses
-    // (NVS-configured: 1 hobby / 11 show / 6 custom).
-    EspNowBroadcaster broadcaster_;
+    // (NVS-configured: 1 hobby / 11 show / 6 custom). The radio itself
+    // lives in EspNowBroadcastDriver - this mode just starts/stops it
+    // in enter/exit and hits the wire via render_fx.
 
     bool pulse_was_active_ = false;
 

@@ -4,6 +4,7 @@
 
 #include "persistence.h"
 #include "dal/dal.h"
+#include "../dal/drivers/espnow_broadcast_driver.h"
 #include "effects/effects.h"
 #include "transport/espnow/frame.h"
 
@@ -87,14 +88,18 @@ void AutonomousMasterMode::enter() {
     DAL::start_audio_input("local", 16000, 512);
     // Channel from NVS (Config > ESP-NOW > Master Channel). Default
     // 1 (hobby); show deployments configure 11; 6 is an advanced
-    // operator override.
-    broadcaster_.begin(persistence::load_master_channel());
+    // operator override. The DAL's EspNowBroadcastDriver owns the
+    // radio lifecycle now; this mode just toggles it on enter / off
+    // on exit. Retransmit pumping + skip-if-recent heartbeat run from
+    // the driver's loop_tick (called by DAL::loop_tick every iteration).
+    esp_now_broadcast_driver_instance()->start_broadcast(
+        persistence::load_master_channel());
     draw();
 }
 
 void AutonomousMasterMode::exit() {
     DAL::stop_audio_input("local");
-    broadcaster_.end();
+    esp_now_broadcast_driver_instance()->stop_broadcast();
     pulse_.exit();
 }
 
@@ -104,11 +109,6 @@ void AutonomousMasterMode::loop_tick() {
         draw();
         last_draw_ms_ = now;
     }
-    // Drain any pending redundant retransmits (per spec §4.3).
-    broadcaster_.pump_retransmits();
-    // Skip-if-recent heartbeat: keep master-alive flowing only when
-    // BEAT_DETECTED traffic isn't already covering it.
-    broadcaster_.maybe_send_heartbeat();
 }
 
 void AutonomousMasterMode::on_audio_frame(const AudioFrameEvent& ev) {
@@ -153,7 +153,7 @@ void AutonomousMasterMode::on_audio_frame(const AudioFrameEvent& ev) {
                       static_cast<unsigned long>(millis()),
                       ev.bass_energy);
 #endif
-        broadcaster_.send_music_event(
+        esp_now_broadcast_driver_instance()->send_music_event(
             static_cast<transport::espnow::MusicEventType>(ev.music_event));
     }
 
@@ -196,10 +196,14 @@ void AutonomousMasterMode::on_audio_frame(const AudioFrameEvent& ev) {
     if (!paused_) {
         uint8_t r=0, g=0, b=0;
         colour_to_rgb(colour_, r, g, b);
-        broadcaster_.send_light_command(
-            /*target_group=*/0, r, g, b,
-            effects::envelope_for_bpm(estimated_bpm_),
-            pixmob::CHANCE_100);
+        const effects::PulseEnvelope env = effects::envelope_for_bpm(estimated_bpm_);
+        RgbPulseEvent wire{};
+        wire.r = r; wire.g = g; wire.b = b;
+        wire.attack  = env.attack;
+        wire.sustain = env.sustain;
+        wire.release = env.release;
+        wire.chance  = pixmob::CHANCE_100;
+        DAL::render_fx("esp-now-broadcast", wire);
     }
 
     // Beat response. Same ordering as the prototype: flash, fire IR (if

@@ -8,6 +8,7 @@
 #include "hal/hal.h"
 #include "drivers/local_driver.h"
 #include "drivers/pixmob_ir_driver.h"
+#include "drivers/espnow_broadcast_driver.h"
 
 #include <cstring>
 
@@ -195,10 +196,19 @@ void DAL::begin() {
     register_device("group-4",     &profiles::PixMobX4Gen3_1, 4);
     register_device("group-5",     &profiles::PixMobX4Gen3_1, 5);
 
+    // Master broadcast target: render_fx("esp-now-broadcast", RgbPulseEvent)
+    // hits this device's profile and routes through the EspNowBroadcastDriver,
+    // which encodes a LIGHT_COMMAND frame and broadcasts it to any slaves on
+    // the configured show channel. Group 0 (broadcast); per-group
+    // esp-now-broadcast-group-N variants can be registered later for
+    // targeted slave addressing without changing the driver.
+    register_device("esp-now-broadcast", &profiles::EspNowBroadcast, 0);
+
     // Register concrete drivers. Each refuses registration when its HAL
     // prerequisite is absent (e.g. no IRTx -> PixMob driver doesn't register).
     register_driver(local_driver_instance());
     register_driver(pixmob_ir_driver_instance());
+    register_driver(esp_now_broadcast_driver_instance());
 }
 
 void DAL::loop_tick() {
@@ -478,6 +488,10 @@ constexpr CapabilityId pixmob_x4_outputs[] = {
     CapabilityId::RgbPulse,
     CapabilityId::AssignDeviceGroup,
 };
+
+constexpr CapabilityId espnow_broadcast_outputs[] = {
+    CapabilityId::RgbPulse,
+};
 }  // anonymous namespace
 
 const DeviceProfile PixMobX4Gen3_1 = DeviceProfile{
@@ -486,6 +500,24 @@ const DeviceProfile PixMobX4Gen3_1 = DeviceProfile{
     /* transport                = */ "ir-pixmob",
     /* output_capabilities      = */ pixmob_x4_outputs,
     /* output_capability_count  = */ sizeof(pixmob_x4_outputs)/sizeof(pixmob_x4_outputs[0]),
+    /* input_capabilities       = */ nullptr,
+    /* input_capability_count   = */ 0,
+    /* supports_groups          = */ true,
+    /* max_group_id             = */ 31,
+};
+
+// EspNowBroadcast: the master->slaves wire target. Profile declares
+// RgbPulse so render_fx("esp-now-broadcast", RgbPulseEvent{...}) routes
+// through EspNowBroadcastDriver and emits a LIGHT_COMMAND frame.
+// supports_groups + max_group_id=31 lets future code register
+// esp-now-broadcast-group-N devices that pass the group id into the
+// LIGHT_COMMAND target_group field without driver changes.
+const DeviceProfile EspNowBroadcast = DeviceProfile{
+    /* type_id                  = */ "EspNowBroadcast",
+    /* version                  = */ "1.0",
+    /* transport                = */ "esp-now-broadcast",
+    /* output_capabilities      = */ espnow_broadcast_outputs,
+    /* output_capability_count  = */ sizeof(espnow_broadcast_outputs)/sizeof(espnow_broadcast_outputs[0]),
     /* input_capabilities       = */ nullptr,
     /* input_capability_count   = */ 0,
     /* supports_groups          = */ true,
