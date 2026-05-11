@@ -36,6 +36,7 @@
 #include <cstdint>
 
 #include "plugins/plugin.h"
+#include "plugins/device_class.h"
 #include "dal/dal.h"
 #include "hal/input_action.h"
 
@@ -47,6 +48,15 @@ class OutputBindingContext;   // forward declaration
 class OutputBinding : public plugins::Plugin {
 public:
     plugins::PluginKind kind() const override { return plugins::PluginKind::OutputBinding; }
+
+    // Device-class taxonomy (Epic 4.65). Master encodes the chosen class
+    // into LIGHT_COMMAND.target_class; SlaveMode filters inbound frames
+    // against this value per active binding. Pure-virtual so every
+    // binding declares its class explicitly - silent defaults would let
+    // bindings drift untagged and break the addressing contract. Never
+    // returns DeviceClass::All (that value is the addressing wildcard,
+    // not a device identity).
+    virtual plugins::DeviceClass device_class() const = 0;
 
     virtual void enter(OutputBindingContext&) {}
     virtual void exit (OutputBindingContext&) {}

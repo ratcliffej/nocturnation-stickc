@@ -99,6 +99,7 @@ Battery* HAL::battery()  { return nullptr; }
 
 using namespace nocturnation;
 using nocturnation::dal::RgbPulseEvent;
+using nocturnation::plugins::DeviceClass;
 using nocturnation::plugins::PluginKind;
 using nocturnation::plugins::PropertyBag;
 using nocturnation::plugins::PropertyDef;
@@ -185,6 +186,7 @@ static void test_local_display_identity(void) {
     TEST_ASSERT_EQUAL_STRING("local-display", b->id());
     TEST_ASSERT_NOT_NULL(b->display_name());
     TEST_ASSERT_EQUAL_INT((int)PluginKind::OutputBinding, (int)b->kind());
+    TEST_ASSERT_EQUAL_INT((int)DeviceClass::Screen, (int)b->device_class());
     // No properties initially.
     TEST_ASSERT_EQUAL_size_t(0, b->properties().size);
 }
@@ -209,6 +211,7 @@ static void test_pixmob_ir_identity(void) {
     PixMobIrBinding* b = pixmob_ir_instance();
     TEST_ASSERT_NOT_NULL(b);
     TEST_ASSERT_EQUAL_STRING("pixmob-ir", b->id());
+    TEST_ASSERT_EQUAL_INT((int)DeviceClass::Light, (int)b->device_class());
     TEST_ASSERT_NOT_NULL(b->display_name());
     TEST_ASSERT_EQUAL_INT((int)PluginKind::OutputBinding, (int)b->kind());
 }

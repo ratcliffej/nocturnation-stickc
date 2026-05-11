@@ -32,6 +32,10 @@ public:
     const char* id()           const override { return "pixmob-ir"; }
     const char* display_name() const override { return "PixMob IR"; }
 
+    plugins::DeviceClass device_class() const override {
+        return plugins::DeviceClass::Light;
+    }
+
     hal::CapabilityMask                       required_capabilities() const override;
     plugins::Span<const plugins::PropertyDef> properties()            const override;
 

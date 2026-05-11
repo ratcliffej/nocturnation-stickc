@@ -96,6 +96,7 @@ using namespace nocturnation;
 using nocturnation::hal::Capability;
 using nocturnation::hal::CapabilityMask;
 using nocturnation::hal::make_capability_mask;
+using nocturnation::plugins::DeviceClass;
 using nocturnation::plugins::Plugin;
 using nocturnation::plugins::PluginKind;
 using nocturnation::plugins::PropertyBag;
@@ -127,6 +128,7 @@ class StubOutputBinding : public OutputBinding {
 public:
     const char* id()           const override { return "stub-bind"; }
     const char* display_name() const override { return "Stub Binding"; }
+    DeviceClass device_class() const override { return DeviceClass::Light; }
 
     Span<const PropertyDef> properties() const override {
         return Span<const PropertyDef>(kStubSchema,
@@ -165,6 +167,7 @@ class DemandingBinding : public OutputBinding {
 public:
     const char* id()           const override { return "demanding"; }
     const char* display_name() const override { return "Demanding"; }
+    DeviceClass device_class() const override { return DeviceClass::Light; }
     CapabilityMask required_capabilities() const override {
         return make_capability_mask(Capability::ESPNow);
     }
@@ -194,6 +197,24 @@ static void test_output_binding_kind_is_output_binding(void) {
 
     DemandingBinding d;
     TEST_ASSERT_EQUAL_INT((int)PluginKind::OutputBinding, (int)d.kind());
+}
+
+// Epic 4.65 Block 2: OutputBinding::device_class() is pure-virtual; each
+// concrete binding must declare its class. Wire-stable enum values mean
+// these int casts are part of the contract too.
+static void test_device_class_enum_values_are_wire_stable(void) {
+    TEST_ASSERT_EQUAL_UINT8(0x00, (uint8_t)DeviceClass::All);
+    TEST_ASSERT_EQUAL_UINT8(0x01, (uint8_t)DeviceClass::Light);
+    TEST_ASSERT_EQUAL_UINT8(0x02, (uint8_t)DeviceClass::Screen);
+    TEST_ASSERT_EQUAL_UINT8(0x03, (uint8_t)DeviceClass::MultiLedScreen);
+}
+
+static void test_stub_bindings_declare_a_device_class(void) {
+    StubOutputBinding b;
+    TEST_ASSERT_EQUAL_INT((int)DeviceClass::Light, (int)b.device_class());
+    // Bindings must NEVER return DeviceClass::All - that value is the
+    // addressing wildcard, not a device identity.
+    TEST_ASSERT_NOT_EQUAL_INT((int)DeviceClass::All, (int)b.device_class());
 }
 
 // =============================================================================
@@ -406,6 +427,7 @@ class BareBinding : public OutputBinding {
 public:
     const char* id()           const override { return "bare"; }
     const char* display_name() const override { return "Bare"; }
+    DeviceClass device_class() const override { return DeviceClass::Light; }
 };
 }  // namespace
 
@@ -447,6 +469,8 @@ static void test_output_binding_default_power_profile(void) {
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_output_binding_kind_is_output_binding);
+    RUN_TEST(test_device_class_enum_values_are_wire_stable);
+    RUN_TEST(test_stub_bindings_declare_a_device_class);
     RUN_TEST(test_registry_register_find_clear);
     RUN_TEST(test_required_capabilities_can_be_outside_host_capabilities);
     RUN_TEST(test_context_property_default_then_set_get);

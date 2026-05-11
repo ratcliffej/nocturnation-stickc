@@ -28,6 +28,10 @@ public:
     const char* id()           const override { return "local-display"; }
     const char* display_name() const override { return "Local Display"; }
 
+    plugins::DeviceClass device_class() const override {
+        return plugins::DeviceClass::Screen;
+    }
+
     hal::CapabilityMask required_capabilities() const override;
 
     void on_light_command(OutputBindingContext&,
