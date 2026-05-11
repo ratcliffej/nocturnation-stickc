@@ -1,10 +1,10 @@
 ---
 title: "Epic 4.65: Class+group device addressing"
 status: Done
-notion_url:
-notion_id:
-notion_status:
-last_synced:
+notion_url: https://www.notion.so/Epic-4-65-Device-Addressing-35dbd06774058075aa66da569ce2aff1
+notion_id: 35dbd06774058075aa66da569ce2aff1
+notion_status: Done
+last_synced: 2026-05-11
 sync_direction: bidirectional
 ---
 
