@@ -363,13 +363,13 @@ void TestMode::tick_sparkle(uint32_t now) {
     if (now - last_step_ms_ < kSparkleStepMs) return;
     // Operator spec: white, ~1 s fade envelope (T_0 + T_480 + T_480
     // = 960 ms total), 2 Hz fire cadence (kSparkleStepMs above),
-    // CHANCE_10 so only ~10 % of bracelets fire on each frame -
-    // sparkle reads as crowd-shimmer rather than a wall of pulses.
+    // ~20 % per-bracelet chance. PixMob protocol's 3-bit chance
+    // ladder has no exact 20 %; CHANCE_16 is the closest below.
     const auto& c = kSparkleColour;
     const RgbPulseEvent ev{
         c.r, c.g, c.b,
         pixmob::T_0_MS, pixmob::T_480_MS, pixmob::T_480_MS,
-        pixmob::CHANCE_10};
+        pixmob::CHANCE_16};
     DAL::render_fx("00:00", ev);
     last_step_ms_ = now;
     // Status text redraws via the post-pulse hook in loop_tick.
