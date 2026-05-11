@@ -50,7 +50,7 @@ constexpr uint32_t kPulseStepMs       = 1000;   // 1 Hz colour cycle
 constexpr uint32_t kFadeStepMs        = 1000;
 constexpr uint32_t kRainbowDurationMs = 6000;
 constexpr uint32_t kSparkleDurationMs = 10000;
-constexpr uint32_t kSparkleStepMs     = 200;
+constexpr uint32_t kSparkleStepMs     = 500;   // 2 Hz fire cadence
 
 }  // namespace
 
@@ -361,12 +361,15 @@ void TestMode::tick_sparkle(uint32_t now) {
         return;
     }
     if (now - last_step_ms_ < kSparkleStepMs) return;
-    // Always white - operator request, sparkle reads as crowd-shimmer.
+    // Operator spec: white, ~1 s fade envelope (T_0 + T_480 + T_480
+    // = 960 ms total), 2 Hz fire cadence (kSparkleStepMs above),
+    // CHANCE_10 so only ~10 % of bracelets fire on each frame -
+    // sparkle reads as crowd-shimmer rather than a wall of pulses.
     const auto& c = kSparkleColour;
     const RgbPulseEvent ev{
         c.r, c.g, c.b,
-        pixmob::T_32_MS, pixmob::T_32_MS, pixmob::T_96_MS,
-        pixmob::CHANCE_50};
+        pixmob::T_0_MS, pixmob::T_480_MS, pixmob::T_480_MS,
+        pixmob::CHANCE_10};
     DAL::render_fx("00:00", ev);
     last_step_ms_ = now;
     // Status text redraws via the post-pulse hook in loop_tick.
