@@ -209,6 +209,20 @@ bool dispatch_output_class_group(uint8_t target_class,
             ir->increment_send_count();
         }
     }
+
+    // 3. Master-local screen loopback. When target_class is wildcard
+    // (0) or Screen (2), also fire the LocalDriver so the master's
+    // own screen pulses alongside the wire / IR. LocalDriver gates
+    // its RgbPulse handler internally on the Config > Display > Pulse
+    // flag, so operators who want a quiet screen can disable it there
+    // without the Show or Mode needing to know.
+    if (target_class == 0 || target_class == 2) {
+        Driver* local = find_driver_for_transport("local");
+        if (local && local->enabled()) {
+            local->send(target_group, ev);
+            local->increment_send_count();
+        }
+    }
     return wire_ok;
 }
 

@@ -42,14 +42,9 @@ constexpr PaletteColour kTestPalette[] = {
 };
 constexpr size_t kTestPaletteCount = sizeof(kTestPalette) / sizeof(kTestPalette[0]);
 
-constexpr PaletteColour kSparklePalette[] = {
-    { 0xFF, 0xFF, 0xFF, "WHITE" },
-    { 0x00, 0xFF, 0x00, "GREEN" },
-    { 0x00, 0x00, 0xFF, "BLUE"  },
-    { 0x00, 0xFF, 0xFF, "CYAN"  },
-};
-constexpr size_t kSparklePaletteCount =
-    sizeof(kSparklePalette) / sizeof(kSparklePalette[0]);
+// Sparkle test uses white only (operator request: the random colours
+// felt too busy; white sparkle reads as crowd-shimmer).
+constexpr PaletteColour kSparkleColour = { 0xFF, 0xFF, 0xFF, "WHITE" };
 
 constexpr uint32_t kPulseStepMs       = 1000;   // 1 Hz colour cycle
 constexpr uint32_t kFadeStepMs        = 1000;
@@ -276,9 +271,11 @@ void TestMode::fire_cycle_step(bool fade) {
     const pixmob::Time release = fade ? pixmob::T_192_MS : pixmob::T_96_MS;
     const RgbPulseEvent ev{
         c.r, c.g, c.b, attack, sustain, release, pixmob::CHANCE_100};
-    DAL::render_fx("all-pixmobs", ev);
-    DAL::render_fx("local",       ev);  // screen; gated by Config > Display > Pulse
-    DAL::render_fx("00:00", ev);   /* Epic 4.65 Block 7 */
+    // Single transmit call: dispatch_output_class_group fans out to
+    // ESP-NOW broadcast (slaves), master IR (Light-class loopback),
+    // and master screen (Screen-class loopback / Config > Display >
+    // Pulse gated). Same path Shows use.
+    DAL::render_fx("00:00", ev);
     last_step_ms_ = millis();
 }
 
@@ -331,9 +328,7 @@ void TestMode::tick_rainbow(uint32_t now) {
         r, g, b,
         pixmob::T_0_MS, pixmob::T_96_MS, pixmob::T_0_MS,
         pixmob::CHANCE_100};
-    DAL::render_fx("all-pixmobs", ev);
-    DAL::render_fx("local",       ev);
-    DAL::render_fx("00:00", ev);   /* Epic 4.65 Block 7 */
+    DAL::render_fx("00:00", ev);
 }
 
 void TestMode::draw_rainbow_screen() {
@@ -366,15 +361,13 @@ void TestMode::tick_sparkle(uint32_t now) {
         return;
     }
     if (now - last_step_ms_ < kSparkleStepMs) return;
-    const auto& c = kSparklePalette[std::rand() % kSparklePaletteCount];
+    // Always white - operator request, sparkle reads as crowd-shimmer.
+    const auto& c = kSparkleColour;
     const RgbPulseEvent ev{
         c.r, c.g, c.b,
         pixmob::T_32_MS, pixmob::T_32_MS, pixmob::T_96_MS,
         pixmob::CHANCE_50};
-    DAL::render_fx("all-pixmobs", ev);
-    DAL::render_fx("local",       ev);   // LocalDriver rolls CHANCE_50
-                                         // independently, like a bracelet
-    DAL::render_fx("00:00", ev);   /* Epic 4.65 Block 7 */
+    DAL::render_fx("00:00", ev);
     last_step_ms_ = now;
     // Status text redraws via the post-pulse hook in loop_tick.
 }
@@ -406,9 +399,7 @@ void TestMode::fire_whiteout() {
         0xFF, 0xFF, 0xFF,
         pixmob::T_0_MS, pixmob::T_2400_MS, pixmob::T_960_MS,
         pixmob::CHANCE_100};
-    DAL::render_fx("all-pixmobs", ev);
-    DAL::render_fx("local",       ev);
-    DAL::render_fx("00:00", ev);   /* Epic 4.65 Block 7 */
+    DAL::render_fx("00:00", ev);
 }
 
 void TestMode::draw_whiteout() {

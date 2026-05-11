@@ -315,10 +315,12 @@ static void test_on_beat_fires_wire_screen_ir_in_order(void) {
     TEST_ASSERT_EQUAL_INT((int)pixmob::T_96_MS, (int)wire.sustain);
     TEST_ASSERT_EQUAL_INT((int)pixmob::T_96_MS, (int)wire.release);
 
-    // 2. The local DisplayClear hit the LocalDriver registered by
-    //    DAL::begin(); we measure it through driver_send_count("local").
-    //    Exactly one fire means we got the screen-flash event.
-    TEST_ASSERT_EQUAL_UINT32(local_before + 1,
+    // 2. LocalDriver fires twice: once via fire_display_clear (the
+    //    pre-Epic-4.7 full-bleed screen flash) and once via
+    //    dispatch_output_class_group's screen-loopback added in the
+    //    post-Block-5 fix (render_fx("00:00", ev) now also fans out
+    //    to the master's LocalDriver for Screen-class targets).
+    TEST_ASSERT_EQUAL_UINT32(local_before + 2,
                               dal::DAL::driver_send_count("local"));
 
     // 3. ir-pixmob got two RgbPulseEvents this beat:
