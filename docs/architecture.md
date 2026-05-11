@@ -3,12 +3,12 @@ title: NocturNation Architecture Specification
 status: cross-project (will move to umbrella repo when Tildagon work begins)
 notion_url: https://www.notion.so/357bd0677405800b891beab0f4e0a976
 notion_id: 357bd0677405800b891beab0f4e0a976
-last_synced: 2026-05-10
+last_synced: 2026-05-11
 sync_direction: bidirectional
-notion_status: synced (v0.22, capability-aware analyser + sub-band beat detection + drop detection)
+notion_status: synced (v0.23, Show plug-in framework + multi-band onset + music descriptors + section detection + widget library)
 ---
 
-**Status:** Draft v0.22 - early architecture document, expect substantial revision.
+**Status:** Draft v0.23 - early architecture document, expect substantial revision.
 **Maintainer:** Jason Ratcliffe
 ---
 ## 1. Vision
@@ -410,11 +410,17 @@ The analyser is a HAL+DAL capability cluster. Each host's HAL provides FFT magni
     - **3-band B/M/T roll-up**: Bass <250 Hz, Mid 250-2000 Hz, Treble 2 kHz - Nyquist. Cheap surface for kick onset and the audio meter.
     - **8-band perceptual summary** per Audible Genius music-production reference: Mud (0-20 Hz), Sub Bass (20-60), Bass (60-250), Low Mids (250-500), Midrange (500-2k), High Mids (2k-4k), Presence (4k-6k), Air (6k-20k, truncated at Nyquist below 40 kHz sample rates). Internally consistent: 3-band is a strict aggregation of 8-band.
 4. **Spectrum frame**: 32 log-spaced bands covering [30 Hz, Nyquist). Master-local; not broadcast over ESP-NOW (too heavy at FFT rate).
-5. **Beat detection** (sub-band adaptive threshold): per-band rolling history (40 frames ~= 1 s), mean and variance computed continuously, a watched bass-region band's magnitude exceeding (mean + k × std_dev) fires `BEAT_DETECTED`. Self-calibrating per band so hosts with different mic SNR produce equivalent behavioural output. Tuning history captured in [`include/dal/analyser/beat_detector.h`](https://github.com/ratcliffej/nocturnation-stickc/blob/main/include/dal/analyser/beat_detector.h).
-6. **Drop detection** (long-window energy ratio): short window (~2 s) and long window (~10 s) of bass-roll-up energy. `ratio = short_mean / long_mean > 1.8` fires DROP; `< 0.4` fires BREAKDOWN. Arm/disarm gate prevents sustained energy re-firing across cooldown cycles - DROP is a transition event, not a persistent-state event.
-7. **BPM tracking**: rolling buffer of inter-beat intervals at orchestration layer; reject outliers (50-300 BPM range); compute median.
+5. **Beat detection** (sub-band adaptive threshold): per-band rolling history (40 frames ~= 1 s), mean and variance computed continuously, a watched bass-region band's magnitude exceeding (mean + k × std_dev) fires a kick beat. Self-calibrating per band so hosts with different mic SNR produce equivalent behavioural output. Tuning history captured in [`include/dal/analyser/beat_detector.h`](https://github.com/ratcliffej/nocturnation-stickc/blob/main/include/dal/analyser/beat_detector.h).
+6. **Multi-band onset detection** (Epic 4.7 Block 3): the same `BeatDetector` class is instantiated twice more with different watched sub-band ranges and tuning. Snare watches bands 11-23 (~200 Hz - 2 kHz) with `k=2.0` and 150 ms refractory; hi-hat watches bands 27-31 (~4-8 kHz) with `k=1.8` and 80 ms refractory (shorter so 16th-note hi-hat patterns fire cleanly). Each detector exposes `last_strength()`, a 0..255 quantisation of magnitude-vs-threshold ratio; AudioFrameEvent stamps `beat_strength`, `snare_strength`, `hihat_strength`.
+7. **Drop detection** (long-window energy ratio): short window (~2 s) and long window (~10 s) of bass-roll-up energy. `ratio = short_mean / long_mean > 1.8` fires DROP; `< 0.4` fires BREAKDOWN. Arm/disarm gate prevents sustained energy re-firing across cooldown cycles - DROP is a transition event, not a persistent-state event.
+8. **Music descriptors** (Epic 4.7 Block 3): three continuous per-frame surfaces stamped on every AudioFrameEvent.
+    - **Centroid** (`AudioFrameEvent.centroid`): magnitude-weighted average band index of the spectrum frame, normalised to 0..255. Per-frame, no smoothing.
+    - **Energy** (`AudioFrameEvent.energy`): smoothed RMS envelope (single-pole IIR, ~0.5 s time constant), log-normalised over a 5-octave span anchored at `log2(512)` so the volume gate floor reads 0 and loud music saturates 255.
+    - **Density** (`AudioFrameEvent.density`): events-per-second across all three onset bands windowed over 1 s; 16 events/s saturates 255.
+9. **Section detection** (Epic 4.7 Block 4): a state machine consuming the descriptors plus the drop-detector flag emits a section label per frame (`SectionType`: 0 UNKNOWN, 1 VERSE, 2 CHORUS, 3 BUILDUP, 4 BREAKDOWN, 5 VOCALS_ONLY reserved, 6 INSTRUMENTAL_BREAK reserved, 7 DROP). Implementation uses two single-pole IIRs per signal (fast ~0.5 s, slow ~2.5 s); slope = fast − slow drives BUILDUP, slow drives the CHORUS / VERSE level decisions, fast drives the BREAKDOWN sustain check. 8-frame hysteresis on transitions; BREAKDOWN has its own ~2 s sustain check; DROP latches for ~1 s after the underlying drop detector fires.
+10. **BPM tracking**: rolling buffer of inter-beat intervals at orchestration layer; reject outliers (50-300 BPM range); compute median.
 
-**Pipeline gating** (Epic 4.6 Block 7, refined Blocks 8 / 11): the `SpectrumFrameEvent` fan-out is consumer-gated. The active `Visualisation`'s `PowerProfile` declares whether it needs spectrum frames (`needs_spectrum_frame=true`); the spectrum-event dispatch path only fires when at least one consumer is subscribed via that declaration. When no active vis asks for spectrum data (e.g. `BeatPulseVisualisation`, which only needs `is_beat` from the audio frame), the per-frame 32-float copy and dispatch are skipped in `LocalDriver`; switching to a vis that does need it (`SpectrumBarsVisualisation`) flips the gate live. The analyser surface itself didn't grow — `compute_spectrum_frame()` is the same pure function — the dispatch gate is what's new.
+**Pipeline gating** (Epic 4.6 Block 7, refined through 4.7): the `SpectrumFrameEvent` fan-out is consumer-gated. The active `Show`'s `PowerProfile` declares whether it needs spectrum frames (`needs_spectrum_frame=true`); the spectrum-event dispatch path only fires when at least one consumer is subscribed via that declaration. When no active show asks for spectrum data (e.g. `SimpleBeatShow`, which only needs `on_beat_detected` from the analyser-event hooks), the per-frame 32-float copy and dispatch are skipped in `LocalDriver`; switching to a show that does need it flips the gate live. `DynamicShow` (Epic 4.7 Block 5) doesn't subscribe to spectrum frames either - it reads the 8-band perceptual summary off `AudioFrameEvent` and rolls it into its 7-band on-screen spectrum widget, leaving the spectrum-frame fan-out skipped. The analyser surface itself didn't grow — `compute_spectrum_frame()` is the same pure function — the dispatch gate is what's new.
 
 The underlying FFT roll-up that produces `frame.spectrum` still runs unconditionally inside the mic backend because `BeatDetector` consumes the 32-band magnitudes in-pipeline; gating the FFT itself would silently break beat detection. The larger Plus2 CPU savings observed in Epic 4.6 come from Block 12's analyser micro-optimisations (constant hoisting in the spectrum-frame compositor, precomputed bin→Hz LUT, single-pass Welford variance in BeatDetector), not from this gate.
 ### 5.2 Capability surface
@@ -424,11 +430,12 @@ A host's analyser declares a flat set of feature flags from the `Capability` enu
 - `AnalyserSpectrumFrame` - emits 32-band log-spaced SpectrumFrameEvent (master-local)
 - `AnalyserBandSummary` - emits 3-band B/M/T + 8-band perceptual summary
 
-Reserved for Epic 4.7 (declared as enum constants but not lit on any host yet):
-- `AnalyserMultiBandOnset` - SNARE/HIHAT events
-- `AnalyserSpectralCentroid` - continuous centroid descriptor
-- `AnalyserEnergyEnvelope` - continuous smoothed-RMS descriptor
-- `AnalyserSectionDetection` - SECTION_CHANGE events
+Lit by Epic 4.7:
+- `AnalyserMultiBandOnset` - snare + hi-hat onset detection over the same spectrum frame with band-specific tuning (Block 3). Stamps `snare_strength` / `hihat_strength` on AudioFrameEvent.
+- `AnalyserSpectralCentroid` - per-frame centroid descriptor (Block 3). Stamps `centroid`.
+- `AnalyserEnergyEnvelope` - smoothed-RMS energy descriptor (Block 3). Stamps `energy`.
+- `AnalyserOnsetDensity` - events-per-second density descriptor (Block 3). Stamps `density`.
+- `AnalyserSectionDetection` - section state machine (Block 4). Stamps `section`.
 ### 5.3 Operating points
 Each host's HAL declares a list of valid `(sample_rate_hz, fft_size)` tuples. Plus2 declares one (codec-limited); S3 declares four (capable of higher sample rates and larger FFTs). The DAL exposes `configure_audio_pipeline(sample_rate_hz, fft_size)` for orchestration to pick a host-declared point. Sample rate controls range (Nyquist); FFT size controls resolution.
 
@@ -438,9 +445,7 @@ Band-layout boundaries are specified in Hz, not bin numbers. Bin assignments are
 
 `set_band_layout(preset_name)` ships with `hifi+production` as the only implemented preset (3-band B/M/T + 8-band perceptual concurrent). Named alternative presets (`dnb-4band-with-subbass`, `vocal-emphasis`) and arbitrary JSON-defined ranges via Config Mode are reserved for a future Epic; the stub means future Epics extend rather than re-architect.
 ### 5.4 Future extensions (not yet implemented)
-- **Multi-band onset detection** (Epic 4.7): separate adaptive-threshold detectors for snare (~200 Hz - 2 kHz) and hi-hat (~5-8 kHz) bands. Each fires its own event type (SNARE_DETECTED 0x07, HIHAT_DETECTED 0x08).
-- **Continuous descriptors** (Epic 4.7): spectral centroid (where energy is concentrated, mapped to hue), energy envelope (smoothed RMS, mapped to brightness), onset density. Carried over the wire as the rate-limited MUSIC_DESCRIPTOR (0x09) message.
-- **Section detection** (Epic 4.7): rolling 4-8s analysis of the continuous descriptors plus onset density to identify verse / chorus / build-up / breakdown / vocals-only / instrumental-break sections. Fires SECTION_CHANGE (0x0A).
+- **Per-band data for vocals / instrumental sections** (post-Epic-4.7): `VOCALS_ONLY` and `INSTRUMENTAL_BREAK` are declared in `SectionType` but never fire because distinguishing them needs per-band energy that's not in the descriptor surface. The most likely path is to extend `SectionDetector` to consume the AudioFrameEvent's 8-band perceptual values directly when available, rather than the rolled-up energy scalar - vocals-heavy passages have a distinctive mid-band signature that the current single-energy IIR can't pick out.
 - **Higher operating points**: implement the S3's declared `(32000, 1024)` / `(48000, 1024)` / `(48000, 2048)` points to capture the 6-20 kHz Air band that's truncated at the 16 kHz default. Same Epic likely hosts the phone or PC HAL backend the API surface was designed to be portable to.
 - **Frequency-response calibration**: Config Mode tool that drives a known sweep through a calibration speaker positioned in front of the mic, measures each band's response, and produces a per-host correction curve. Three uses: diagnose mic faults (resonance peaks, dead bands), compensate for raw-response differences across hosts (Plus2 PDM vs S3 ES8311), and provide objective cross-device-consistency verification distinct from the subjective "feel" check Epic 4.5 currently relies on. Stretch: ship factory-calibration curves baked in for the canonical M5 hosts so out-of-the-box deployments get the compensation without per-device measurement.
 - **Harmonic analysis (chroma features)**: hue mapping to musical key. Borderline feasible on ESP32; better suited to a Mac-side bridge.
@@ -668,24 +673,43 @@ display.show_idle()                   # default ambient
 ```
 The StickC Plus2 implements these by drawing on its LCD; the Tildagon implements them on its round screen (and may extend with circle-specific effects); the Atom Lite ignores them (no display); the Core2 might present them as a richer console-style UI.
 This abstraction is not yet implemented and is on the medium-term roadmap. For v1 of the spec, display behaviour is platform-specific and not part of the cross-device protocol.
-### 7.6 Plug-in surfaces (Epic 4.6)
-Epic 4.6 made the rendering pipeline pluggable on both sides of the wire. The host code never bakes in *which* visualisation runs on the master or *which* render destinations a slave drives - those are plug-ins discovered from registries at boot.
+### 7.6 Plug-in surfaces (Epic 4.6 / 4.7)
+Epics 4.6 / 4.7 made the rendering pipeline pluggable on both sides of the wire. The host code never bakes in *which* show runs on the master or *which* render destinations a slave drives - those are plug-ins discovered from registries at boot. Epic 4.7 split the master-side surface into a Show plug-in (the performance) and a small widget library (level-tuning helpers a show or sub-mode composes); Epic 4.6's original `Visualisation` plug-in had conflated the two and is retired.
 
-**Master-side: `Visualisation` plug-ins.** A visualisation is the artistic logic that turns analyser events (audio frames, spectrum frames, beats) into a sequence of `render_fx` calls. The contract lives in [`include/visualisations/visualisation.h`](https://github.com/ratcliffej/nocturnation-stickc/blob/main/include/visualisations/visualisation.h): each vis declares its id, display name, required capabilities, a property schema (Block 3's `PropertyDef`), and a `PowerProfile` (which analyser surfaces it consumes). At runtime it receives a `VisualisationContext` exposing `render_fx(target, ev)`, property-bag accessors, the host's `CapabilityMask`, paused state, and time helpers. Hook surface: `enter/exit/on_audio_frame/on_spectrum_frame/on_input_action/tick`.
+For step-by-step developer guidance on adding a new Show — Show base class API, registration, analyser hooks, widget composition, persistence, testing — see [docs/developing-shows.md](https://github.com/ratcliffej/nocturnation-stickc/blob/main/docs/developing-shows.md).
 
-Two visualisations ship today: `BeatPulseVisualisation` (the migrated single-colour beat pulse from Epics 1-4.5, `primary_colour` persisted via property bag) and `SpectrumBarsVisualisation` (7 perceptual bands — Sub Bass, Bass, Low Mids, Midrange, High Mids, Presence, Air — with permanent warm-to-cool colour coding and a manual sound-check fire on Confirm; the 32 log-spaced spectrum bins are rolled up into these perceptual buckets matching `PerceptualBoundsHz` from the analyser). The active visualisation is chosen at runtime via the picker overlay (Btn2 long), persisted to NVS under `noct/active_vis`, and respects capability gating — a vis whose `required_capabilities` aren't present on the host appears greyed in the picker. `AutonomousMasterMode` is a thin shell: it owns the broadcaster lifecycle and pause toggle, holds a pointer to the active vis, and forwards events.
+**Master-side: `Show` plug-ins (Epic 4.7).** A Show is the master-side performance unit. It consumes analyser events (kick / snare / hi-hat onsets, continuous music descriptors, section transitions), decides what to send on the wire via `DAL::render_fx("<class>:<group>", ev)`, owns the master LCD via `on_render(ctx)`, and handles operator input beyond the reserved back-gesture. The contract lives in [`include/shows/show.h`](https://github.com/ratcliffej/nocturnation-stickc/blob/main/include/shows/show.h): every hook has a no-op default so a Show overrides only what it cares about. At runtime each Show receives a `ShowContext` exposing `render_fx`, property-bag accessors, capability query, paused state, and time helpers - the same shape as the retired `VisualisationContext` with a clean rename.
 
-**Master-side asymmetry to slaves** (intentional). The master does **not** auto-bind a `LocalDisplayBinding`. Whether the master LCD participates in the show is a per-visualisation choice. `BeatPulseVisualisation` paints the LCD with the same pulse-rect it broadcasts to slaves; `SpectrumBarsVisualisation` paints the full screen with its bars + labels; a future "headless master" vis could leave the LCD as status-only. The slave's LCD is a render destination by default (via `LocalDisplayBinding`); the master's LCD is something the visualisation chooses to claim as part of its show.
+Hook surface:
 
-The contract surface includes a `Visualisation::wants_full_screen()` virtual (default false) that declares whether the vis paints the entire LCD itself. When true, `AutonomousMasterMode` suppresses its own mode chrome (colour title, BPM line, flux meter, footer) so the vis can paint freely without being clobbered by the 50 ms loop_tick redraw. `BeatPulseVisualisation` returns false (shares the LCD with mode chrome); `SpectrumBarsVisualisation` returns true (owns the LCD).
+- Lifecycle: `enter / exit`
+- Raw frames: `on_audio_frame / on_spectrum_frame`
+- Analyser events: `on_beat_detected / on_snare_detected / on_hihat_detected / on_music_descriptor / on_section_change` (Epic 4.7 Block 3-4 surfaces)
+- Input: `on_input_action`
+- Render: `on_render`
+- Property change: `on_property_changed`
+- Tick: `tick`
 
-**Slave-side: `OutputBinding` plug-ins.** An output binding consumes `RenderEvent`s and turns them into hardware action. The contract lives in [`include/output_bindings/output_binding.h`](https://github.com/ratcliffej/nocturnation-stickc/blob/main/include/output_bindings/output_binding.h): same Plugin base as Visualisation, same property-bag and capability machinery. Differences from Visualisation: bindings have no `render_fx` accessor (they *are* the render destination, calling `render_fx` from one would be circular) and their hook surface is `on_light_command` rather than `on_audio_frame`. `SlaveMode` is a thin shell that fans inbound `LIGHT_COMMAND` events out to every registered binding.
+Two Shows ship today: `SimpleBeatShow` (preserves the pre-Epic-4.7 BeatPulse fan-out byte-for-byte: render_fx "00:00" + screen flash + IR via `effects::Pulse`; one `color` property cycled by `Cycle` action) and `DynamicShow` (the Epic 4.7 Block 5 headline: kick → group 1, snare → group 2, hi-hat → group 3 via `"01:01"` / `"01:02"` / `"01:03"`; HSV colour math driven by centroid + energy + section, per-section palette adjustments — VERSE cools, BUILDUP warms, BREAKDOWN dims, DROP overrides to white; bracelet `chance` mapped from density). The active Show is chosen via the picker overlay or via `ConfigMode > Show`, persisted to NVS under `noct/active_show`, and respects capability gating.
 
-Two bindings ship today: `LocalDisplayBinding` (paints the slave's LCD full-bleed with the broadcast colour and ASR envelope - the "display-as-light" behaviour from Epic 4) and `PixMobIrBinding` (IR + PixMob protocol with a `group` property, 0=broadcast, 1-31=specific group; Epic 4.65 widened the range from the original 0-5 cap which was a `SlaveMode` artifact). Both can run simultaneously; either can be disabled in Config to limit the slave to one output. The legacy NVS keys (`slv_ir_grp`) migrated one-shot to the per-binding namespace at first boot.
+Shows own the master LCD: there's no Mode-level chrome anymore. `AutonomousMasterMode` is a thin host - lifecycle (audio input + ESP-NOW broadcast), pause flag, music_event broadcast (transport concern), picker / settings overlays. The retired `Visualisation::wants_full_screen()` virtual is gone; Shows always own the screen during normal operation, and the host's picker/settings overlays take over the LCD entirely when open.
+
+**Widget library** (Epic 4.7 Block 2). [`include/widgets/`](https://github.com/ratcliffej/nocturnation-stickc/tree/main/include/widgets) ships two reusable level-tuning helpers a Show or sub-mode composes inside its `on_render()`:
+
+- `BeatBarWidget` — horizontal level bar with optional threshold marker. `update(bar_fraction, marker_fraction)` clamps to [0, 1]; `draw(x, y, w, h)` paints frame + fill + marker. `SimpleBeatShow` composes it for the flux meter; `ConfigMode > Utilities > Level Tuning` hosts it standalone.
+- `SpectrumBarsWidget` — 7-band perceptual spectrum (Sub Bass / Bass / Lows / Mid / Hi / Pres / Air) with permanent warm-to-cool colour coding. `update(values_7band)` takes pre-aggregated fractions; a static `roll_up_spectrum_to_perceptual(magnitudes_32, sensitivity, out)` helper converts raw 32-band log-spectrum data. `DynamicShow` composes it in its on-screen status region; `ConfigMode > Utilities > Level Tuning` hosts it standalone.
+
+Widgets are a library, not a plug-in surface — Shows instantiate them directly, not via a registry. Promoting widgets to a plug-in registry is a deliberate future Epic if third-party widget contributions emerge.
+
+**ConfigMode > Utilities > Level Tuning** (Epic 4.7 Block 2) hosts both widgets in a live-audio bench-work sub-mode. Audio capture starts when the operator drills into the sub and stops on B-hold back. Btn2 cycles a display mode: **Live** (widgets render incoming flux + 7-band perceptual roll-up from `AudioFrameEvent`) and four fixed overrides (25 / 50 / 75 / 100 %). Btn1 fires a `render_fx("00:00")` test pulse at the displayed level for IR + ESP-NOW path verification independent of audio. The live mode is for venue sound-check ("is my mic level high enough that beats cross the threshold marker?"); the fixed modes are for bench rigs verifying transport without a sound source.
+
+**Slave-side: `OutputBinding` plug-ins** (Epic 4.6). An output binding consumes inbound `LIGHT_COMMAND` events and turns them into hardware action. Contract: [`include/output_bindings/output_binding.h`](https://github.com/ratcliffej/nocturnation-stickc/blob/main/include/output_bindings/output_binding.h). Same Plugin base as Show, same property-bag and capability machinery. Bindings have no `render_fx` accessor (they *are* the render destination); hook surface is `on_light_command`. `SlaveMode` fans inbound LIGHT_COMMAND out to every registered binding, filtering on `(binding.class(), binding.configured_group())` against the frame's target_class + target_group (Epic 4.65).
+
+Two bindings ship today: `LocalDisplayBinding` (paints the slave's LCD full-bleed with the broadcast colour and ASR envelope — the "display-as-light" behaviour from Epic 4) and `PixMobIrBinding` (IR + PixMob protocol relay; the legacy per-binding `group` property was retired post-Epic-4.65 when the binding became a pure relay that passes the inbound target_group straight through to the PixMob protocol's group byte). Both can run simultaneously; either can be disabled in Config to limit the slave to one output.
 
 Future hosts add their own bindings without touching slave code: Tildagon (Epic 5) will ship a `TildagonLedRingBinding` for its six perimeter RGB LEDs; a DMX deployment (Epic 7) lands a `DmxOutputBinding`; a BLE-controlled bracelet line lands a `BleBinding`. None of those require a recompile of `SlaveMode`.
 
-**Device-class taxonomy (Epic 4.65).** Each `OutputBinding` declares a `DeviceClass` via `OutputBinding::class()` so the master can address render targets by *what they are* rather than by transport-specific name strings. The taxonomy is operator-facing (lighting designers think in classes, not capability sets):
+**Device-class taxonomy (Epic 4.65).** Each `OutputBinding` declares a `DeviceClass` via `OutputBinding::device_class()` so a Show can address render targets by *what they are* rather than by transport-specific name strings. The taxonomy is operator-facing (lighting designers think in classes, not capability sets):
 
 - `0x00` **All** - reserved as the addressing wildcard; never returned by a binding.
 - `0x01` **Light** - light-only devices (PixMob X4 bracelets via `PixMobIrBinding`; future NocturNation-native light wristbands).
@@ -693,11 +717,11 @@ Future hosts add their own bindings without touching slave code: Tildagon (Epic 
 - `0x03` **MultiLedScreen** - multi-LED + screen devices (Tildagon-class; `TildagonLedRingBinding` returns this in Epic 5).
 - `0x04+` - reserved for future classes (accelerometer-stick, smoke-machine, etc.).
 
-`render_fx` targets become `"<class>:<group>"` in hex: `"00:00"` = everyone-everywhere, `"01:00"` = every light-class device any group, `"01:07"` = light-class group 7, `"03:01"` = Tildagon-class group 1. The master encodes both bytes into `LIGHT_COMMAND.target_class` and `target_group` (§4.3); slaves filter inbound frames against `(binding.class(), binding.configured_group())` per active binding and only fan out where both axes match.
+`render_fx` targets become `"<class>:<group>"` in hex: `"00:00"` = everyone-everywhere, `"01:00"` = every light-class device any group, `"01:07"` = light-class group 7, `"03:01"` = Tildagon-class group 1. The master encodes both bytes into `LIGHT_COMMAND.target_class` and `target_group` (§4.3); slaves filter inbound frames against `(binding.device_class(), binding.configured_group())` per active binding and only fan out where both axes match. Relay bindings (`PixMobIrBinding`) bypass the slave-side group filter on inbound LIGHT_COMMAND - the bracelet protocol does its own group filtering at the IR layer.
 
 A StickC slave with both `LocalDisplayBinding` (class `Screen`) and `PixMobIrBinding` (class `Light`) active is conceptually two classed devices on one host: a master firing `"01:00"` hits the IR binding only; firing `"02:00"` hits the display only; firing `"00:00"` hits both. The class lives on the binding, not the chassis.
 
-**Shared infrastructure** (Block 3): a `Plugin` base class providing id, display name, capability requirements, NVS-backed `PropertyBag` (namespace `nv_<id>` for visualisations, `nb_<id>` for output bindings; plugin id capped at 12 chars so the namespace stays under NVS's 15-char limit), and `PowerProfile` declaration. Templated `Registry<T>` machinery with explicit `register_plugin()` calls in `setup()` (no static-init magic). Both Visualisation and OutputBinding extend the same base.
+**Shared infrastructure.** A `Plugin` base class provides id, display name, capability requirements, NVS-backed `PropertyBag`, and `PowerProfile` declaration. The NVS namespace prefix depends on plug-in kind: `nv_<id>` for the retired Visualisation surface (TUs still compile but inert), `nb_<id>` for OutputBinding, `ns_<id>` for Show (Epic 4.7). Plug-in id is capped at 12 chars so the namespace stays under NVS's 15-char limit. Templated `Registry<T>` machinery with explicit `register_plugin()` calls in `main.cpp` (no static-init magic); a separate registry per plug-in kind.
 ---
 ## 8. Node operating modes and UI
 Every Nocturnation node runs the same conceptual state machine, regardless of hardware platform. The UI surface differs (StickC Plus2 has 3 buttons + screen; Tildagon has 6 buttons + round screen; Atom Lite has 1 button + 1 LED) but the *modes* and the *transitions between them* are common.
@@ -750,30 +774,24 @@ Reached by interrupting the boot countdown, or via the in-app menu. Top-level op
 - **Test Mode** (see §8.5) - top-level, deliberately easy to reach
 - **Config** (see §8.4)
 ### 8.4 Config tree
-Reorganised into carrier-then-protocol structure for consistency. Options not relevant to the current hardware are hidden.
-- **Audio**
-	- Enable / Disable (where mic available)
-	- Show live FFT spectrum
-	- Show live beat detection meter
-	- Tuning parameters (volume gate, beat multiplier, refractory; see §5.2)
-- **IR**
-	- Enable / Disable
-	- Protocol
-		- PixMob Aurora (CommandSingleColorExt)
-		- Nocturnation native *(future, when bespoke devices defined)*
-	- Group ID assignment (one-time bracelet setup workflow; see §10 open questions)
-- **ESP-NOW**
-	- Enable / Disable
-	- Channel number
-	- Source ID (for Master/Relay modes)
-- **WiFi**
-	- Enable / Disable
-	- SSID + password (for joining venue WiFi)
-	- Or: Soft-AP mode (creates own "Nocturnation" SSID)
-- **DMX/Art-Net** (where supported)
-	- Carrier (USB-serial Enttec Pro / Art-Net over WiFi or Ethernet)
-	- Universe ID
-	- Channel mapping (which channels drive which group)
+Post-Epic-4.65 / 4.7 layout: Group / Show / Display / Connectivity / Utilities / System at the top level (six items, scrolling enabled). Connectivity and Utilities are intermediate pickers; everything else drills straight to a leaf submenu. Options not relevant to the current hardware are hidden.
+- **Group** *(direct action)* — increments `slv_group` 0..255; the device-wide NocturNation receive-filter group ID applied by SlaveMode upstream of binding fan-out.
+- **Show** *(leaf)* — picker over registered `Show` plug-ins; selecting one persists as `active_show` in NVS. Reaches the same registry as the master-mode picker without entering Master mode.
+- **Display**
+	- Pulse Enable / Disable (toggles `LocalDriver`'s RgbPulse handler)
+- **Connectivity** *(picker)*
+	- **IR**
+		- Enable / Disable
+		- Protocol (PixMob Aurora; NocturNation-native reserved for when bespoke devices are defined)
+	- **ESP-NOW**
+		- Master Channel (1 / 6 / 11)
+		- Slave Channel (Auto / 1 / 6 / 11)
+		- Slave Repeat (rebroadcast inbound frames with hop_count + 1)
+	- **WiFi** *(stub; Epic 4)*
+	- **DMX** *(stub; Epic 7)*
+- **Utilities** *(picker)*
+	- **PixMob** — set bracelet group ID, send a group-targeted test fire (one-time bracelet setup workflow).
+	- **Level Tuning** *(Epic 4.7 Block 2)* — `BeatBarWidget` + `SpectrumBarsWidget` standalone with live audio. Btn2 cycles `{Live, 25%, 50%, 75%, 100%}`; Btn1 fires a `render_fx("00:00")` test pulse at the displayed intensity. Live mode drives the widgets from `AudioFrameEvent` for sound-check / level-tuning at the venue; fixed-percent modes provide IR + ESP-NOW path verification independent of audio.
 - **System**
 	- Firmware version
 	- Default boot mode
@@ -815,7 +833,7 @@ For hardware validation and bracelet setup verification. Each test fires a known
 </tr>
 </table>
 ### 8.7 InputAction abstraction (Epic 4.6 Block 4)
-The UI surface differs across hosts (StickC Plus2 + S3 = 2 buttons in practice once the power button is excluded; Tildagon = 6 buttons; Atom Lite = 1 button), so Epic 4.6 introduced a semantic input layer that visualisations and the framework UI consume regardless of host. Physical button-to-action mapping is the HAL's concern; everything above the HAL deals in `InputAction` events.
+The UI surface differs across hosts (StickC Plus2 + S3 = 2 buttons in practice once the power button is excluded; Tildagon = 6 buttons; Atom Lite = 1 button), so Epic 4.6 introduced a semantic input layer that Shows and the framework UI consume regardless of host. Physical button-to-action mapping is the HAL's concern; everything above the HAL deals in `InputAction` events.
 
 The canonical action set lives in [`include/hal/input_action.h`](https://github.com/ratcliffej/nocturnation-stickc/blob/main/include/hal/input_action.h):
 
@@ -827,7 +845,7 @@ enum class InputAction : uint8_t {
     CyclePrev,  // step backward (unbound on 2-button hosts)
     Pause,      // toggle pause
     Settings,   // open per-vis settings overlay
-    Picker,     // open vis-picker overlay
+    Picker,     // open Show-picker overlay
     AuxA,       // reserved for richer hosts
     AuxB,       // reserved for richer hosts
 };
@@ -843,17 +861,17 @@ For 2-button hosts (Plus2 + S3), the mapping lives in [`src/hal/input_action_map
 | Btn2 short click | `Cycle` |
 | Btn2 long press | `Picker` |
 
-For 6-button hosts (Tildagon, Epic 5) a sibling mapper will land that emits the same canonical action set from a different physical layout (`CyclePrev` / `AuxA` / `AuxB` become reachable). Visualisation code never sees the physical event — it sees only `InputAction` — so a vis written against the StickC layout runs unchanged on the Tildagon.
+For 6-button hosts (Tildagon, Epic 5) a sibling mapper will land that emits the same canonical action set from a different physical layout (`CyclePrev` / `AuxA` / `AuxB` become reachable). Show code never sees the physical event — it sees only `InputAction` — so a Show written against the StickC layout runs unchanged on the Tildagon.
 
 Both `ButtonPressEvent` and `InputEvent` fire from the same physical event during the migration window, so legacy modes that subscribe directly to button presses (Config, Menu, Test) continue to work alongside vis code that subscribes only to actions.
 
 ### 8.8 Modal overlays in Autonomous Master Mode (Epic 4.6 Blocks 10-11)
-`AutonomousMasterMode` runs the active visualisation full-screen by default but exposes two operator overlays without leaving the mode:
+`AutonomousMasterMode` runs the active Show full-screen by default but exposes two operator overlays without leaving the mode:
 
-- **Picker overlay** (opened by `InputAction::Picker`): lists every registered `Visualisation`, marks the active one, greys out any vis whose `required_capabilities` are not present on this host. `InputAction::Cycle` steps through the list; `InputAction::Confirm` selects and dismisses; a second `Picker` press dismisses without changing selection. The chosen vis id persists to NVS (`noct/active_vis`) so the same vis returns on next boot.
-- **Settings overlay** (opened by `InputAction::Settings`): renders an auto-generated settings UI from the active vis's `properties()` schema (PropertyType=Bool toggles, Colour cycles through the named palette, Enum cycles through `enum_names`, U8/U16 step on Cycle). A visualisation can override `render_settings_ui()` if the auto-generated form isn't sufficient; `SpectrumBarsVisualisation` uses the auto-generated UI today. A second `Settings` press dismisses.
+- **Picker overlay** (opened by `InputAction::Picker`): lists every registered `Show`, marks the active one, greys out any Show whose `required_capabilities` are not present on this host. `InputAction::Cycle` steps through the list; `InputAction::Confirm` selects and dismisses; a second `Picker` press dismisses without changing selection. The chosen Show id persists to NVS (`noct/active_show`) so the same Show returns on next boot. Block 1 of Epic 4.7 added a `ConfigMode > Show` top-level entry that reaches the same registry without entering Master mode.
+- **Settings overlay** (opened by `InputAction::Settings`): renders an auto-generated settings UI from the active Show's `properties()` schema (PropertyType=Bool toggles, Colour cycles through the named palette, Enum cycles through `enum_names`, U8/U16 step on Cycle). A Show can override `render_settings_ui()` if the auto-generated form isn't sufficient. A second `Settings` press dismisses.
 
-Both overlays are toggles owned by the mode, not the vis - the vis only learns about gestures it actually receives (`InputAction::Confirm` and `InputAction::Cycle` while no overlay is open). This keeps each visualisation's gesture handling minimal while letting the framework UI evolve independently. The fallback "exit to Menu" gesture (Btn2 long historically; now the Picker gesture) is dropped from the master: the operator returns to the mode menu via `Btn2 long` on the Picker overlay's "back" entry, keeping overlay open/close consistent.
+Both overlays are toggles owned by the mode, not the Show - the Show only learns about gestures it actually receives (`InputAction::Confirm` / `Cycle` / `CyclePrev` while no overlay is open). This keeps each Show's gesture handling minimal while letting the framework UI evolve independently. The fallback "exit to Menu" gesture (Btn2 long historically; now the Picker gesture) is dropped from the master: the operator returns to the mode menu via `Btn2 long` on the Picker overlay's "back" entry, keeping overlay open/close consistent.
 
 ### 8.9 Open design questions
 - **Boot countdown duration**: 5s fixed, configurable, or platform-dependent? (Block 13 reduced to 3 s; revisit if user feedback flags it as too short.)
