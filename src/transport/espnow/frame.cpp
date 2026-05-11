@@ -103,14 +103,15 @@ size_t encode_light_command(uint8_t* buf, size_t buf_len, const Header& hdr,
     constexpr size_t total = kHeaderSize + kLightCommandPayloadLen;
     if (buf_len < total) return 0;
     write_header(buf, hdr, MessageType::LightCommand, kLightCommandPayloadLen);
-    buf[kHeaderSize + 0] = p.target_group;
-    buf[kHeaderSize + 1] = p.r;
-    buf[kHeaderSize + 2] = p.g;
-    buf[kHeaderSize + 3] = p.b;
-    buf[kHeaderSize + 4] = p.attack;
-    buf[kHeaderSize + 5] = p.sustain;
-    buf[kHeaderSize + 6] = p.release;
-    buf[kHeaderSize + 7] = p.chance;
+    buf[kHeaderSize + 0] = p.target_class;
+    buf[kHeaderSize + 1] = p.target_group;
+    buf[kHeaderSize + 2] = p.r;
+    buf[kHeaderSize + 3] = p.g;
+    buf[kHeaderSize + 4] = p.b;
+    buf[kHeaderSize + 5] = p.attack;
+    buf[kHeaderSize + 6] = p.sustain;
+    buf[kHeaderSize + 7] = p.release;
+    buf[kHeaderSize + 8] = p.chance;
     return total;
 }
 
@@ -223,14 +224,15 @@ DecodeResult decode_light_command(const Header& hdr,
         payload_len    != kLightCommandPayloadLen) {
         return DecodeResult::PayloadLenMismatch;
     }
-    out.target_group = payload[0];
-    out.r            = payload[1];
-    out.g            = payload[2];
-    out.b            = payload[3];
-    out.attack       = payload[4];
-    out.sustain      = payload[5];
-    out.release      = payload[6];
-    out.chance       = payload[7];
+    out.target_class = payload[0];
+    out.target_group = payload[1];
+    out.r            = payload[2];
+    out.g            = payload[3];
+    out.b            = payload[4];
+    out.attack       = payload[5];
+    out.sustain      = payload[6];
+    out.release      = payload[7];
+    out.chance       = payload[8];
     return DecodeResult::Ok;
 }
 

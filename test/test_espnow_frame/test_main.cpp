@@ -129,6 +129,7 @@ static void test_light_command_round_trip(void) {
     uint8_t buf[kMaxFrameSize] = {};
     const Header in = make_header();
     const LightCommandPayload p_in{
+        /*target_class=*/0x01,         // Light class (Epic 4.65)
         /*target_group=*/5,
         /*r=*/0xFF, /*g=*/0x80, /*b=*/0x10,
         /*attack=*/2, /*sustain=*/4, /*release=*/6,
@@ -138,14 +139,15 @@ static void test_light_command_round_trip(void) {
     const size_t n = encode_light_command(buf, sizeof(buf), in, p_in);
     TEST_ASSERT_EQUAL_size_t(kHeaderSize + kLightCommandPayloadLen, n);
     assert_header_bytes(buf, MessageType::LightCommand, kLightCommandPayloadLen);
-    TEST_ASSERT_EQUAL_UINT8(5,    buf[kHeaderSize + 0]);
-    TEST_ASSERT_EQUAL_UINT8(0xFF, buf[kHeaderSize + 1]);
-    TEST_ASSERT_EQUAL_UINT8(0x80, buf[kHeaderSize + 2]);
-    TEST_ASSERT_EQUAL_UINT8(0x10, buf[kHeaderSize + 3]);
-    TEST_ASSERT_EQUAL_UINT8(2,    buf[kHeaderSize + 4]);
-    TEST_ASSERT_EQUAL_UINT8(4,    buf[kHeaderSize + 5]);
-    TEST_ASSERT_EQUAL_UINT8(6,    buf[kHeaderSize + 6]);
-    TEST_ASSERT_EQUAL_UINT8(3,    buf[kHeaderSize + 7]);
+    TEST_ASSERT_EQUAL_UINT8(0x01, buf[kHeaderSize + 0]);   // target_class
+    TEST_ASSERT_EQUAL_UINT8(5,    buf[kHeaderSize + 1]);   // target_group
+    TEST_ASSERT_EQUAL_UINT8(0xFF, buf[kHeaderSize + 2]);
+    TEST_ASSERT_EQUAL_UINT8(0x80, buf[kHeaderSize + 3]);
+    TEST_ASSERT_EQUAL_UINT8(0x10, buf[kHeaderSize + 4]);
+    TEST_ASSERT_EQUAL_UINT8(2,    buf[kHeaderSize + 5]);
+    TEST_ASSERT_EQUAL_UINT8(4,    buf[kHeaderSize + 6]);
+    TEST_ASSERT_EQUAL_UINT8(6,    buf[kHeaderSize + 7]);
+    TEST_ASSERT_EQUAL_UINT8(3,    buf[kHeaderSize + 8]);
 
     Header decoded{};
     TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
@@ -156,6 +158,7 @@ static void test_light_command_round_trip(void) {
                                                             buf + kHeaderSize,
                                                             decoded.payload_len,
                                                             p_out)));
+    TEST_ASSERT_EQUAL_UINT8(p_in.target_class, p_out.target_class);
     TEST_ASSERT_EQUAL_UINT8(p_in.target_group, p_out.target_group);
     TEST_ASSERT_EQUAL_UINT8(p_in.r,            p_out.r);
     TEST_ASSERT_EQUAL_UINT8(p_in.g,            p_out.g);

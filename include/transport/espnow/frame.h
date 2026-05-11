@@ -88,7 +88,8 @@ struct ModeChangePayload {
 constexpr uint8_t kModeChangePayloadLen = 2;
 
 struct LightCommandPayload {
-    uint8_t target_group;          // 0 = broadcast; 1-3 = auto; 4-31 = specialist
+    uint8_t target_class;          // 0 = all classes; see plugins::DeviceClass enum (Epic 4.65)
+    uint8_t target_group;          // 0 = all groups; 1-255 specific (PixMob enforces its own 0-31 cap)
     uint8_t r;
     uint8_t g;
     uint8_t b;
@@ -97,7 +98,7 @@ struct LightCommandPayload {
     uint8_t release;               // pixmob::Time index
     uint8_t chance;                // pixmob::Chance index
 };
-constexpr uint8_t kLightCommandPayloadLen = 8;
+constexpr uint8_t kLightCommandPayloadLen = 9;
 
 struct ClockSyncPayload {
     uint16_t phase_in_bar;         // 0-65535 represents 0.0-1.0 of bar
