@@ -63,6 +63,7 @@ private:
         WiFi,
         Dmx,
         PixMob,
+        LevelTuning,
         System,
     };
 
@@ -111,10 +112,14 @@ private:
     static constexpr size_t kConnectivityCount =
         sizeof(kConnectivity) / sizeof(kConnectivity[0]);
 
-    // Utilities picker entries (level-2 list under Utilities). Single
-    // entry today; future utilities slot in here.
-    static constexpr PickerEntry kUtilities[1] = {
-        { SubMenu::PixMob, "PixMob" },
+    // Utilities picker entries (level-2 list under Utilities).
+    // Level Tuning (Epic 4.7 Block 2) hosts the widget library
+    // standalone for bench work: manual injection drives the IR /
+    // ESP-NOW path independently of audio so a developer can verify
+    // the display + transport without playing music.
+    static constexpr PickerEntry kUtilities[2] = {
+        { SubMenu::PixMob,      "PixMob"       },
+        { SubMenu::LevelTuning, "Level Tuning" },
     };
     static constexpr size_t kUtilitiesCount =
         sizeof(kUtilities) / sizeof(kUtilities[0]);
@@ -172,6 +177,17 @@ private:
     // entering Master mode (Epic 4.7 Block 1).
     void handle_show(const dal::ButtonPressEvent& ev);
     void draw_show();
+
+    // Level Tuning submenu (Epic 4.7 Block 2). Hosts BeatBarWidget and
+    // SpectrumBarsWidget standalone with manual level injection. Btn2
+    // cycles a test level (0 / 25 / 50 / 75 / 100 %); Btn1 fires a
+    // render_fx pulse with the current level as RGB intensity so the
+    // operator can verify IR + ESP-NOW output without audio.
+    static constexpr uint8_t kLevelTuningSteps = 5;     // 0, 25, 50, 75, 100 %
+    uint8_t  level_tuning_step_ = 0;                    // 0..kLevelTuningSteps-1
+
+    void handle_level_tuning(const dal::ButtonPressEvent& ev);
+    void draw_level_tuning();
 
     // Display submenu (functional: Pulse Enable toggle + persists).
     enum class DisplayItem : uint8_t {

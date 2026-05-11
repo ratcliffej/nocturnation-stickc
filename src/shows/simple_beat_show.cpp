@@ -329,32 +329,18 @@ void SimpleBeatShow::on_render(ShowContext& ctx) {
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         10, 75, batt, WHITE, BLACK, 2});
 
-    // Flux meter (frame + bar + threshold marker), composed from
-    // FillRect primitives.
+    // Flux meter via the BeatBarWidget. Equivalent to the pre-Block-2
+    // inline rendering: bar fraction = ratio * 50 / 218 (clamped),
+    // marker at kBeatMultiplier * 50 / 218 ~= 0.573. The 218 figure
+    // is the inner drawable width (220 - 2 px frame).
     const int meterX = 10, meterY = 110, meterW = 220, meterH = 14;
-    DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
-        meterX, meterY,             meterW, 1,      WHITE});
-    DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
-        meterX, meterY + meterH-1,  meterW, 1,      WHITE});
-    DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
-        meterX, meterY,             1,      meterH, WHITE});
-    DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
-        meterX + meterW-1, meterY,  1,      meterH, WHITE});
-
     const float ratio = (baseline_flux_ > 1.0f)
                             ? current_flux_ / baseline_flux_
                             : 0.0f;
-    int barW = (int)(ratio * 50.0f);
-    if (barW < 0)            barW = 0;
-    if (barW > meterW - 2)   barW = meterW - 2;
-    DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
-        meterX + 1, meterY + 1, barW, meterH - 2, GREEN});
-
-    const int thrX = meterX + (int)(kBeatMultiplier * 50.0f);
-    if (thrX < meterX + meterW) {
-        DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
-            thrX, meterY - 2, 1, meterH + 4, RED});
-    }
+    constexpr float kBarScale       = 50.0f / 218.0f;
+    constexpr float kMarkerFraction = kBeatMultiplier * 50.0f / 218.0f;
+    flux_bar_.update(ratio * kBarScale, kMarkerFraction);
+    flux_bar_.draw(meterX, meterY, meterW, meterH);
 
     // Operator hint footer.
     DAL::fire_display_show_text("local", DisplayShowTextEvent{

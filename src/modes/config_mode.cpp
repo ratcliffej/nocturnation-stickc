@@ -10,6 +10,9 @@
 #include "plugins/property_bag.h"
 #include "shows/show.h"
 #include "shows/show_registry.h"
+#include "widgets/beat_bar.h"
+#include "widgets/spectrum_bars.h"
+#include "pixmob_protocol.h"
 
 #include <cstdio>
 #include <cstring>
@@ -67,7 +70,7 @@ size_t scroll_offset(size_t selected, size_t total, size_t max_visible) {
 // Out-of-class definitions for the ODR-used static constexpr members.
 constexpr ConfigMode::TopEntry    ConfigMode::kTop[6];
 constexpr ConfigMode::PickerEntry ConfigMode::kConnectivity[4];
-constexpr ConfigMode::PickerEntry ConfigMode::kUtilities[1];
+constexpr ConfigMode::PickerEntry ConfigMode::kUtilities[2];
 constexpr const char* ConfigMode::kWifiItems[];
 constexpr const char* ConfigMode::kDmxItems[];
 
@@ -318,12 +321,13 @@ void ConfigMode::draw_picker() {
 
 void ConfigMode::handle_sub(const ButtonPressEvent& ev) {
     switch (active_sub_) {
-        case SubMenu::Show:    handle_show(ev);    break;
-        case SubMenu::System:  handle_system(ev);  break;
-        case SubMenu::IR:      handle_ir(ev);      break;
-        case SubMenu::Display: handle_display(ev); break;
-        case SubMenu::EspNow:  handle_espnow(ev);  break;
-        case SubMenu::PixMob:  handle_pixmob(ev);  break;
+        case SubMenu::Show:        handle_show(ev);        break;
+        case SubMenu::System:      handle_system(ev);      break;
+        case SubMenu::IR:          handle_ir(ev);          break;
+        case SubMenu::Display:     handle_display(ev);     break;
+        case SubMenu::EspNow:      handle_espnow(ev);      break;
+        case SubMenu::PixMob:      handle_pixmob(ev);      break;
+        case SubMenu::LevelTuning: handle_level_tuning(ev); break;
         case SubMenu::WiFi:
         case SubMenu::Dmx:
             // Stub submenus accept Btn2 cycling for read-only browsing
@@ -340,14 +344,15 @@ void ConfigMode::handle_sub(const ButtonPressEvent& ev) {
 
 void ConfigMode::draw_sub() {
     switch (active_sub_) {
-        case SubMenu::Show:    draw_show(); break;
-        case SubMenu::Display: draw_display(); break;
-        case SubMenu::IR:      draw_ir(); break;
-        case SubMenu::EspNow:  draw_espnow(); break;
-        case SubMenu::WiFi:    draw_stub("WiFi", kWifiItems, kWifiItemCount, "Epic 4"); break;
-        case SubMenu::Dmx:     draw_stub("DMX",  kDmxItems,  kDmxItemCount,  "Epic 7"); break;
-        case SubMenu::PixMob:  draw_pixmob(); break;
-        case SubMenu::System:  draw_system(); break;
+        case SubMenu::Show:        draw_show(); break;
+        case SubMenu::Display:     draw_display(); break;
+        case SubMenu::IR:          draw_ir(); break;
+        case SubMenu::EspNow:      draw_espnow(); break;
+        case SubMenu::WiFi:        draw_stub("WiFi", kWifiItems, kWifiItemCount, "Epic 4"); break;
+        case SubMenu::Dmx:         draw_stub("DMX",  kDmxItems,  kDmxItemCount,  "Epic 7"); break;
+        case SubMenu::PixMob:      draw_pixmob(); break;
+        case SubMenu::LevelTuning: draw_level_tuning(); break;
+        case SubMenu::System:      draw_system(); break;
         default: break;
     }
 }
@@ -462,6 +467,90 @@ void ConfigMode::draw_show() {
     } else {
         DAL::fire_display_show_text("local", DisplayShowTextEvent{
             10, 122, "B: cycle  A: select  B-hold: back",
+            WHITE, BLACK, 1});
+    }
+}
+
+// -------------------------------------------------------------------------
+// Level Tuning submenu (Epic 4.7 Block 2)
+//
+// Hosts BeatBarWidget + SpectrumBarsWidget standalone for bench
+// work. Btn2 cycles a test level through 0 / 25 / 50 / 75 / 100 %;
+// the widgets render at that level. Btn1 fires a render_fx pulse
+// with the current level as RGB intensity so the operator can
+// verify IR + ESP-NOW output independently of audio - the slaves
+// pulse, the master's PixMobIrBinding transmits, and the test driver
+// (in native test envs) records the dispatch.
+// -------------------------------------------------------------------------
+
+void ConfigMode::handle_level_tuning(const ButtonPressEvent& ev) {
+    if (ev.id == ButtonId::Btn2) {
+        level_tuning_step_ = (level_tuning_step_ + 1) % kLevelTuningSteps;
+        draw();
+        return;
+    }
+    if (ev.id == ButtonId::Btn1) {
+        // Map step [0..4] to intensity [0, 64, 128, 192, 255].
+        const uint8_t intensity = static_cast<uint8_t>(
+            level_tuning_step_ * (255 / (kLevelTuningSteps - 1)));
+        dal::RgbPulseEvent pulse{};
+        pulse.r = intensity;
+        pulse.g = intensity;
+        pulse.b = intensity;
+        pulse.attack  = pixmob::T_32_MS;
+        pulse.sustain = pixmob::T_96_MS;
+        pulse.release = pixmob::T_96_MS;
+        pulse.chance  = pixmob::CHANCE_100;
+        DAL::render_fx("00:00", pulse);
+        confirm_until_ms_ = millis() + kConfirmFlashMs;
+        draw();
+    }
+}
+
+void ConfigMode::draw_level_tuning() {
+    DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 5, "Level Tuning", WHITE, BLACK, 2});
+
+    // Map step to a 0..1 fraction (0, 0.25, 0.5, 0.75, 1.0).
+    const float level_fraction =
+        static_cast<float>(level_tuning_step_) /
+        static_cast<float>(kLevelTuningSteps - 1);
+
+    // Current level readout (size 1, top-right). 100% takes 4 chars.
+    {
+        char buf[12];
+        std::snprintf(buf, sizeof(buf), "%3d%%",
+                      static_cast<int>(level_fraction * 100.0f + 0.5f));
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            195, 6, buf, YELLOW, BLACK, 1});
+    }
+
+    // Beat bar: top half, 220 px wide x 14 px tall, marker at 50 %.
+    {
+        widgets::BeatBarWidget bar;
+        bar.update(level_fraction, 0.5f);
+        bar.draw(10, 28, 220, 14);
+    }
+
+    // Spectrum bars: bottom half, 7 bands uniform at level_fraction.
+    {
+        widgets::SpectrumBarsWidget spec;
+        float values[widgets::kSpectrumBandCount];
+        for (size_t i = 0; i < widgets::kSpectrumBandCount; ++i) {
+            values[i] = level_fraction;
+        }
+        spec.update(values);
+        spec.draw(0, 50, 240, 70);
+    }
+
+    // Footer hint with brief "Fired" flash after Btn1.
+    if (confirm_until_ms_ > millis()) {
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 122, "Fired.", GREEN, BLACK, 1});
+    } else {
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 122, "B: level  A: fire  B-hold: back",
             WHITE, BLACK, 1});
     }
 }

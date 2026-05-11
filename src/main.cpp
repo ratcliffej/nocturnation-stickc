@@ -18,9 +18,6 @@
 #include "modes/mode_machine.h"
 #include "shows/show_registry.h"
 #include "shows/simple_beat_show.h"
-#include "visualisations/visualisation_registry.h"
-#include "visualisations/beat_pulse.h"
-#include "visualisations/spectrum_bars.h"
 #include "output_bindings/output_binding_registry.h"
 #include "output_bindings/local_display.h"
 #include "output_bindings/pixmob_ir.h"
@@ -37,19 +34,14 @@ void setup() {
     nocturnation::dal::DAL::begin();
 
     // Register master-side Shows (Epic 4.7 Block 1). SimpleBeatShow
-    // preserves the pre-Block-1 BeatPulse behaviour; Block 5 will add
-    // DynamicShow. The legacy BeatPulse / SpectrumBars Visualisation
-    // registrations below are inert under the new Show framework
-    // (AutonomousMasterMode no longer queries visualisation_registry);
-    // Block 2 of Epic 4.7 retires them entirely as part of the widget
-    // extraction.
+    // preserves the pre-Block-1 BeatPulse behaviour; Block 5 adds
+    // DynamicShow. The pre-Block-2 BeatPulse / SpectrumBars Visualisation
+    // registrations retired in Block 2 - their screen-rendering logic
+    // moved into the widget library (src/widgets/) and SimpleBeatShow
+    // composes BeatBarWidget for the flux meter; ConfigMode > Utilities
+    // > Level Tuning hosts the widgets standalone for bench work.
     nocturnation::shows::show_registry().register_plugin(
         nocturnation::shows::simple_beat_show_instance());
-
-    nocturnation::visualisations::visualisation_registry().register_plugin(
-        nocturnation::visualisations::beat_pulse_instance());
-    nocturnation::visualisations::visualisation_registry().register_plugin(
-        nocturnation::visualisations::spectrum_bars_instance());
 
     // Register slave-side output bindings (Epic 4.6 Block 9). SlaveMode
     // walks this registry on enter() and activates every binding whose

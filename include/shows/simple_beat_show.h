@@ -37,6 +37,7 @@
 #include "shows/show.h"
 #include "plugins/property_bag.h"
 #include "effects/effects.h"
+#include "widgets/beat_bar.h"
 
 namespace nocturnation {
 namespace shows {
@@ -74,6 +75,11 @@ private:
     static constexpr size_t kIbiBufferSize = 8;
 
     effects::Pulse pulse_{"all-pixmobs"};
+
+    // Block 2: flux meter rendering moved into the BeatBarWidget
+    // library. SimpleBeatShow's on_render owns the widget instance and
+    // feeds it the current ratio / threshold every frame.
+    widgets::BeatBarWidget flux_bar_;
 
     // Beat / BPM tracking (mirrors BeatPulseVisualisation exactly).
     uint32_t  last_beat_ms_   = 0;
