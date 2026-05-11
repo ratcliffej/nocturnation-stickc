@@ -1,6 +1,6 @@
 ---
 title: "Epic 4.65: Class+group device addressing"
-status: In Progress
+status: Done
 notion_url:
 notion_id:
 notion_status:
@@ -161,3 +161,27 @@ Pickup from Epic 4.6's architecture stream. Epic 4.6's `OutputBinding` contract 
 The design discussion landed three operator-friendly choices over more architecturally pure alternatives: device class as an explicit byte rather than a `CapabilityMask` (operators think in classes, not capability sets); `u8` group rather than `u16` (256 groups is enough for any realistic deployment); PixMob bracelets folded into the `Light` class rather than kept as a parallel target namespace (unified addressing model wins over taxonomic separation). The `"<hex>:<hex>"` target string is the API surface; the structured wire fields are the implementation.
 
 Total estimated effort: **~5-6 hours of coding plus hardware verification**. Each block is mechanical (one enum, one virtual method, one payload byte, one target-string parser, one slave filter, a numeric range bump, two call-site migrations, one cleanup pass). Comfortably half a day heads-down, a day with the H lane.
+
+## Close-out (2026-05-11)
+
+All eight code blocks shipped per-block-committed across `main`. Block 8 (hardware verification on Plus2 + S3 multi-slave scenarios) is the only open item; it's bench work that doesn't gate the architecture changes.
+
+**Final test count: 286 native tests across 15 envs**, all passing. Both firmware envs (`m5stack-stickcplus2`, `m5stack-stickcs3`) build clean. PixMob byte-parity tests held across the wire-format change.
+
+**Headline outcomes:**
+
+- `DeviceClass` enum lives at `hal::DeviceClass` next to `hal::Capability`. Operator-facing taxonomy: `All / Light / Screen / MultiLedScreen`, plus 0x04..0xFF reserved.
+- `OutputBinding::device_class()` is pure-virtual; `OutputBinding::is_relay()` defaults false. PixMobIrBinding overrides relay→true so it transmits PixMob IR with the inbound `target_group` regardless of slave membership.
+- `LightCommandPayload` carries both `target_class` and `target_group` (9 bytes total, up from 8). Encoder + decoder + round-trip tests updated.
+- `DAL::render_fx("<hex_class>:<hex_group>", ev)` parses structured targets; legacy names ("local", "all-pixmobs", "group-N") still resolve via the device registry for the master's own local IR + screen. The redundant `"esp-now-broadcast"` device-name entry was removed in Block 9; the driver still claims the transport name at the driver layer.
+- `Driver::send(target_class, target_group, ev)` is the 3-arg overload with a default that forwards to the existing 2-arg dropping the class. Production routes via `find_driver_for_transport("esp-now-broadcast")` so test envs can intercept with recording drivers under the same transport.
+- `slv_group` is the slave's NocturNation receive-filter group ID. Persisted under NVS key `slv_group` (default 0 = match anything); operator sets via Config > ESP-NOW > Group.
+- Slave filter: local bindings fire on `(target_class == 0 OR matches) AND (target_group == 0 OR matches slv_group)`. Relay bindings bypass the slv_group axis and read `OutputBindingContext::current_target_group()` to thread the inbound group code into their downstream protocol.
+- PixMob group range widened from 0..5 (a `SlaveMode::ir_target_name` artifact) to 0..31 (the PixMob protocol's native 5-bit field). `DAL::begin()` registers `group-1`..`group-31`. `kMaxDevices` bumped 32 → 48.
+- Master vis (`BeatPulseVisualisation`, `SpectrumBarsVisualisation`) and Test Mode all use `"00:00"` now (broadcast everyone). Master's local IR continues to use `"all-pixmobs"` / `"group-N"` (local PixMob driver, not ESP-NOW).
+
+**Deferred:**
+- **(H)** lane: bench verification of multi-slave scenarios in Block 8 (acceptance criteria 5-8 in the spec above).
+- Class addressing for `MUSIC_EVENT`, `HEARTBEAT`, `MODE_CHANGE`. Those frames stay broadcast-only by design - global semantics ("I'm alive", "DROP detected").
+- Capability-aware fx fallbacks (richer fx types degrading on bindings that can't render them natively). Architectural hooks via `CapabilityMask`; concrete fallback design defers to Epic 4.7 when the first richer fx surfaces.
+- Stadium-scale individual addressing (>256 groups). 8-bit group is enough for now; widening to u16 is a follow-up if the use case materialises.

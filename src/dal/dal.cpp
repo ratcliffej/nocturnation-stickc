@@ -257,13 +257,13 @@ void DAL::begin() {
         register_device(kGroupDeviceNames[g - 1], &profiles::PixMobX4Gen3_1, g);
     }
 
-    // Master broadcast target: render_fx("esp-now-broadcast", RgbPulseEvent)
-    // hits this device's profile and routes through the EspNowBroadcastDriver,
-    // which encodes a LIGHT_COMMAND frame and broadcasts it to any slaves on
-    // the configured show channel. Group 0 (broadcast); per-group
-    // esp-now-broadcast-group-N variants can be registered later for
-    // targeted slave addressing without changing the driver.
-    register_device("esp-now-broadcast", &profiles::EspNowBroadcast, 0);
+    // Epic 4.65 Block 9: the legacy "esp-now-broadcast" device name is no
+    // longer registered. All master broadcast call sites moved to the
+    // structured "<class>:<group>" target form in Block 7, which routes
+    // directly via find_driver_for_transport("esp-now-broadcast") and
+    // bypasses the device registry. The EspNowBroadcastDriver still
+    // claims the "esp-now-broadcast" transport at the driver layer; only
+    // the named device entry is gone.
 
     // Register concrete drivers. Each refuses registration when its HAL
     // prerequisite is absent (e.g. no IRTx -> PixMob driver doesn't register).
