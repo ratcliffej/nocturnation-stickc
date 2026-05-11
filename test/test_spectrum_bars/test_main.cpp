@@ -296,7 +296,7 @@ static void test_on_spectrum_frame_draws_bars(void) {
     // Feed magnitudes that should produce non-zero bar heights.
     SpectrumFrameEvent ev{};
     for (size_t i = 0; i < SpectrumFrameEvent::kBands; ++i) {
-        ev.magnitudes[i] = 15.0f;     // mid-range value
+        ev.magnitudes[i] = 50000.0f;  // representative loud-music value
     }
 
     const uint32_t local_before = dal::DAL::driver_send_count("local");
@@ -321,7 +321,7 @@ static void test_on_spectrum_frame_paused_suppresses_render(void) {
 
     SpectrumFrameEvent ev{};
     for (size_t i = 0; i < SpectrumFrameEvent::kBands; ++i) {
-        ev.magnitudes[i] = 15.0f;
+        ev.magnitudes[i] = 50000.0f;
     }
 
     const uint32_t local_before = dal::DAL::driver_send_count("local");
@@ -341,7 +341,7 @@ static void test_on_spectrum_frame_throttles_to_30hz(void) {
 
     SpectrumFrameEvent ev{};
     for (size_t i = 0; i < SpectrumFrameEvent::kBands; ++i) {
-        ev.magnitudes[i] = 15.0f;
+        ev.magnitudes[i] = 50000.0f;
     }
 
     set_test_millis(1000);

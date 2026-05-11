@@ -13,6 +13,8 @@
 #include "dal/dal.h"
 #include "pixmob_protocol.h"
 
+#include <cmath>
+
 #ifdef ARDUINO
 #include <Arduino.h>
 #else
@@ -79,21 +81,27 @@ constexpr int kBarWidth      = 6;
 constexpr int kBarGap        = 1;
 constexpr int kBarsLeftX     = 8;
 
-// Magnitude-to-bar-height calibration. The analyser emits log2-scaled
-// FFT bin energies; AudioLive's reference calibration treats the typical
-// operating range as ~14..20 for the B/M/T bands (floor / ceil from
-// kCalibrationDefault in persistence.h) and ~5..10 for treble. We use a
-// single conservative noise floor of 4.0 so treble still responds at
-// modest volumes, then scale by sensitivity (1..10) * 0.01 so the
-// default sensitivity of 5 produces a healthy bar (~50-80%) over the
-// expected magnitude range. Anything above ~24 magnitude with sens=5
-// clamps to full height.
+// Magnitude-to-bar-height calibration. compute_spectrum_frame() in
+// audio_analyser.cpp accumulates RAW linear FFT magnitudes per band -
+// observed range on Plus2 hardware spans nearly five orders of
+// magnitude: silence median ~1500 / max ~12000, normal music median
+// ~5000-10000 / max ~50000-150000, peak drops max ~400000+. Linear
+// scaling can't represent that span; we log-compress first, then
+// subtract a floor in log space and scale by sensitivity.
 //
-// Without the floor subtraction, ambient magnitudes around 5-10 with
-// sensitivity 5 and the previous 0.04 multiplier produced v >= 1.0 for
-// every band - all bars stuck at maximum, no useful information.
-constexpr float kMagFloor    = 4.0f;
-constexpr float kSensScale   = 0.01f;
+// Numbers below are tuned against captured serial output (1 Hz
+// [SPEC] dump in draw_spectrum's diagnostic block):
+//   log2(1500)   ≈ 10.5  (silence floor)
+//   log2(10000)  ≈ 13.3  (quiet music median)
+//   log2(150000) ≈ 17.2  (loud music max)
+//   log2(400000) ≈ 18.6  (peak drop)
+//
+// kMagFloorLog2 sits at 10.0 so silence shows no bars and quiet music
+// shows small bars; kSensScale = 0.025 maps a log2 span of 8 at
+// sens=5 to full bar height (so anything above log2 ~18 / mag ~262k
+// clamps to full).
+constexpr float kMagFloorLog2 = 10.0f;
+constexpr float kSensScale    = 0.025f;
 
 // Band-focus group bounds (inclusive). Bass = bands 0..9 (lowest 10 of
 // 32 log-spaced bins, sub-200-ish-Hz on the StickC analyser), Mid =
@@ -218,11 +226,13 @@ void SpectrumBarsVisualisation::draw_spectrum(VisualisationContext& ctx,
         0, kBarsTopY, 240, kBarsMaxHeight, BLACK});
 
     for (size_t i = 0; i < SpectrumFrameEvent::kBands; ++i) {
-        // Subtract noise floor before scaling so silence shows no bar
-        // (rather than a permanent baseline) and treble bands (typical
-        // 5..10 magnitude) still respond. See kMagFloor / kSensScale
-        // notes above for the calibration reasoning.
-        float v = (ev.magnitudes[i] - kMagFloor) * sens_scale * kSensScale;
+        // Log-compress first (the analyser ships raw linear magnitudes
+        // spanning ~5 orders of magnitude), then subtract the silence
+        // floor in log space and scale by sensitivity. See
+        // kMagFloorLog2 / kSensScale notes above for the calibration.
+        // log2(1+m) handles m=0 cleanly (yields 0).
+        const float log_mag = std::log2(1.0f + ev.magnitudes[i]);
+        float v = (log_mag - kMagFloorLog2) * sens_scale * kSensScale;
         if (v < 0.0f) v = 0.0f;
         if (v > 1.0f) v = 1.0f;
 
