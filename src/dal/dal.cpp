@@ -11,6 +11,7 @@
 #include "drivers/pixmob_ir_driver.h"
 #include "drivers/espnow_broadcast_driver.h"
 
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -45,7 +46,11 @@ bool DeviceProfile::has(CapabilityId cap) const {
 
 namespace {
 
-constexpr size_t kMaxDevices         = 32;
+// Headroom for: local (1) + all-pixmobs (1) + group-1..group-31 (31) +
+// esp-now-broadcast (1) = 34 today, plus comfortable room for future
+// classes' broadcast targets (e.g. esp-now-tildagon-*) without bumping
+// again. Epic 4.65 Block 6 pushed past the prior 32 cap.
+constexpr size_t kMaxDevices         = 48;
 constexpr size_t kMaxDrivers         = 8;
 constexpr size_t kMaxSubscribersEach = 8;
 constexpr size_t kMaxHostCapsEach    = 8;
@@ -229,16 +234,25 @@ void DAL::begin() {
     // Register the host as the "local" device.
     register_device("local", &s_host_profile, 0);
 
-    // Register PixMob bracelets. "all-pixmobs" is broadcast (group 0). The
-    // numbered groups 1-5 cover the §8.5 Group Targeting Test cycle plus the
-    // bracelet-setup flow (Set Group ID writes 1-5 today; range can extend
-    // to the protocol's 1-31 maximum when constellation work needs more).
+    // Register PixMob bracelets. "all-pixmobs" is broadcast (group 0).
+    // "group-1".."group-31" cover the PixMob protocol's full native group
+    // range (Epic 4.65 Block 6 extended this from the original 1-5 cap
+    // which was a SlaveMode::ir_target_name artifact; the protocol always
+    // supported the full 5-bit field). Names use string-literal pointers
+    // because register_device stores the pointer rather than copying.
     register_device("all-pixmobs", &profiles::PixMobX4Gen3_1, 0);
-    register_device("group-1",     &profiles::PixMobX4Gen3_1, 1);
-    register_device("group-2",     &profiles::PixMobX4Gen3_1, 2);
-    register_device("group-3",     &profiles::PixMobX4Gen3_1, 3);
-    register_device("group-4",     &profiles::PixMobX4Gen3_1, 4);
-    register_device("group-5",     &profiles::PixMobX4Gen3_1, 5);
+    static constexpr const char* kGroupDeviceNames[31] = {
+        "group-1",  "group-2",  "group-3",  "group-4",  "group-5",
+        "group-6",  "group-7",  "group-8",  "group-9",  "group-10",
+        "group-11", "group-12", "group-13", "group-14", "group-15",
+        "group-16", "group-17", "group-18", "group-19", "group-20",
+        "group-21", "group-22", "group-23", "group-24", "group-25",
+        "group-26", "group-27", "group-28", "group-29", "group-30",
+        "group-31",
+    };
+    for (uint8_t g = 1; g <= 31; ++g) {
+        register_device(kGroupDeviceNames[g - 1], &profiles::PixMobX4Gen3_1, g);
+    }
 
     // Master broadcast target: render_fx("esp-now-broadcast", RgbPulseEvent)
     // hits this device's profile and routes through the EspNowBroadcastDriver,

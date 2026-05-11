@@ -253,18 +253,20 @@ static void test_pixmob_profile_declares_assign_device_group(void) {
 }
 
 static void test_group_n_devices_registered_after_begin(void) {
-    // DAL::begin registers group-1..group-5 alongside local + all-pixmobs.
-    // Each is bound to its corresponding group_id - this test cannot read
-    // the group_id directly via the public API, but can confirm the named
-    // device exists with the PixMob profile.
+    // DAL::begin registers group-1..group-31 alongside local + all-pixmobs.
+    // Epic 4.65 Block 6 extended this from the original 1-5 cap to cover
+    // the PixMob protocol's full native group range. Each is bound to its
+    // corresponding group_id - this test cannot read the group_id directly
+    // via the public API, but can confirm the named device exists with
+    // the PixMob profile across the range.
     TEST_ASSERT_TRUE(dal::DAL::has_device("group-1"));
-    TEST_ASSERT_TRUE(dal::DAL::has_device("group-2"));
-    TEST_ASSERT_TRUE(dal::DAL::has_device("group-3"));
-    TEST_ASSERT_TRUE(dal::DAL::has_device("group-4"));
     TEST_ASSERT_TRUE(dal::DAL::has_device("group-5"));
-    TEST_ASSERT_FALSE(dal::DAL::has_device("group-6"));
+    TEST_ASSERT_TRUE(dal::DAL::has_device("group-6"));
+    TEST_ASSERT_TRUE(dal::DAL::has_device("group-16"));
+    TEST_ASSERT_TRUE(dal::DAL::has_device("group-31"));
+    TEST_ASSERT_FALSE(dal::DAL::has_device("group-32"));
 
-    const auto* p = dal::DAL::profile_of("group-3");
+    const auto* p = dal::DAL::profile_of("group-31");
     TEST_ASSERT_NOT_NULL(p);
     TEST_ASSERT_EQUAL_STRING("PixMobX4Gen3_1", p->type_id);
 }

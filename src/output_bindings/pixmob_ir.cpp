@@ -13,6 +13,8 @@
 
 #include "dal/dal.h"
 
+#include <cstdio>
+
 namespace nocturnation {
 namespace output_bindings {
 
@@ -29,8 +31,19 @@ using nocturnation::plugins::Span;
 
 namespace {
 
+// Group 0..31 - PixMob protocol's native group-byte range. The pre-
+// Epic-4.65 0..5 cap was a SlaveMode artifact (the original
+// ir_target_name switch only covered six cases); the protocol itself
+// has always supported 0..31.
 const char* const kGroupNames[] = {
-    "All", "Group 1", "Group 2", "Group 3", "Group 4", "Group 5"
+    "All",
+    "Group 1",  "Group 2",  "Group 3",  "Group 4",  "Group 5",
+    "Group 6",  "Group 7",  "Group 8",  "Group 9",  "Group 10",
+    "Group 11", "Group 12", "Group 13", "Group 14", "Group 15",
+    "Group 16", "Group 17", "Group 18", "Group 19", "Group 20",
+    "Group 21", "Group 22", "Group 23", "Group 24", "Group 25",
+    "Group 26", "Group 27", "Group 28", "Group 29", "Group 30",
+    "Group 31",
 };
 
 const PropertyDef kProps[] = {
@@ -39,7 +52,7 @@ const PropertyDef kProps[] = {
         /*type=*/PropertyType::Enum,
         /*default_value=*/PropertyValue::from_enum(0),  // All
         /*min_value=*/    PropertyValue::from_enum(0),
-        /*max_value=*/    PropertyValue::from_enum(5),
+        /*max_value=*/    PropertyValue::from_enum(31),
         /*display_name=*/"Slave Group",
         /*unit=*/nullptr,
         /*enum_names=*/kGroupNames,
@@ -48,20 +61,17 @@ const PropertyDef kProps[] = {
 
 constexpr size_t kPropCount = sizeof(kProps) / sizeof(kProps[0]);
 
-// Map group id (0..5) -> registered DAL device name. Group 0 maps to
-// "all-pixmobs" for full-broadcast behaviour; 1..5 map to the per-group
-// devices DAL::begin() registers. Mirrors the pre-migration
-// SlaveMode::ir_target_name switch byte-for-byte.
+// Built-in target names "all-pixmobs" + "group-1".."group-31". Buffer
+// is a thread-unsafe static (caller copies before next call); the IR
+// path is single-threaded inside SlaveMode::fan_out_light_command so
+// this is safe in practice. 12-char max ("group-31\0") well under
+// the 16-byte buffer.
 const char* ir_target_name(uint8_t group_id) {
-    switch (group_id) {
-        case 0:  return "all-pixmobs";
-        case 1:  return "group-1";
-        case 2:  return "group-2";
-        case 3:  return "group-3";
-        case 4:  return "group-4";
-        case 5:  return "group-5";
-        default: return "all-pixmobs";
-    }
+    if (group_id == 0) return "all-pixmobs";
+    if (group_id > 31) return "all-pixmobs";
+    static char buf[16];
+    std::snprintf(buf, sizeof(buf), "group-%u", static_cast<unsigned>(group_id));
+    return buf;
 }
 
 }  // namespace

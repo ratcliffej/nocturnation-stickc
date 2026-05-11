@@ -256,21 +256,22 @@ static void test_spectrum_subscriber_count_multiple(void) {
 static void test_active_device_listing(void) {
     dal::DAL::register_device("a", &dal::profiles::PixMobX4Gen3_1, 1);
     dal::DAL::register_device("b", &dal::profiles::PixMobX4Gen3_1, 2);
-    // DAL::begin() registers "local", "all-pixmobs", "group-1".."group-5"
-    // (added 2026-05-08 for the §8.5 Group Targeting Test), then
-    // "esp-now-broadcast" (added 2026-05-10 in Epic 4.6 Block 2 - the master
-    // broadcast target sits in the active-device registry so render_fx routes
-    // to EspNowBroadcastDriver). This test then adds "a" + "b". Total = 10,
-    // in registration order.
-    TEST_ASSERT_EQUAL_size_t(10, dal::DAL::active_device_count());
+    // DAL::begin() registers "local", "all-pixmobs", "group-1".."group-31"
+    // (Epic 4.65 Block 6 extended from 1-5 to the PixMob protocol's full
+    // 1-31 native range), then "esp-now-broadcast" (Epic 4.6 Block 2 -
+    // the master broadcast target sits in the active-device registry so
+    // render_fx routes to EspNowBroadcastDriver). This test then adds
+    // "a" + "b". Total = 1 + 1 + 31 + 1 + 2 = 36, in registration order.
+    TEST_ASSERT_EQUAL_size_t(36, dal::DAL::active_device_count());
     TEST_ASSERT_EQUAL_STRING("local",             dal::DAL::active_device_name(0));
     TEST_ASSERT_EQUAL_STRING("all-pixmobs",       dal::DAL::active_device_name(1));
     TEST_ASSERT_EQUAL_STRING("group-1",           dal::DAL::active_device_name(2));
     TEST_ASSERT_EQUAL_STRING("group-5",           dal::DAL::active_device_name(6));
-    TEST_ASSERT_EQUAL_STRING("esp-now-broadcast", dal::DAL::active_device_name(7));
-    TEST_ASSERT_EQUAL_STRING("a",                 dal::DAL::active_device_name(8));
-    TEST_ASSERT_EQUAL_STRING("b",                 dal::DAL::active_device_name(9));
-    TEST_ASSERT_NULL(dal::DAL::active_device_name(10));
+    TEST_ASSERT_EQUAL_STRING("group-31",          dal::DAL::active_device_name(32));
+    TEST_ASSERT_EQUAL_STRING("esp-now-broadcast", dal::DAL::active_device_name(33));
+    TEST_ASSERT_EQUAL_STRING("a",                 dal::DAL::active_device_name(34));
+    TEST_ASSERT_EQUAL_STRING("b",                 dal::DAL::active_device_name(35));
+    TEST_ASSERT_NULL(dal::DAL::active_device_name(36));
 }
 
 // =============================================================================

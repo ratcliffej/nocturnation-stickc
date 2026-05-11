@@ -192,7 +192,7 @@ void migrate_legacy_nvs_keys() {
     prefs.begin("noct", /*readOnly=*/false);
     if (prefs.isKey("slv_ir_grp")) {
         uint8_t g = prefs.getUChar("slv_ir_grp", 0);
-        if (g > 5) g = 0;
+        if (g > 31) g = 0;
         // Write through the binding's property bag so the value lives
         // under the "nb_pixmob-ir" namespace with key "group" - the
         // bag is also what PixMobIrBinding::on_light_command reads.
@@ -268,7 +268,7 @@ void save_active_vis_id(const char* id) {
 void migrate_legacy_nvs_keys() {
     if (s_native_legacy_slv_ir_grp_present) {
         uint8_t g = s_native_legacy_slv_ir_grp_value;
-        if (g > 5) g = 0;
+        if (g > 31) g = 0;
         nocturnation::output_bindings::pixmob_ir_property_bag().set(
             "group", plugins::PropertyValue::from_enum(g));
         s_native_legacy_slv_ir_grp_present = false;

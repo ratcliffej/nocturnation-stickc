@@ -223,13 +223,14 @@ static void test_pixmob_ir_property_schema(void) {
     const auto& def = props[0];
     TEST_ASSERT_EQUAL_STRING("group", def.key);
     TEST_ASSERT_EQUAL_INT((int)PropertyType::Enum, (int)def.type);
-    TEST_ASSERT_EQUAL_UINT8(0, def.min_value.as_enum());
-    TEST_ASSERT_EQUAL_UINT8(5, def.max_value.as_enum());
-    TEST_ASSERT_EQUAL_UINT8(0, def.default_value.as_enum());  // default broadcast
+    TEST_ASSERT_EQUAL_UINT8(0,  def.min_value.as_enum());
+    TEST_ASSERT_EQUAL_UINT8(31, def.max_value.as_enum());      // Epic 4.65 Block 6: full 0..31
+    TEST_ASSERT_EQUAL_UINT8(0,  def.default_value.as_enum());  // default broadcast
     TEST_ASSERT_NOT_NULL(def.enum_names);
-    TEST_ASSERT_EQUAL_STRING("All",     def.enum_names[0]);
-    TEST_ASSERT_EQUAL_STRING("Group 1", def.enum_names[1]);
-    TEST_ASSERT_EQUAL_STRING("Group 5", def.enum_names[5]);
+    TEST_ASSERT_EQUAL_STRING("All",      def.enum_names[0]);
+    TEST_ASSERT_EQUAL_STRING("Group 1",  def.enum_names[1]);
+    TEST_ASSERT_EQUAL_STRING("Group 5",  def.enum_names[5]);
+    TEST_ASSERT_EQUAL_STRING("Group 31", def.enum_names[31]);
 }
 
 static void test_pixmob_ir_requires_irtx_capability(void) {
@@ -347,18 +348,19 @@ static void test_pixmob_ir_group_five_fires_group_5(void) {
 }
 
 // Out-of-range group writes are clamped by PropertyBag bounds; a
-// write of 99 lands as enum max (5), which then routes to group-5.
+// write of 99 lands as enum max (31 post-Epic-4.65 Block 6), which
+// then routes to group-31.
 static void test_pixmob_ir_group_clamps_out_of_range(void) {
     PixMobIrBinding*      b   = pixmob_ir_instance();
     OutputBindingContext& ctx = pixmob_ir_context();
 
     TEST_ASSERT_TRUE(ctx.set_property("group", PropertyValue::from_enum(99)));
-    TEST_ASSERT_EQUAL_UINT8(5, ctx.get_property("group").as_enum());
+    TEST_ASSERT_EQUAL_UINT8(31, ctx.get_property("group").as_enum());
 
     RgbPulseEvent ev{};
     b->on_light_command(ctx, ev);
     TEST_ASSERT_EQUAL_INT(1, g_ir_driver.rgb_pulse_count());
-    TEST_ASSERT_EQUAL_UINT8(5, g_ir_driver.last_group_id());
+    TEST_ASSERT_EQUAL_UINT8(31, g_ir_driver.last_group_id());
 }
 
 // =============================================================================
@@ -553,8 +555,9 @@ static void test_migration_seeds_pixmob_group_property(void) {
 }
 
 // Out-of-range legacy values get clamped to 0 by the migration's
-// `if (g > 5) g = 0` defensive guard - same as the pre-migration
-// load_slave_ir_group() behaviour.
+// `if (g > 31) g = 0` defensive guard. The cap widened from 5 to 31
+// in Epic 4.65 Block 6 (PixMob protocol's native range); legacy values
+// that were already valid (<=5) migrate unchanged.
 static void test_migration_clamps_out_of_range_legacy_value(void) {
     PropertyBag::clear_for_tests();
     modes::persistence::test_seam::clear_native_persistence();
