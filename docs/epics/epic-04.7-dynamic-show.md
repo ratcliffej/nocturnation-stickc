@@ -1,9 +1,9 @@
 ---
 title: "Epic 4.7: Show plug-in framework and dynamic FFT-driven show"
-status: Proposed
+status: Done
 notion_url: https://www.notion.so/35cbd067740581feb287ff7023202c19
 notion_id: 35cbd067740581feb287ff7023202c19
-notion_status: Proposed
+notion_status: Done
 last_synced: 2026-05-11
 sync_direction: bidirectional
 ---
@@ -352,3 +352,18 @@ Proposed 2026-05-09, refined 2026-05-11 following the Epic 4.65 close-out and a 
 **Forward-looking note on widget plug-in surface**: widgets stay library-only this Epic. If contributors propose useful new widgets (VU meter, waveform scope, kick/snare/hihat scrolling histogram, etc.), promoting widgets to a plug-in surface is a small, contained follow-up Epic.
 
 Processing Type stays **Hybrid** because algorithm work is well-suited to laptop-driven coding (with native unit tests), but Block 6 is genuinely **Manual** — Jason listening to music with hardware in hand for several hours is the only reliable test for "does this feel right?".
+
+## Close-out (2026-05-11)
+
+Closed with Blocks 1-5, 7, and 8 shipped to main and verified against 348 native tests across 17 envs. Block 6 (hardware tuning) was done inline via a series of bench iterations against bracelets rather than as a discrete tuning pass — the tuning surfaced architectural fixes that fed back into the code rather than just parameter tweaks. Highlights:
+
+- **Master-IR loopback in `dispatch_output_class_group`**. `render_fx` calls fire ESP-NOW broadcast + master's PixMob IR LED + master's screen pulse from one entry point. Shows no longer hand-roll a "fire to all-pixmobs in addition" call - the dispatch path treats the master as its own slave for output purposes. Class+group filtering is honoured (only Light-class targets reach IR; only Screen-class reach LocalDriver).
+- **IR reset primer**, idle-gated. Bench observation that Pulse / Fade fires landed but bracelets didn't respond, and that Sparkle / WhiteOut fades picked up colour artefacts and ended abruptly. Diagnosed as residual envelope state on bracelets between commands. Fix: `dispatch_output_class_group` sends an rgb=0 broadcast primer before the main fire when the IR transmitter has been idle for > 300 ms. The primer clears bracelet state; the main fire then runs cleanly. Continuous high-cadence streams (Rainbow at 25 ms cycle) skip the primer via the idle gate.
+- **`DynamicShow.groups` property**, default 1 = broadcast. Bench testing confirmed bracelets ship at random groups, so per-drum group routing (kick→1, snare→2, hi-hat→3) only works after the operator pre-programmes bracelets. Default 1 fires everything to PixMob group 0 (broadcast), works out of the box on any deployment. Operator bumps to 3 for the full per-drum split.
+- **TestMode unification**. Pulse / Fade / Rainbow / Sparkle / WhiteOut all collapse from three render_fx calls each (`"all-pixmobs"` + `"local"` + `"00:00"`) to one (`"00:00"`). The loopback handles fan-out.
+- **Sparkle re-tuned**. White-only (was random palette), CHANCE_16 (~20 %), step 1100 ms / ~0.9 Hz cadence with a 1 s fade envelope (T_0 + T_480 + T_480 = 960 ms) so each twinkle fades cleanly before the next primer. Reads as crowd-shimmer.
+- **PixMob protocol broadcast investigation**. Tried an 8-byte frame variant for `groupId=0` (omitting the group byte). Bench-tested it; broke everything. Reverted - the 9-byte frame with `restrictGroupId=0` is the correct broadcast shape and parity with `jamesw343/PixMob_IR` is preserved.
+
+Outstanding follow-up that didn't gate the close-out: the architecture spec's §7.6 plug-in surfaces text was already aligned in v0.23 (Block 8), but the README and docs/developing-shows.md haven't been re-flowed for the IR primer / screen loopback architecture additions. Worth a sweep when Epic 4.8 (documentation) writes the protocol manual.
+
+**Final state**: 348 tests across 17 envs, Plus2 + S3 firmware builds clean, bench-validated against DynamicShow at the venue. Architecture spec v0.23 (synced to Notion). Developer guide at docs/developing-shows.md (cross-linked from README).
