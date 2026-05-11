@@ -184,3 +184,7 @@ This project would not exist without the prior reverse-engineering work of Danie
 Issues and pull requests welcome. Major changes - particularly to the IR encoder or the beat-detection thresholds - should reference the architecture specification to confirm the change is in scope for the current Epic before any code lands.
 
 For protocol changes, please regenerate the parity-test reference vectors against jamesw343's Python encoder rather than against the local C++ output, to preserve the upstream-as-truth invariant.
+
+### Adding a new Show
+
+The master's performance is implemented by a Show plug-in (Epic 4.7). To add your own performance, see [docs/developing-shows.md](docs/developing-shows.md) for the developer guide - it covers the `Show` base class API, the analyser hook surface, class+group routing via `render_fx`, screen rendering, widget composition, NVS persistence, and the testing pattern, with `DynamicShow` as the worked example.
