@@ -56,7 +56,18 @@ public:
     // Generic RgbPulse dispatch: encodes LIGHT_COMMAND with the active
     // device's group_id and broadcasts. Returns false when the radio is
     // not currently started (active_ == false) or the encode/send fails.
+    // Legacy entry point: forwards to send(0, group_id, ev) with
+    // target_class set to All. Block 7 migrates vis call sites to the
+    // structured "<class>:<group>" target form which routes through the
+    // 3-arg overload below.
     bool send(uint8_t group_id, const RgbPulseEvent& ev) override;
+
+    // Class+group dispatch (Epic 4.65 Block 4). The structured target
+    // string "<hex_class>:<hex_group>" passed to DAL::render_fx parses
+    // into these two bytes and bypasses the device-name lookup, going
+    // straight through here. target_class lands at offset 0 of
+    // LightCommandPayload; target_group at offset 1.
+    bool send(uint8_t target_class, uint8_t target_group, const RgbPulseEvent& ev);
 
     // ---- Driver-specific lifecycle / protocol entry points ----
     //

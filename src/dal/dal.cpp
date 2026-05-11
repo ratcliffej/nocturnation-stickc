@@ -5,11 +5,13 @@
 // constants below; raise them if a deployment hits a ceiling.
 
 #include "dal/dal.h"
+#include "dal/render_target.h"
 #include "hal/hal.h"
 #include "drivers/local_driver.h"
 #include "drivers/pixmob_ir_driver.h"
 #include "drivers/espnow_broadcast_driver.h"
 
+#include <cstdlib>
 #include <cstring>
 
 namespace nocturnation {
@@ -163,7 +165,46 @@ bool dispatch_output(const char* target, CapabilityId cap, const Event& ev) {
     return ok;
 }
 
+// Structured-target dispatch. Bypasses the device-name lookup; goes
+// straight to the ESP-NOW broadcaster with both class and group on the
+// LIGHT_COMMAND payload. Slaves filter on receive (Block 5).
+bool dispatch_output_class_group(uint8_t target_class,
+                                  uint8_t target_group,
+                                  const RgbPulseEvent& ev) {
+    EspNowBroadcastDriver* driver = esp_now_broadcast_driver_instance();
+    if (!driver) return false;
+    if (!driver->enabled()) return false;
+    const bool ok = driver->send(target_class, target_group, ev);
+    if (ok) driver->increment_send_count();
+    return ok;
+}
+
 }  // anonymous namespace
+
+// Epic 4.65 Block 4: structured "<hex_class>:<hex_group>" target parser.
+// Declared in include/dal/render_target.h so native tests can hit it
+// directly. Returns true and populates out_class / out_group on a valid
+// two-field hex pair (e.g. "00:00", "01:07", "ff:ff"). Returns false for
+// any legacy target name ("local", "all-pixmobs", "esp-now-broadcast",
+// "group-N") which contain no colon and fall back through to
+// dispatch_output's name-based lookup.
+bool parse_target_class_group(const char* target,
+                               uint8_t&    out_class,
+                               uint8_t&    out_group) {
+    if (!target || !*target) return false;
+    const char* colon = std::strchr(target, ':');
+    if (!colon || colon == target || *(colon + 1) == '\0') return false;
+
+    char* end = nullptr;
+    const unsigned long c = std::strtoul(target, &end, 16);
+    if (end != colon || c > 0xFFul) return false;
+    const unsigned long g = std::strtoul(colon + 1, &end, 16);
+    if (!end || *end != '\0' || g > 0xFFul) return false;
+
+    out_class = static_cast<uint8_t>(c);
+    out_group = static_cast<uint8_t>(g);
+    return true;
+}
 
 // =============================================================================
 // Lifecycle
@@ -297,6 +338,16 @@ bool DAL::fire_rgb_pulse(const char* t, const RgbPulseEvent& ev) {
 }
 
 bool DAL::render_fx(const char* t, const RgbPulseEvent& ev) {
+    // Epic 4.65 Block 4: structured "<hex_class>:<hex_group>" targets
+    // route to the ESP-NOW broadcaster with both fields on the LIGHT_COMMAND
+    // payload, bypassing the legacy name-based device lookup. Legacy names
+    // ("local", "all-pixmobs", "group-N", "esp-now-broadcast") fall
+    // through to dispatch_output for now; Block 9 removes them once vis
+    // / binding call sites have migrated.
+    uint8_t cls = 0, grp = 0;
+    if (parse_target_class_group(t, cls, grp)) {
+        return dispatch_output_class_group(cls, grp, ev);
+    }
     return dispatch_output(t, CapabilityId::RgbPulse, ev);
 }
 bool DAL::fire_rgb_static(const char* t, const RgbStaticEvent& ev) {

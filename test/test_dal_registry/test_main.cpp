@@ -10,6 +10,7 @@
 #include <unity.h>
 #include "hal/hal.h"
 #include "dal/dal.h"
+#include "dal/render_target.h"
 
 // =============================================================================
 // Test HAL backend - declares Mic + Buttons + Display (no IRTx, no ESPNow)
@@ -272,6 +273,60 @@ static void test_active_device_listing(void) {
     TEST_ASSERT_NULL(dal::DAL::active_device_name(10));
 }
 
+// =============================================================================
+// Epic 4.65 Block 4: structured "<hex_class>:<hex_group>" target parser.
+// =============================================================================
+
+static void test_parse_target_accepts_canonical_two_digit_hex(void) {
+    uint8_t c = 0xAA, g = 0xBB;
+    TEST_ASSERT_TRUE(dal::parse_target_class_group("00:00", c, g));
+    TEST_ASSERT_EQUAL_UINT8(0x00, c);
+    TEST_ASSERT_EQUAL_UINT8(0x00, g);
+
+    TEST_ASSERT_TRUE(dal::parse_target_class_group("01:07", c, g));
+    TEST_ASSERT_EQUAL_UINT8(0x01, c);
+    TEST_ASSERT_EQUAL_UINT8(0x07, g);
+
+    TEST_ASSERT_TRUE(dal::parse_target_class_group("ff:ff", c, g));
+    TEST_ASSERT_EQUAL_UINT8(0xFF, c);
+    TEST_ASSERT_EQUAL_UINT8(0xFF, g);
+}
+
+static void test_parse_target_accepts_single_digit_hex(void) {
+    uint8_t c = 0, g = 0;
+    TEST_ASSERT_TRUE(dal::parse_target_class_group("1:7", c, g));
+    TEST_ASSERT_EQUAL_UINT8(0x01, c);
+    TEST_ASSERT_EQUAL_UINT8(0x07, g);
+}
+
+static void test_parse_target_accepts_uppercase_hex(void) {
+    uint8_t c = 0, g = 0;
+    TEST_ASSERT_TRUE(dal::parse_target_class_group("0F:1A", c, g));
+    TEST_ASSERT_EQUAL_UINT8(0x0F, c);
+    TEST_ASSERT_EQUAL_UINT8(0x1A, g);
+}
+
+static void test_parse_target_rejects_legacy_names(void) {
+    uint8_t c = 0, g = 0;
+    TEST_ASSERT_FALSE(dal::parse_target_class_group("local", c, g));
+    TEST_ASSERT_FALSE(dal::parse_target_class_group("all-pixmobs", c, g));
+    TEST_ASSERT_FALSE(dal::parse_target_class_group("esp-now-broadcast", c, g));
+    TEST_ASSERT_FALSE(dal::parse_target_class_group("group-1", c, g));
+}
+
+static void test_parse_target_rejects_malformed(void) {
+    uint8_t c = 0, g = 0;
+    TEST_ASSERT_FALSE(dal::parse_target_class_group(nullptr, c, g));
+    TEST_ASSERT_FALSE(dal::parse_target_class_group("",        c, g));
+    TEST_ASSERT_FALSE(dal::parse_target_class_group(":01",     c, g));   // no class
+    TEST_ASSERT_FALSE(dal::parse_target_class_group("01:",     c, g));   // no group
+    TEST_ASSERT_FALSE(dal::parse_target_class_group("01:01:01", c, g));  // extra trailing
+    TEST_ASSERT_FALSE(dal::parse_target_class_group("01 :07",  c, g));   // embedded space
+    TEST_ASSERT_FALSE(dal::parse_target_class_group("zz:01",   c, g));   // non-hex
+    TEST_ASSERT_FALSE(dal::parse_target_class_group("100:01",  c, g));   // class >0xFF
+    TEST_ASSERT_FALSE(dal::parse_target_class_group("01:100",  c, g));   // group >0xFF
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_local_device_registered_after_begin);
@@ -293,5 +348,11 @@ int main(int, char**) {
     RUN_TEST(test_spectrum_subscriber_count_increments);
     RUN_TEST(test_spectrum_subscriber_count_multiple);
     RUN_TEST(test_active_device_listing);
+    // Block 4: structured target parser
+    RUN_TEST(test_parse_target_accepts_canonical_two_digit_hex);
+    RUN_TEST(test_parse_target_accepts_single_digit_hex);
+    RUN_TEST(test_parse_target_accepts_uppercase_hex);
+    RUN_TEST(test_parse_target_rejects_legacy_names);
+    RUN_TEST(test_parse_target_rejects_malformed);
     return UNITY_END();
 }

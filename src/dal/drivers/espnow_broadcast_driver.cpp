@@ -58,6 +58,16 @@ void EspNowBroadcastDriver::loop_tick() {
 }
 
 bool EspNowBroadcastDriver::send(uint8_t group_id, const RgbPulseEvent& ev) {
+    // Legacy path: target_class = All (0x00). The 3-arg overload below
+    // is the canonical entry; this forwarder keeps existing call sites
+    // (DAL legacy-name dispatch via the registered "esp-now-broadcast"
+    // device) working with byte-identical wire output.
+    return send(/*target_class=*/0, group_id, ev);
+}
+
+bool EspNowBroadcastDriver::send(uint8_t target_class,
+                                  uint8_t target_group,
+                                  const RgbPulseEvent& ev) {
     if (!active_) return false;
     using namespace transport::espnow;
     Header h{};
@@ -65,12 +75,8 @@ bool EspNowBroadcastDriver::send(uint8_t group_id, const RgbPulseEvent& ev) {
     h.sequence_number = next_seq();
     h.hop_count       = 0;
     LightCommandPayload p{};
-    // target_class defaults to All (0x00); Block 4 wires the structured
-    // class:group target string into both fields. Block 3 is wire-format-
-    // only - existing call sites pass through one group_id and treat
-    // class as broadcast, preserving today's behaviour.
-    p.target_class = 0;
-    p.target_group = group_id;
+    p.target_class = target_class;
+    p.target_group = target_group;
     p.r = ev.r; p.g = ev.g; p.b = ev.b;
     p.attack  = static_cast<uint8_t>(ev.attack);
     p.sustain = static_cast<uint8_t>(ev.sustain);
