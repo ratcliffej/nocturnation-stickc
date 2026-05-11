@@ -5,9 +5,6 @@
 
 #include "persistence.h"
 
-#include "output_bindings/pixmob_ir.h"
-#include "plugins/property_bag.h"
-
 #ifdef ARDUINO
 #include <Arduino.h>
 #include <Preferences.h>
@@ -182,22 +179,17 @@ void save_active_vis_id(const char* id) {
 }
 
 void migrate_legacy_nvs_keys() {
-    // slv_ir_grp -> PixMobIrBinding "group" property. The legacy key
-    // lived in the "noct" namespace; the new home is the binding's
-    // own NVS namespace ("nb_pixmob-ir") via PropertyBag::set(). After
-    // a successful migration we remove the legacy key so a re-run is
-    // a no-op (operator factory-resets via ConfigMode > System >
-    // Factory Reset, which prefs.clear()s the whole "noct" namespace).
+    // slv_ir_grp - legacy key from pre-Epic-4.65 firmware. Originally
+    // moved to PixMobIrBinding's "group" property in Epic 4.6 Block 9;
+    // that property itself was dropped in the post-Epic-4.65 cleanup
+    // because the binding became a pure relay (uses inbound
+    // target_group, not a per-binding fallback). The legacy key is now
+    // just consumed and discarded so a stale value doesn't shadow
+    // future settings. Operator factory-resets via ConfigMode > System
+    // > Factory Reset, which prefs.clear()s the whole "noct" namespace.
     Preferences prefs;
     prefs.begin("noct", /*readOnly=*/false);
     if (prefs.isKey("slv_ir_grp")) {
-        uint8_t g = prefs.getUChar("slv_ir_grp", 0);
-        if (g > 31) g = 0;
-        // Write through the binding's property bag so the value lives
-        // under the "nb_pixmob-ir" namespace with key "group" - the
-        // bag is also what PixMobIrBinding::on_light_command reads.
-        nocturnation::output_bindings::pixmob_ir_property_bag().set(
-            "group", plugins::PropertyValue::from_enum(g));
         prefs.remove("slv_ir_grp");
     }
     prefs.end();
@@ -266,14 +258,10 @@ void save_active_vis_id(const char* id) {
 }
 
 void migrate_legacy_nvs_keys() {
-    if (s_native_legacy_slv_ir_grp_present) {
-        uint8_t g = s_native_legacy_slv_ir_grp_value;
-        if (g > 31) g = 0;
-        nocturnation::output_bindings::pixmob_ir_property_bag().set(
-            "group", plugins::PropertyValue::from_enum(g));
-        s_native_legacy_slv_ir_grp_present = false;
-        s_native_legacy_slv_ir_grp_value   = 0;
-    }
+    // Consume the legacy key without writing it anywhere - the relay
+    // PixMobIrBinding no longer has a per-binding fallback group.
+    s_native_legacy_slv_ir_grp_present = false;
+    s_native_legacy_slv_ir_grp_value   = 0;
 }
 
 namespace test_seam {
@@ -284,6 +272,7 @@ void seed_legacy_slv_ir_grp(uint8_t g) {
 void clear_native_persistence() {
     s_native_slave_channel             = 0;
     s_native_slave_repeat_en           = false;
+    s_native_slv_group                 = 0;
     s_native_legacy_slv_ir_grp_present = false;
     s_native_legacy_slv_ir_grp_value   = 0;
     std::strncpy(s_native_active_vis, "beat-pulse", kActiveVisBufSize);
