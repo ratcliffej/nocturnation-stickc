@@ -162,6 +162,19 @@ bool LocalDriver::begin() {
                 sf, frame.overall_rms, beat || snare || hihat,
                 frame.timestamp_ms);
 
+            // Section state machine (Block 4). Drop event input is
+            // the music_event field's DROP value (1) - BREAKDOWN
+            // (2) is detected directly by SectionDetector via the
+            // breakdown_sustain check so we don't double-fire it.
+            const bool drop_fired =
+                (music == analyser::DropEvent::Drop);
+            const analyser::SectionType section =
+                s_instance.section_detector_.process(
+                    s_instance.music_descriptors_.centroid(),
+                    s_instance.music_descriptors_.energy(),
+                    s_instance.music_descriptors_.density(),
+                    drop_fired);
+
             // Band-summary event + onset / descriptor stamps.
             AudioFrameEvent af;
             af.timestamp_ms    = frame.timestamp_ms;
@@ -185,6 +198,7 @@ bool LocalDriver::begin() {
             af.centroid        = s_instance.music_descriptors_.centroid();
             af.energy          = s_instance.music_descriptors_.energy();
             af.density         = s_instance.music_descriptors_.density();
+            af.section         = static_cast<uint8_t>(section);
             DAL::deliver_audio_frame("local", af);
 
             // Spectrum-frame event: 32 log-spaced magnitudes. Master-

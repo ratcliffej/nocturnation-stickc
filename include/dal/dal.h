@@ -197,6 +197,15 @@ struct AudioFrameEvent {
     uint8_t  centroid  = 0;
     uint8_t  energy    = 0;
     uint8_t  density   = 0;
+
+    // Current section label (Epic 4.7 Block 4). Values per
+    // analyser::SectionType: 0=UNKNOWN, 1=VERSE, 2=CHORUS, 3=BUILDUP,
+    // 4=BREAKDOWN, 5=VOCALS_ONLY (reserved), 6=INSTRUMENTAL_BREAK
+    // (reserved), 7=DROP. AutonomousMasterMode fires
+    // Show::on_section_change(section) only when this value differs
+    // from the previously-delivered section so the hook fires on
+    // transitions, not every frame.
+    uint8_t  section   = 0;
 };
 
 // 32-band log-spaced spectrum frame, master-local. Delivered alongside

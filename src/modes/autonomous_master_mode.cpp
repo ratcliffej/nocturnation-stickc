@@ -73,6 +73,8 @@ void AutonomousMasterMode::enter() {
     last_centroid_delivered_   = 0;
     last_energy_delivered_     = 0;
     last_density_delivered_    = 0;
+    section_delivered_         = false;
+    last_section_delivered_    = 0;
 
     resolve_active_show_from_nvs();
 
@@ -201,6 +203,15 @@ void AutonomousMasterMode::on_audio_frame(const AudioFrameEvent& ev) {
             last_energy_delivered_   = ev.energy;
             last_density_delivered_  = ev.density;
             descriptor_delivered_    = true;
+        }
+
+        // Section transition: fire only when the section changes from
+        // the last delivered value. SectionDetector applies hysteresis
+        // upstream so consumers see clean transitions.
+        if (!section_delivered_ || ev.section != last_section_delivered_) {
+            active_show_->on_section_change(*ctx_, ev.section);
+            last_section_delivered_ = ev.section;
+            section_delivered_      = true;
         }
     }
 }

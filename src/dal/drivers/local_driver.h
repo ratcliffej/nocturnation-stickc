@@ -16,6 +16,7 @@
 #include "dal/analyser/beat_detector.h"
 #include "dal/analyser/drop_detector.h"
 #include "dal/analyser/music_descriptors.h"
+#include "dal/analyser/section_detector.h"
 #include "dal/dal.h"
 
 namespace nocturnation {
@@ -177,6 +178,13 @@ private:
     // centroid + energy + density per frame and stamps the u8 values
     // onto AudioFrameEvent.{centroid, energy, density}.
     analyser::MusicDescriptors music_descriptors_;
+
+    // Section state machine (Epic 4.7 Block 4). Consumes the
+    // descriptors plus the DropDetector's drop event flag and
+    // produces a section label per frame; AudioFrameEvent.section
+    // carries the current section, AutonomousMasterMode fires
+    // Show::on_section_change(section) on transitions.
+    analyser::SectionDetector section_detector_;
 };
 
 // Singleton accessor used by DAL::begin() to register the driver.

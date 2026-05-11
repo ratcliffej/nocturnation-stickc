@@ -89,6 +89,13 @@ private:
     uint8_t   last_density_delivered_     = 0;
     static constexpr uint8_t kMusicDescriptorDelta = 13;   // ~5 % of 255
 
+    // Last delivered SECTION (Epic 4.7 Block 4). Show::on_section_change
+    // fires only when the inbound section value differs from the last
+    // delivered. _delivered_ flags first-fire so the initial section
+    // (typically UNKNOWN) reaches the show.
+    bool      section_delivered_          = false;
+    uint8_t   last_section_delivered_     = 0;
+
     // Overlay state. Picker enumerates show_registry; Settings walks
     // active_show_'s PropertyDef schema. Both consume InputActions and
     // own the screen while open so the Show's on_render() is skipped.
