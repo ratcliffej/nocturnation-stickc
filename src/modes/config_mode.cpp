@@ -8,8 +8,11 @@
 #include "../dal/drivers/local_driver.h"   // for set_pulse_enabled gating
 #include "output_bindings/pixmob_ir.h"
 #include "plugins/property_bag.h"
+#include "shows/show.h"
+#include "shows/show_registry.h"
 
 #include <cstdio>
+#include <cstring>
 
 #ifdef ARDUINO
 #include <Arduino.h>
@@ -62,7 +65,7 @@ size_t scroll_offset(size_t selected, size_t total, size_t max_visible) {
 }  // namespace
 
 // Out-of-class definitions for the ODR-used static constexpr members.
-constexpr ConfigMode::TopEntry    ConfigMode::kTop[5];
+constexpr ConfigMode::TopEntry    ConfigMode::kTop[6];
 constexpr ConfigMode::PickerEntry ConfigMode::kConnectivity[4];
 constexpr ConfigMode::PickerEntry ConfigMode::kUtilities[1];
 constexpr const char* ConfigMode::kWifiItems[];
@@ -315,6 +318,7 @@ void ConfigMode::draw_picker() {
 
 void ConfigMode::handle_sub(const ButtonPressEvent& ev) {
     switch (active_sub_) {
+        case SubMenu::Show:    handle_show(ev);    break;
         case SubMenu::System:  handle_system(ev);  break;
         case SubMenu::IR:      handle_ir(ev);      break;
         case SubMenu::Display: handle_display(ev); break;
@@ -336,6 +340,7 @@ void ConfigMode::handle_sub(const ButtonPressEvent& ev) {
 
 void ConfigMode::draw_sub() {
     switch (active_sub_) {
+        case SubMenu::Show:    draw_show(); break;
         case SubMenu::Display: draw_display(); break;
         case SubMenu::IR:      draw_ir(); break;
         case SubMenu::EspNow:  draw_espnow(); break;
@@ -381,6 +386,84 @@ void ConfigMode::draw_stub(const char* title,
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         10, 122, "B: cycle  B-hold: back",
         WHITE, BLACK, 1});
+}
+
+// -------------------------------------------------------------------------
+// Show submenu (Epic 4.7 Block 1)
+//
+// Picker over the registered Shows (show_registry). Btn2 cycles the
+// cursor; Btn1 persists the selection as active_show in NVS. Mirrors
+// AutonomousMasterMode's in-flight picker but reachable from Config
+// without entering Master mode. Empty registry is defensive only -
+// production builds always register at least SimpleBeatShow.
+// -------------------------------------------------------------------------
+
+void ConfigMode::handle_show(const ButtonPressEvent& ev) {
+    const size_t count = shows::show_registry().count();
+    if (count == 0) return;
+    if (ev.id == ButtonId::Btn2) {
+        sub_selected_ = (sub_selected_ + 1) % count;
+        draw();
+        return;
+    }
+    if (ev.id == ButtonId::Btn1) {
+        shows::Show* picked = shows::show_registry().at(sub_selected_);
+        if (picked) {
+            persistence::save_active_show_id(picked->id());
+            confirm_until_ms_ = millis() + kConfirmFlashMs;
+        }
+        draw();
+    }
+}
+
+void ConfigMode::draw_show() {
+    DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 5, "Show", WHITE, BLACK, 2});
+
+    const size_t count = shows::show_registry().count();
+    if (count == 0) {
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 30, "(no shows registered)", WHITE, BLACK, 1});
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 122, "B-hold: back", WHITE, BLACK, 1});
+        return;
+    }
+
+    const char* active_id = persistence::load_active_show_id();
+
+    constexpr int kRowY0 = 22;
+    const size_t  max_visible = static_cast<size_t>(
+        (kBodyBottomLimit - kRowY0) / kRowStride);
+    const size_t  first       = scroll_offset(sub_selected_, count, max_visible);
+    const size_t  last_excl   = (first + max_visible > count)
+                                ? count
+                                : first + max_visible;
+
+    for (size_t i = first; i < last_excl; ++i) {
+        const bool   sel = (i == sub_selected_);
+        shows::Show* s   = shows::show_registry().at(i);
+        const bool   active = s && active_id
+                              && std::strcmp(s->id(), active_id) == 0;
+        char buf[40];
+        std::snprintf(buf, sizeof(buf), "%s %s%s",
+                      sel ? ">" : " ",
+                      s ? s->display_name() : "(null)",
+                      active ? " *" : "");
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, kRowY0 + static_cast<int>(i - first) * kRowStride, buf,
+            sel ? YELLOW : (active ? GREEN : WHITE), BLACK, 2});
+    }
+
+    // Brief "Saved" linger after Btn1 confirm.
+    if (confirm_until_ms_ > millis()) {
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 122, "Saved.", GREEN, BLACK, 1});
+    } else {
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 122, "B: cycle  A: select  B-hold: back",
+            WHITE, BLACK, 1});
+    }
 }
 
 // -------------------------------------------------------------------------

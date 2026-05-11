@@ -190,8 +190,11 @@ static void test_config_picker_layer_bhold_pops_one_level(void) {
     ModeMachine::switch_to(ModeId::Config);
     TEST_ASSERT_EQUAL_INT((int)ModeId::Config, (int)ModeMachine::current());
 
-    // Top cursor starts at 0 (Group). Two Btn2 presses cycles to
-    // Connectivity (index 2).
+    // Top cursor starts at 0 (Group). Three Btn2 presses cycles to
+    // Connectivity (index 3 after Epic 4.7 Block 1 inserted Show at
+    // index 1: Group / Show / Display / Connectivity / Utilities /
+    // System).
+    inject_button_press(hal::ButtonId::Btn2, hal::ButtonEvent::Pressed);
     inject_button_press(hal::ButtonId::Btn2, hal::ButtonEvent::Pressed);
     inject_button_press(hal::ButtonId::Btn2, hal::ButtonEvent::Pressed);
     // Btn1 drills into the Connectivity picker.
@@ -217,7 +220,9 @@ static void test_config_direct_leaf_bhold_skips_picker(void) {
     ModeMachine::switch_to(ModeId::Config);
     TEST_ASSERT_EQUAL_INT((int)ModeId::Config, (int)ModeMachine::current());
 
-    // Top cursor at 0 (Group); one Btn2 lands on Display (index 1).
+    // Top cursor at 0 (Group); two Btn2 presses land on Display
+    // (index 2 after Epic 4.7 Block 1 inserted Show at index 1).
+    inject_button_press(hal::ButtonId::Btn2, hal::ButtonEvent::Pressed);
     inject_button_press(hal::ButtonId::Btn2, hal::ButtonEvent::Pressed);
     inject_button_press(hal::ButtonId::Btn1, hal::ButtonEvent::Pressed);
     TEST_ASSERT_EQUAL_INT((int)ModeId::Config, (int)ModeMachine::current());

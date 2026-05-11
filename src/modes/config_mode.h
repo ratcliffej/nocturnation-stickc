@@ -56,6 +56,7 @@ private:
         Connectivity,
         Utilities,
         // Leaf submenus.
+        Show,
         Display,
         IR,
         EspNow,
@@ -86,8 +87,9 @@ private:
         TopAction   action;
         const char* label;
     };
-    static constexpr TopEntry kTop[5] = {
+    static constexpr TopEntry kTop[6] = {
         { SubMenu::None,         TopAction::GroupId, "Group"        },
+        { SubMenu::Show,         TopAction::Drill,   "Show"         },
         { SubMenu::Display,      TopAction::Drill,   "Display"      },
         { SubMenu::Connectivity, TopAction::Drill,   "Connectivity" },
         { SubMenu::Utilities,    TopAction::Drill,   "Utilities"    },
@@ -163,6 +165,13 @@ private:
     void draw_stub(const char* title,
                    const char* const* items, size_t count,
                    const char* epic_tag);
+
+    // Show submenu (functional: picker over registered shows). Cycles
+    // through show_registry, persists active_show on confirm. Mirrors
+    // the AutonomousMasterMode picker but reachable from Config without
+    // entering Master mode (Epic 4.7 Block 1).
+    void handle_show(const dal::ButtonPressEvent& ev);
+    void draw_show();
 
     // Display submenu (functional: Pulse Enable toggle + persists).
     enum class DisplayItem : uint8_t {

@@ -145,10 +145,11 @@ void save_slv_group(uint8_t g) {
     prefs.end();
 }
 
-// Active visualisation id. Stored as a string under "noct/active_vis";
-// 16-byte read buffer is comfortable for the 12-char id() cap. Default
-// is "beat-pulse" because that is the only vis registered today and the
-// canonical fallback when a saved id no longer resolves.
+// Active visualisation id (legacy, pre-Epic-4.7). Retained for back-
+// compat reads during migration; new code uses load_active_show_id.
+// Default is "beat-pulse" - the canonical pre-Block-1 vis - so a
+// freshly-initialised buffer maps cleanly to "simple-beat" via the
+// Block 1 migration if it leaks into a read before migrate runs.
 namespace {
 constexpr size_t kActiveVisBufSize = 16;
 char             s_active_vis_buf[kActiveVisBufSize] = "beat-pulse";
@@ -178,7 +179,44 @@ void save_active_vis_id(const char* id) {
     s_active_vis_buf[kActiveVisBufSize - 1] = '\0';
 }
 
+// Active Show id (Epic 4.7 Block 1). Replaces active_vis. Stored as a
+// string under "noct/active_show"; 16-byte read buffer is comfortable
+// for the 12-char id() cap. Default is "simple-beat" because that is
+// the only Show registered in Block 1 and the canonical fallback when
+// a saved id no longer resolves.
+namespace {
+constexpr size_t kActiveShowBufSize = 16;
+char             s_active_show_buf[kActiveShowBufSize] = "simple-beat";
+}
+
+const char* load_active_show_id() {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/true);
+    size_t n = prefs.getString("active_show",
+                                s_active_show_buf,
+                                kActiveShowBufSize);
+    prefs.end();
+    if (n == 0) {
+        std::strncpy(s_active_show_buf, "simple-beat", kActiveShowBufSize);
+        s_active_show_buf[kActiveShowBufSize - 1] = '\0';
+    }
+    return s_active_show_buf;
+}
+
+void save_active_show_id(const char* id) {
+    if (!id) return;
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/false);
+    prefs.putString("active_show", id);
+    prefs.end();
+    std::strncpy(s_active_show_buf, id, kActiveShowBufSize);
+    s_active_show_buf[kActiveShowBufSize - 1] = '\0';
+}
+
 void migrate_legacy_nvs_keys() {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/false);
+
     // slv_ir_grp - legacy key from pre-Epic-4.65 firmware. Originally
     // moved to PixMobIrBinding's "group" property in Epic 4.6 Block 9;
     // that property itself was dropped in the post-Epic-4.65 cleanup
@@ -187,11 +225,32 @@ void migrate_legacy_nvs_keys() {
     // just consumed and discarded so a stale value doesn't shadow
     // future settings. Operator factory-resets via ConfigMode > System
     // > Factory Reset, which prefs.clear()s the whole "noct" namespace.
-    Preferences prefs;
-    prefs.begin("noct", /*readOnly=*/false);
     if (prefs.isKey("slv_ir_grp")) {
         prefs.remove("slv_ir_grp");
     }
+
+    // active_vis -> active_show (Epic 4.7 Block 1). The Show plug-in
+    // framework replaces the Visualisation framework as the master-side
+    // performance unit. The canonical pre-Block-1 vis ids
+    // ("beat-pulse", "spectrum-bars") both map to "simple-beat" - the
+    // Block 1 Show that preserves BeatPulse's behaviour. Custom or
+    // unknown vis ids pass through unchanged in case a contributor's
+    // build registered a Show with the same id. If active_show is
+    // already set we don't overwrite (operator may have made an
+    // explicit choice post-upgrade).
+    if (prefs.isKey("active_vis")) {
+        char buf[16] = {0};
+        prefs.getString("active_vis", buf, sizeof(buf));
+        if (buf[0] != '\0' && !prefs.isKey("active_show")) {
+            const bool legacy_default =
+                std::strcmp(buf, "beat-pulse")    == 0 ||
+                std::strcmp(buf, "spectrum-bars") == 0;
+            const char* mapped = legacy_default ? "simple-beat" : buf;
+            prefs.putString("active_show", mapped);
+        }
+        prefs.remove("active_vis");
+    }
+
     prefs.end();
 }
 
@@ -227,6 +286,9 @@ bool    s_native_legacy_slv_ir_grp_present = false;
 uint8_t s_native_legacy_slv_ir_grp_value   = 0;
 constexpr size_t kActiveVisBufSize = 16;
 char    s_native_active_vis[kActiveVisBufSize] = "beat-pulse";
+constexpr size_t kActiveShowBufSize = 16;
+char    s_native_active_show[kActiveShowBufSize] = "simple-beat";
+bool    s_native_legacy_active_vis_present = false;
 }  // namespace
 
 ModeId           load_last_runtime_mode() { return kDefaultRuntimeMode; }
@@ -257,17 +319,47 @@ void save_active_vis_id(const char* id) {
     s_native_active_vis[kActiveVisBufSize - 1] = '\0';
 }
 
+const char* load_active_show_id() {
+    return s_native_active_show;
+}
+
+void save_active_show_id(const char* id) {
+    if (!id) return;
+    std::strncpy(s_native_active_show, id, kActiveShowBufSize);
+    s_native_active_show[kActiveShowBufSize - 1] = '\0';
+}
+
 void migrate_legacy_nvs_keys() {
-    // Consume the legacy key without writing it anywhere - the relay
-    // PixMobIrBinding no longer has a per-binding fallback group.
+    // Consume the legacy slv_ir_grp without writing it anywhere - the
+    // relay PixMobIrBinding no longer has a per-binding fallback group.
     s_native_legacy_slv_ir_grp_present = false;
     s_native_legacy_slv_ir_grp_value   = 0;
+
+    // active_vis -> active_show. Only fires when the test seam has
+    // explicitly seeded the legacy key via seed_legacy_active_vis.
+    // Production builds use the Arduino path above; this native branch
+    // is exercised by test_modes / persistence-migration tests.
+    if (s_native_legacy_active_vis_present) {
+        const bool legacy_default =
+            std::strcmp(s_native_active_vis, "beat-pulse")    == 0 ||
+            std::strcmp(s_native_active_vis, "spectrum-bars") == 0;
+        const char* mapped = legacy_default ? "simple-beat" : s_native_active_vis;
+        std::strncpy(s_native_active_show, mapped, kActiveShowBufSize);
+        s_native_active_show[kActiveShowBufSize - 1] = '\0';
+        s_native_legacy_active_vis_present = false;
+    }
 }
 
 namespace test_seam {
 void seed_legacy_slv_ir_grp(uint8_t g) {
     s_native_legacy_slv_ir_grp_present = true;
     s_native_legacy_slv_ir_grp_value   = g;
+}
+void seed_legacy_active_vis(const char* id) {
+    if (!id) return;
+    std::strncpy(s_native_active_vis, id, kActiveVisBufSize);
+    s_native_active_vis[kActiveVisBufSize - 1] = '\0';
+    s_native_legacy_active_vis_present = true;
 }
 void clear_native_persistence() {
     s_native_slave_channel             = 0;
@@ -277,6 +369,9 @@ void clear_native_persistence() {
     s_native_legacy_slv_ir_grp_value   = 0;
     std::strncpy(s_native_active_vis, "beat-pulse", kActiveVisBufSize);
     s_native_active_vis[kActiveVisBufSize - 1] = '\0';
+    std::strncpy(s_native_active_show, "simple-beat", kActiveShowBufSize);
+    s_native_active_show[kActiveShowBufSize - 1] = '\0';
+    s_native_legacy_active_vis_present = false;
 }
 }  // namespace test_seam
 

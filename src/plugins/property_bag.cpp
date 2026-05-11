@@ -79,7 +79,13 @@ PropertyValue clamp_to_bounds(const PropertyDef& def, PropertyValue value) {
 // 12 chars (NVS namespaces max out at 15; the prefix takes 3).
 // Writes into `out` which must be at least 16 chars.
 void compose_namespace(const Plugin& plugin, char* out, size_t out_len) {
-    const char* prefix = (plugin.kind() == PluginKind::Visualisation) ? "nv_" : "nb_";
+    const char* prefix;
+    switch (plugin.kind()) {
+        case PluginKind::Visualisation: prefix = "nv_"; break;
+        case PluginKind::OutputBinding: prefix = "nb_"; break;
+        case PluginKind::Show:          prefix = "ns_"; break;
+        default:                        prefix = "n?_"; break;
+    }
     const char* id     = plugin.id();
     // Defensive: empty id falls back to "unknown" so we never produce "nv_".
     if (!id || !*id) id = "unknown";

@@ -148,11 +148,13 @@ struct Span {
 // =============================================================================
 
 // Plugin kind - used for NVS namespace prefix and registry separation.
-//   Visualisation -> NVS namespace "nv_<id>"
+//   Visualisation -> NVS namespace "nv_<id>"  (Epic 4.6 - widget candidates post-4.7)
 //   OutputBinding -> NVS namespace "nb_<id>"
+//   Show          -> NVS namespace "ns_<id>"  (Epic 4.7 - master-side performance)
 enum class PluginKind : uint8_t {
     Visualisation = 0,
     OutputBinding = 1,
+    Show          = 2,
 };
 
 // Stable, polymorphic interface. Concrete subclasses (Visualisation in

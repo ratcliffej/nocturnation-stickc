@@ -16,6 +16,8 @@
 
 #include "dal/dal.h"
 #include "modes/mode_machine.h"
+#include "shows/show_registry.h"
+#include "shows/simple_beat_show.h"
 #include "visualisations/visualisation_registry.h"
 #include "visualisations/beat_pulse.h"
 #include "visualisations/spectrum_bars.h"
@@ -34,10 +36,16 @@ void setup() {
 
     nocturnation::dal::DAL::begin();
 
-    // Register master-side visualisations. BeatPulse landed in Block 8;
-    // SpectrumBars in Block 11. Order matters for the picker UI:
-    // BeatPulse first so it's the default cursor row on a fresh boot
-    // before NVS has anything saved.
+    // Register master-side Shows (Epic 4.7 Block 1). SimpleBeatShow
+    // preserves the pre-Block-1 BeatPulse behaviour; Block 5 will add
+    // DynamicShow. The legacy BeatPulse / SpectrumBars Visualisation
+    // registrations below are inert under the new Show framework
+    // (AutonomousMasterMode no longer queries visualisation_registry);
+    // Block 2 of Epic 4.7 retires them entirely as part of the widget
+    // extraction.
+    nocturnation::shows::show_registry().register_plugin(
+        nocturnation::shows::simple_beat_show_instance());
+
     nocturnation::visualisations::visualisation_registry().register_plugin(
         nocturnation::visualisations::beat_pulse_instance());
     nocturnation::visualisations::visualisation_registry().register_plugin(

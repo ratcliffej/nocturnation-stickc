@@ -1,245 +1,354 @@
 ---
-title: "Epic 4.7: Dynamic show generation from FFT (multi-band, centroid, energy, sections)"
+title: "Epic 4.7: Show plug-in framework and dynamic FFT-driven show"
 status: Proposed
 notion_url: https://www.notion.so/35cbd067740581feb287ff7023202c19
 notion_id: 35cbd067740581feb287ff7023202c19
 notion_status: Proposed
-last_synced: 2026-05-10
+last_synced: 2026-05-11
 sync_direction: bidirectional
 ---
 
 ## Related Documents
 
-- [NocturNation Architecture Specification](https://www.notion.so/357bd0677405800b891beab0f4e0a976) - particularly §5 (Audio analysis pipeline) and §6 (Effects catalogue)
-- [Epic 4.5: Sub-band adaptive-threshold beat detection](https://www.notion.so/35bbd0677405816fa9fbd0306100c794) - upstream Epic; 4.7 builds on the per-band magnitudes 4.5 exposes
-- [Epic 4.6: M5 firmware UI cleanup](https://www.notion.so/35cbd067740581e4ba55f79eb168ec9d) - upstream Epic; UI is settled before 4.7 adds new effect parameters
-- [Epic 5: Tildagon receiver app](https://www.notion.so/358bd067740581b19551d158d658df76) - downstream Epic; 4.7 ships before 5 to give EMF a properly dynamic show
+- [NocturNation Architecture Specification (v0.22)](https://www.notion.so/357bd0677405800b891beab0f4e0a976) — particularly §5 (Audio analysis pipeline), §7 (Plugin layers).
+- [Epic 4.5: Sub-band adaptive-threshold beat detection (Done)](https://www.notion.so/35bbd0677405816fa9fbd0306100c794) — upstream Epic; 4.7 builds on the per-band magnitudes it exposes.
+- [Epic 4.6: M5 firmware UI cleanup (Done)](https://www.notion.so/35cbd067740581e4ba55f79eb168ec9d) — established the Visualisation plug-in surface and ConfigMode shape that 4.7 builds on.
+- [Epic 4.65: Class+group device addressing (Done)](https://www.notion.so/35dbd06774058075aa66da569ce2aff1) — provides the structured `class:group` routing that the dynamic Show uses to send different effects to different device groups.
+- [Epic 5: Tildagon receiver app](https://www.notion.so/358bd067740581b19551d158d658df76) — downstream Epic; 4.7 ships before 5 so EMF gets a properly dynamic show.
 
 ## Goal
 
-Elevate NocturNation from beat-reactive to **musically responsive**. Use the FFT data already being computed in Epic 4.5 to drive a continuous stream of musical descriptors (multi-band onset, spectral centroid, energy envelope, onset density, section detection) and bind effects to them. The lights stop being a metronome and start tracking the song's emotional arc minute by minute.
+Two deliverables in one Epic:
 
-A show driven by Epic 4.7 should feel *alive* - colours drift through the palette as the song's tonal character shifts, brightness breathes with volume, build-ups escalate visually before the drop hits, choruses get a denser palette than verses, drum-fills get sharp pulses while sustained chords get smooth fades. Same firmware, same protocol, dramatically richer output.
+**A. Refactor master mode around a Show plug-in framework.** Today AutonomousMasterMode bakes one performance into the firmware (beat → broadcast colour to all groups). A Show is the right unit to make swappable: a developer should be able to drop in a C++ Show class with a defined entry point and analyser-event hook surface, register it, and have it appear in the master-mode show picker. Shows own the screen, button handling, and what gets sent on the wire — they decide whether to draw a beat bar, a spectrum analyser, a custom visual, diagnostic text, or nothing at all. Existing functionality is preserved by reimplementing today's behaviour as `SimpleBeatShow`.
+
+**B. Build a richer Show driven by the FFT and class+group routing.** Use the per-band FFT magnitudes Epic 4.5 already exposes to compute multi-band onset events (kick / snare / hi-hat), spectral centroid, energy envelope, and onset density. Add section detection (verse / chorus / build / breakdown) as a slower-window state machine. A new Show (`DynamicShow`) consumes all of the above and uses the post-Epic-4.65 class+group routing to send different effects to different device groups — kick to group 1, bass to group 2, cymbals to group 3, palette shifts on section change — so the lights track the song's whole shape, not just the kick.
+
+This Epic ships **before Epic 5 (Tildagon)** so EMF 2026 gets a properly dynamic show rather than just beat-flash, and so the Tildagon receiver app lands on a stable richer-protocol baseline.
 
 ## Why this Epic exists
 
-During Epic 4.5 design, Jason flagged that simple beat detection leaves most of the FFT's information on the floor: the firmware computes 256 magnitude bins per FFT cycle but only fires events from six of them (bass-band sum). About 2% of available signal is being used. The other 98% encodes genuinely useful information about *what the song is doing right now*, and an audience can feel the difference between lights that flash on kicks versus lights that respond to the music's whole shape.
+Two motivating observations:
 
-Epic 4.5 (in flight at time of Epic 4.7's proposal) addresses cross-device beat-detection consistency, which was the immediate blocker. Epic 4.7 takes the per-band magnitudes Epic 4.5 already exposes via the audio analyser interface and uses them properly.
+1. **The current beat detection uses ~2 % of the FFT's output.** The firmware computes 256 magnitude bins per FFT cycle but only fires events from six of them (bass-band sum). The other 98 % encodes useful information about *what the song is doing right now*, and an audience can feel the difference between lights that flash on kicks versus lights that respond to the whole musical shape. Epic 4.5 closed the cross-device-consistency gap; 4.7 uses the per-band magnitudes 4.5 exposes properly.
 
-This Epic ships **before Epic 5 (Tildagon)** because EMF 2026 is the project's first major public deployment and the experience visitors take away should be the best NocturNation can offer at the time. Beat-flash is fine; properly dynamic visuals are memorable. The Tildagon receiver app benefits too - it's the receiver of these richer events, so it lands on a stable richer protocol rather than getting upgraded later.
+2. **There is no Show layer.** Today the active "visualisation" is conflated with the performance generator — BeatPulse-the-class consumes beat events, makes render_fx() calls, *and* draws the screen, with no clean seam. Adding a richer performance means either inflating BeatPulse or duplicating large parts of it. A Show plug-in framework gives developers a clean place to drop in new performances; the existing screen widgets (BeatPulse, SpectrumBars) become a reusable level-tuning widget library that any Show — or `ConfigMode > Utilities` — can compose.
+
+## Terminology (post-4.7)
+
+The conversation that produced this Epic surfaced terminology that the codebase doesn't yet match. The refactor brings the code into line:
+
+| Layer | Who runs it | What it does |
+|---|---|---|
+| **Show** (new plug-in surface) | Master only | Owns the performance: subscribes to analyser events, makes `render_fx()` calls with class+group targets, owns the screen, owns button handling (except the back gesture). One Show active at a time. |
+| **Widget library** (formerly Visualisations) | Master, composed by Shows or by Utilities | Reusable level-tuning UI: beat-bar, spectrum-bars. Renderable inside a Show *or* standalone via `ConfigMode > Utilities > Level Tuning`. Library, not plug-in surface, for now. |
+| **Slave mode** | Slave | Unchanged. Inbound render_fx → LocalDisplayBinding (screen) + PixMobIrBinding (IR relay). No shows, no widgets. |
+
+The existing `active_vis` NVS key retires (consumed by `migrate_legacy_nvs_keys`). A new `active_show` NVS key replaces it, persisting the operator's last Show choice. Each Show is free to decide what to draw on the screen — there is no longer a separate "visualisation" concept at the framework level.
+
+## Master-mode show pathways
+
+The new framework supports three pathways for how a master generates a performance:
+
+1. **Simple broadcast** — beat detection drives a single colour event to all devices / all groups. Today's behaviour. Implemented as `SimpleBeatShow` in Block 1.
+2. **Class+group routed** — different musical content drives different targets: kick to group 1, bass to group 2, cymbals to group 3; palette changes per section. Implemented as `DynamicShow` in Block 5. Multiple variants of this Show could co-exist over time as developers tune for different music styles (rock, dance, ambient).
+3. **External (DMX / QLC+)** — laptop drives the show via QLC+ over DMX/Art-Net. **Out of scope for Epic 4.7** (belongs to Epic 7).
 
 ## Operational model
 
-Laptop-driven, same as Epics 1-4.6. Algorithm work is well-suited to native unit testing on captured audio samples; effect-tuning work is genuinely subjective and requires hardware verification with real music in a real listening environment.
+Laptop-driven, same as Epics 1-4.65. Algorithm work is well-suited to native unit testing on captured audio samples; show-tuning work is genuinely subjective and requires hardware verification with real music in a real listening environment.
 
-Verification ownership: **(L)** = laptop / native test on captured audio, **(B)** = build-time check, **(H)** = hardware verification by Jason listening to music with hardware in hand. The bulk of acceptance work is hardware-and-music verification: the only real test of "does this show feel good?" is playing music through it and watching.
+Verification ownership: **(L)** = laptop / native test, **(B)** = build-time check, **(H)** = hardware verification by Jason listening to music with hardware in hand. Block 6 is entirely (H); the only real test of "does this show feel good?" is playing music through it and watching.
 
-## Algorithm choices
+## Algorithmic primitives
 
-Four algorithmic primitives derived from FFT output that together drive the dynamic show:
+Four primitives live in the audio analyser layer (`src/audio_analyser/`), computed once per FFT frame on the master, exposed as events on the Show plug-in API. They are **not** wire payloads — analyser output stays master-local; the wire still only carries `LIGHT_COMMAND` (per Epic 4.65 settle).
 
 ### Multi-band onset detection
 
 Extension of Epic 4.5's sub-band adaptive-threshold work. Three independent event streams from three frequency regions:
 
-- **Kick band** (~60-200 Hz, sub-bands 0-4) - already detected in Epic 4.5; produces existing `BEAT_DETECTED` events
-- **Snare band** (~200-2000 Hz, sub-bands 5-15) - new; produces a new `SNARE_DETECTED` event type. In typical pop/rock music, snare hits on beats 2 and 4. Detecting kick + snare separately tracks the *groove* not just the *pulse*.
-- **Hi-hat band** (~5000-8000 Hz, sub-bands 22-30) - new; produces a new `HIHAT_DETECTED` event type. Hi-hat patterns are usually denser (16th notes) and faster than the underlying beat. Maps well to high-frequency sparkle effects.
+- **Kick band** (~60-200 Hz, sub-bands 0-4) — already detected in Epic 4.5; produces existing `on_beat_detected()`.
+- **Snare band** (~200-2000 Hz, sub-bands 5-15) — new; produces `on_snare_detected()`. In typical pop/rock, snare hits beats 2 and 4. Detecting kick + snare separately tracks the *groove* not just the *pulse*.
+- **Hi-hat band** (~5000-8000 Hz, sub-bands 22-30) — new; produces `on_hihat_detected()`. Hi-hat patterns are usually denser (16th notes) and faster than the underlying beat. Maps well to high-frequency sparkle effects.
 
-Each band uses the same adaptive-threshold algorithm Epic 4.5 establishes; the only differences are which bins contribute, the threshold multiplier (typically lower for hi-hat where transients are smaller), and the refractory period (shorter for hi-hat to allow denser firing).
+Each band uses the same adaptive-threshold algorithm Epic 4.5 establishes; the only differences are which bins contribute, the threshold multiplier (typically lower for hi-hat where transients are smaller), and the refractory period (shorter for hi-hat).
 
 ### Spectral centroid
 
-The "centre of gravity" of the spectrum - a single scalar value per FFT frame indicating where the energy is concentrated.
+The "centre of gravity" of the spectrum — a single scalar per FFT frame indicating where the energy is concentrated.
 
-```javascript
+```
 centroid = sum(bin_index * magnitude[bin_index]) / sum(magnitude[bin_index])
 ```
 
-Low centroid (~5-15 / 256) indicates bass-heavy / muddy passages. High centroid (~40-80 / 256) indicates bright passages with prominent high-frequency content. Mid centroid (~15-40) indicates balanced full-spectrum passages.
+Low centroid (~5-15 / 256) → bass-heavy / muddy. High (~40-80 / 256) → bright. Mid (~15-40) → balanced.
 
-The centroid is mapped to **hue** in the orchestration layer:
-
-- Low centroid → cool colours (blue, purple)
-- Mid centroid → neutral colours (white, amber, green)
-- High centroid → warm colours (red, orange, pink)
-
-This means the lights drift through the colour wheel as the song's tonal character shifts, without reference to beats at all. A Coldplay verse and a Coldplay chorus look visibly different even though the BPM hasn't changed.
+Exposed as part of `on_music_descriptor(centroid, energy, density)`. Shows decide what to do with it — `DynamicShow` maps centroid to hue (cool → warm as centroid rises) so the palette drifts as the song's tonal character shifts.
 
 ### Energy envelope
 
-Rolling RMS across all FFT bins, smoothed over ~0.5-1 second. This is the song's volume contour minus the per-beat transients.
+Rolling RMS across all FFT bins, smoothed over ~0.5-1 second. The song's volume contour minus the per-beat transients. Multi-second changes are typically subtle but cumulatively make the lights feel like they're *part of* the song rather than superimposed on it. Shows map it to brightness or intensity.
 
-Mapped to **brightness** in the orchestration layer:
+### Onset density
 
-- Low energy → dim, ambient lighting
-- Mid energy → normal show brightness
-- High energy (chorus, drop) → peak brightness
+Events-per-second across all bands, smoothed. Tracks how busy the music is — a chorus with kick-snare-hihat firing densely has higher density than a sparse verse. Shows map it to effect probability or layer count.
 
-The envelope changes are typically slow (multi-second) and therefore visually subtle, but cumulatively they make the lights feel like they're *part of* the song rather than just superimposed on it.
+`on_music_descriptor()` carries centroid + energy + density together, fired at FFT rate (master-internal, no wire cost). Rate-limited delivery to Show hooks: only fired when any value changes by more than the configured threshold (default 5 %), to avoid useless every-frame churn.
 
-### Section detection (longer-window analysis)
+### Section detection
 
-Rolling 4-8 second analysis of the above three signals, plus onset density, to identify song-structure events.
+Rolling 4-8 second analysis of the three continuous descriptors plus onset density. Identifies song-structure transitions and fires `on_section_change(section)`:
 
-- **Verse**: low-to-mid energy, low-to-mid centroid, sparse onset density
-- **Chorus**: high energy, mid-to-high centroid, mid-to-dense onset density
-- **Build-up**: rising energy + rising centroid + rising onset density over 4-8 seconds
-- **Drop**: sudden bass-band spike following a build (already detected in Epic 4.5 as DROP event)
-- **Breakdown**: low energy, low onset density, sustained for >2 seconds (already detected in Epic 4.5 as BREAKDOWN event)
-- **Vocals-only**: mid-band energy, very little bass, low onset density
+- **Verse** — low-to-mid energy, low-to-mid centroid, sparse density
+- **Chorus** — high energy, mid-to-high centroid, mid-to-dense density
+- **Build-up** — rising energy + rising centroid + rising density over 4-8 seconds
+- **Drop** — bass-band spike following a build (already detected in Epic 4.5; surfaced here as `SECTION_DROP`)
+- **Breakdown** — low energy, low density, sustained > 2 seconds (already detected in Epic 4.5)
+- **Vocals-only** — mid-band energy, very little bass, low density
+- **Instrumental-break** — dense low-bass and high-band, sparse vocal mid-band
 
-Section detection produces a new `SECTION_CHANGE` event type carrying the new section label. The orchestration layer uses these to switch palettes, change effect intensity, change which effects are bound to which musical events.
+Lives in the analyser layer alongside the other primitives so Shows that don't care simply don't subscribe.
 
 ## Architectural integration
 
-Four new event types alongside the existing BEAT_DETECTED and MUSIC_EVENT (DROP/BREAKDOWN):
+### Show plug-in API (new)
 
-- **SNARE_DETECTED (0x07)**: payload `strength: u8`. Same shape as BEAT_DETECTED but for snare onsets.
-- **HIHAT_DETECTED (0x08)**: payload `strength: u8`. Same shape, for hi-hat onsets.
-- **MUSIC_DESCRIPTOR (0x09)**: payload `centroid: u8, energy: u8, density: u8`. Continuous-stream descriptors fired at FFT rate (~30-40 Hz). Heavier traffic than the discrete-event types but each frame is small (3 bytes payload). May be rate-limited on the wire (e.g., fire only when any value changes by >5% from previous transmission) to reduce load.
-- **SECTION_CHANGE (0x0A)**: payload `section_type: u8` (1=VERSE, 2=CHORUS, 3=BUILDUP, 4=BREAKDOWN, 5=VOCALS_ONLY, 6=INSTRUMENTAL_BREAK, 0=UNKNOWN). Fires only on transitions between sections, not continuously.
+A new `nocturnation::shows::Show` base class atop the existing `Plugin` base. Hook surface:
 
-The Effects catalogue (§6 of architecture spec) is extended to support binding effects to these new event types. Existing effect primitives (Pulse, Probability Pulse, Random Palette Pulse, Rainbow/Hue Cycle, Starlight, etc.) gain optional parameter modulators:
+```cpp
+class Show : public Plugin {
+public:
+    // Identity (Plugin contract)
+    virtual const char* id()           const = 0;
+    virtual const char* display_name() const = 0;
 
-- **Hue follows centroid**: any effect that has a colour parameter can opt into having that colour driven by spectral centroid rather than fixed.
-- **Brightness follows energy**: any effect that has a brightness parameter can opt into having that brightness driven by energy envelope.
-- **Density follows onset density**: probabilistic effects can opt into having their probability driven by onset density.
-- **Palette follows section**: any effect that uses a palette can opt into different palettes per section.
+    // Lifecycle
+    virtual void on_enter() {}
+    virtual void on_exit()  {}
 
-A new effect primitive is added:
+    // Analyser hooks (default no-op so Shows opt in)
+    virtual void on_beat_detected(uint8_t strength) {}
+    virtual void on_snare_detected(uint8_t strength) {}
+    virtual void on_hihat_detected(uint8_t strength) {}
+    virtual void on_music_descriptor(uint8_t centroid,
+                                       uint8_t energy,
+                                       uint8_t density) {}
+    virtual void on_section_change(SectionType section) {}
 
-- **Continuous Wash**: continuous colour driven by centroid, brightness driven by energy. No discrete-event trigger; just a continuous low-key background that responds to the song. Forms the visual baseline that other effects layer over.
+    // Per-frame screen draw (Show owns the canvas)
+    virtual void on_render(Canvas&) {}
+
+    // Button events (Show owns button semantics except back gesture)
+    virtual void on_button(ButtonId, ButtonEvent) {}
+};
+```
+
+`AutonomousMasterMode` becomes a thin host: holds the active Show, dispatches analyser events into it, dispatches button events into it, calls `on_render()` per frame. The Show makes `DAL::render_fx("<class>:<group>", ev)` calls when it wants to drive devices.
+
+### Show selection
+
+Operator picks a Show via the master-mode entry path:
+
+- On entering Master mode, either jump straight to the last-used Show (NVS `active_show`) or surface a brief picker if more than one Show is registered. Final UX settled in Block 1.
+- `ConfigMode > Show` provides explicit selection / preview.
+- New Shows register at firmware boot via a `register_show()` call alongside the existing plug-in registrations.
+
+### Widget library (refactored)
+
+`BeatPulse` and `SpectrumBars` classes are split:
+
+- Screen-rendering logic becomes `BeatBarWidget` and `SpectrumBarsWidget` in a new `src/widgets/` library. Both expose a small API: `update(level)` + `draw(canvas, x, y, w, h)`. They are pure render helpers — no analyser subscription, no plug-in registration.
+- A Show that wants in-show level tuning constructs the widget, feeds it analyser data (or manually-set values), and calls `draw()` from its own `on_render()`.
+- `ConfigMode > Utilities > Level Tuning` becomes a small sub-mode that hosts the widgets standalone for bench work, supporting manual level injection so a developer can verify the IR/ESP-NOW path independently of audio.
+
+### Slave mode
+
+Unchanged. The Show framework is master-only. Slaves continue to:
+
+- Receive `LIGHT_COMMAND` on ESP-NOW (target_class + target_group filtering per Epic 4.65)
+- Render to `LocalDisplayBinding` (screen mirror) and `PixMobIrBinding` (IR relay)
+- Respect `slv_group` device-wide filter on non-relay bindings
+
+### Wire format
+
+**No new wire payloads.** Analyser primitives are master-internal; Shows consume them and produce class+group-targeted `LIGHT_COMMAND` traffic via `render_fx()`. This is the Epic 4.65 settle held intact — the wire stays minimal.
 
 ## Scope
 
-**Included:**
+**Included**
 
-- Multi-band onset detection (kick + snare + hi-hat as separate event streams) building on Epic 4.5's sub-band infrastructure
-- Spectral centroid computation per FFT frame
-- Energy envelope computation (rolling RMS, smoothed)
-- Onset density tracker (any-band fires per second, smoothed)
-- Section detection state machine consuming the above
-- Four new ESP-NOW message types: SNARE_DETECTED (0x07), HIHAT_DETECTED (0x08), MUSIC_DESCRIPTOR (0x09), SECTION_CHANGE (0x0A)
-- Continuous Wash effect primitive
-- Optional parameter modulators on existing effects (hue-from-centroid, brightness-from-energy, density-from-density, palette-from-section)
-- Native unit tests against captured audio samples covering all four primitives
+- Show plug-in framework (`Show` base class, `register_show()` registry, `AutonomousMasterMode` host refactor)
+- `SimpleBeatShow` (preserves today's beat → broadcast-to-all behaviour)
+- `DynamicShow` (consumes new analyser primitives; routes via class+group)
+- Show selection UI (master-mode entry + `ConfigMode > Show`)
+- `active_show` NVS key + legacy-`active_vis` consumption in `migrate_legacy_nvs_keys()`
+- Widget library extraction: `BeatBarWidget`, `SpectrumBarsWidget` in `src/widgets/`
+- `ConfigMode > Utilities > Level Tuning` sub-mode hosting the widgets with manual injection
+- Analyser primitives: multi-band onset (snare, hi-hat), spectral centroid, energy envelope, onset density — all in `src/audio_analyser/`
+- Section-detection state machine in `src/audio_analyser/`
+- Native unit tests for all primitives against captured audio samples
 - Hardware verification: Plus2 and S3 produce equivalent dynamic-show output for the same input audio
-- Architecture spec update reflecting the new descriptors, message types, and effect parameters
-- Documentation of the dynamic-show capabilities for the open-source repo's README
+- Developer documentation (`docs/developing-shows.md`) covering Show plug-in concept, base-class API, registration, analyser hook surface, `render_fx()` targeting, widget composition, NVS, and testing patterns — with `DynamicShow` as the worked example
+- Architecture spec update to v0.23 reflecting Show plug-in surface, widget library, analyser primitives
 
-**Explicitly excluded:**
+**Explicitly excluded**
 
-- Tempo-aware autocorrelation tracking (post-EMF stretch goal; not needed for visual feel)
-- ML-based section recognition (overkill; rule-based is sufficient)
-- Genre-specific parameter profiles (audiences don't perceive these strongly enough)
-- Audio fingerprinting / song identification (different problem; would belong to the QLC+ Essentia tooling forward direction)
-- Pre-analysed cue files inside NocturNation (deprecated when QLC+ became canonical professional path)
-- Companion phone-app integration (forward direction in spec §10.3, not a committed Epic)
-- New BLE-related work (BLE is its own future Epic per spec §4.1)
-- DMX/Art-Net integration (Epic 7, separate)
+- Third-party widget plug-in surface (widgets stay library-only this Epic; promote to plug-in surface later if developer demand surfaces)
+- New ESP-NOW message types — analyser output stays master-internal
+- DMX / Art-Net / QLC+ integration (Epic 7)
+- Tempo-aware autocorrelation tracking (post-EMF stretch)
+- ML-based section recognition (rule-based is sufficient)
+- Genre-specific parameter profiles (operators retune in Utilities if needed)
+- Audio fingerprinting / song identification
+- Pre-analysed cue files
+- Companion phone-app integration
+- BLE work (separate future Epic per spec §4.1)
 
 ## Acceptance Criteria
 
-- [ ] **(L)** Native unit tests pass against captured audio samples covering: kick-only drum machine (kick fires, snare and hi-hat don't); standard pop track (kick + snare alternation visible in event stream); track with prominent hi-hats (hi-hat events fire densely without false-firing on bass).
-- [ ] **(L)** Spectral centroid output verified against reference Python implementation (librosa) for a known test signal: a sine wave at 100 Hz produces centroid ≈ bin 3, a sine wave at 4000 Hz produces centroid ≈ bin 128, a white noise produces centroid ≈ bin 128 (mid).
-- [ ] **(L)** Energy envelope output tracks the volume contour of a known test signal (a song with a clear quiet-loud-quiet structure produces a visible quiet-loud-quiet envelope curve in unit-test output).
-- [ ] **(L)** Section detection state machine identifies sections correctly on a labelled test track (manual annotation of verse/chorus/bridge boundaries used as ground truth; >70% accuracy on transition timing within ±2 seconds).
-- [ ] **(B)** Code builds cleanly under `[env:m5stick-plus2]`, `[env:m5stick-s3]`, and `[env:native]` PlatformIO environments.
-- [ ] **(H)** Live test with Vengaboys at 138 BPM: kick events match BPM, snare events fire on beats 2/4 of each bar, hi-hat events fire densely throughout, centroid drifts visibly across verse/chorus boundaries.
-- [ ] **(H)** Live test with a track having a clear build-and-drop: build-up fires SECTION_CHANGE → BUILDUP within the build, drop fires both DROP (from Epic 4.5) and SECTION_CHANGE → CHORUS at the drop moment.
-- [ ] **(H)** Cross-device consistency: Plus2 and S3 placed side-by-side produce visually equivalent dynamic-show output. Subjectively, both "feel right" for the music.
-- [ ] **(H)** Continuous Wash effect: with no discrete-event triggers, the lights still respond visibly to the song, drifting through the palette as the song's tonal character changes and dimming/brightening with volume.
-- [ ] **(H)** Hue-from-centroid modulator: an existing Pulse effect with hue-from-centroid enabled produces beats whose colour reflects the song's current tonal character, not a fixed colour.
-- [ ] **(H)** Subjective "feels alive" test: Jason plays a varied playlist (pop, dance, ambient, drum & bass, ballad, drum-machine simple beat) through the system. The lights should produce a visibly different show for each genre without any genre-specific configuration.
-- [ ] **(H)** No regression on existing functionality: Epic 4.5's beat detection still works correctly; Epic 4.6's UI is unchanged; the Coldplay tribute act's existing show still works correctly.
-- [ ] Architecture spec updated to v0.21 reflecting the new algorithms, message types, and effect modulators.
+- [ ] **(B)** Code builds cleanly across all PlatformIO environments (`pio run`).
+- [ ] **(L)** Native unit tests pass for: multi-band onset (kick-only drum machine fires kicks but not snare/hihat; pop track fires kick + snare alternation; hi-hat-heavy track fires hi-hats densely without false-firing on bass).
+- [ ] **(L)** Spectral centroid output verified against reference Python (librosa) for known signals: 100 Hz sine → bin ≈ 3; 4 kHz sine → bin ≈ 128; white noise → bin ≈ 128.
+- [ ] **(L)** Energy envelope tracks the volume contour of a quiet-loud-quiet test signal.
+- [ ] **(L)** Section detection identifies sections correctly on a labelled test track (manual annotation as ground truth; > 70 % accuracy on transition timing within ±2 seconds).
+- [ ] **(L)** Show plug-in framework: stub Show registered with the registry is reachable via the registry API; hook dispatch fires on simulated analyser events; show switching invokes `on_exit()` / `on_enter()` cleanly.
+- [ ] **(H)** Master-mode entry shows the active Show by default; the picker / ConfigMode path can change the active Show and the new choice persists across reboots.
+- [ ] **(H)** `SimpleBeatShow` produces the same visible behaviour as the pre-refactor firmware (no regression for existing users).
+- [ ] **(H)** `DynamicShow` with a varied playlist (pop, dance, drum & bass, ballad, ambient, drum machine): kick events route to group 1; snare to group 2; hi-hat to group 3; centroid drives hue drift; energy drives brightness; section transitions produce visible palette changes.
+- [ ] **(H)** Cross-device consistency: Plus2 and S3 placed side-by-side produce visually equivalent output for the same audio under both Shows.
+- [ ] **(H)** Widget library: `BeatBarWidget` and `SpectrumBarsWidget` render correctly both standalone (Utilities > Level Tuning) and composed inside `DynamicShow`. Manual level injection in Utilities drives the widgets without audio input.
+- [ ] **(H)** Subjective "feels alive" test: Jason plays a varied playlist through `DynamicShow`; the lights produce a visibly different show for each genre without per-genre configuration.
+- [ ] **(H)** No regression: Epic 4.5 beat detection still works; Epic 4.6 UI is unchanged; Epic 4.65 class+group routing still works; slave mode still relays IR + renders local-screen mirror.
+- [ ] **(L)** Developer documentation at `docs/developing-shows.md` covers: Show base-class API, registration, analyser hook surface, `render_fx()` targeting with class+group, widget composition, NVS persistence, and native + hardware testing patterns. A contributor can write and register a new Show from the doc alone, without reading the framework source.
+- [ ] Architecture spec updated to v0.23.
 
-## Next blocks of work
+## Blocks of work
 
-### Block 1: Multi-band onset detection (snare + hi-hat)
+### Block 1: Show plug-in framework + `SimpleBeatShow`
 
-Extend Epic 4.5's sub-band adaptive-threshold infrastructure to produce snare and hi-hat event streams alongside the existing kick stream.
+Land the framework first, preserve current behaviour, no analyser changes.
 
-- Identify which sub-bands cover the snare (~200-2000 Hz) and hi-hat (~5000-8000 Hz) ranges given the FFT setup
-- Apply the same adaptive-threshold algorithm to each band group, with band-appropriate threshold multipliers and refractory periods
-- Add SNARE_DETECTED (0x07) and HIHAT_DETECTED (0x08) message types to the ESP-NOW protocol
-- Wire up the events to fire over ESP-NOW alongside existing BEAT_DETECTED
-- Native test: pop track with clear kick-snare-kick-snare pattern produces alternating BEAT_DETECTED and SNARE_DETECTED events on beats 1-2-3-4
-- Commit: "Multi-band onset detection: snare + hi-hat alongside kick"
+- New `include/shows/show.h` with the `Show` base class and registry
+- New `src/shows/show_registry.cpp` matching the existing plug-in-registry style
+- `AutonomousMasterMode` refactored to host the active Show: subscribes to analyser events on its behalf, dispatches button events, calls `on_render()`
+- `SimpleBeatShow` (`src/shows/simple_beat_show.cpp`): reproduces the pre-refactor behaviour by consuming `on_beat_detected()` and calling `DAL::render_fx("00:00", ev)`
+- `active_show` NVS key + `migrate_legacy_nvs_keys()` consumes `active_vis`
+- Master-mode entry: jump to active Show; surface a picker if more than one is registered
+- ConfigMode entry under `> Show` (top level) for explicit selection
+- Native unit tests: Show registry / framework
+- Commit: "Show plug-in framework with SimpleBeatShow preserving current behaviour"
 
-### Block 2: Continuous descriptors (centroid + energy + density)
+### Block 2: Widget library extraction
 
-Compute and broadcast continuous-stream descriptors at FFT rate.
+Move screen-rendering logic out of `BeatPulse` / `SpectrumBars` into reusable widgets; add Utilities entry.
 
-- Implement spectral centroid computation in the audio analyser
-- Implement rolling-RMS energy envelope with smoothing
-- Implement onset-density tracker (events-per-second across all bands)
-- Add MUSIC_DESCRIPTOR (0x09) message type carrying centroid + energy + density as 3 bytes
-- Implement rate-limiting on the wire (only fire when any value changes by >5% from previous transmission)
-- Native test: known-volume test signal produces stable centroid; volume modulation produces energy modulation; onset modulation produces density modulation
-- Commit: "Continuous music descriptors over ESP-NOW"
+- New `include/widgets/beat_bar.h` + `include/widgets/spectrum_bars.h`
+- New `src/widgets/beat_bar.cpp` + `src/widgets/spectrum_bars.cpp` with `update()` + `draw()` API
+- Retire `BeatPulse` / `SpectrumBars` Plugin registrations (their screen logic now lives in widgets; their analyser→fx logic is absorbed by `SimpleBeatShow` or retired)
+- `ConfigMode > Utilities > Level Tuning` sub-mode hosting the widgets with manual injection
+- Native unit tests: widget render math, manual-injection path
+- Commit: "Widget library + Utilities level-tuning sub-mode"
 
-### Block 3: Section detection state machine
+### Block 3: Analyser primitives — multi-band onset + descriptors
 
-The longer-window analysis that produces section labels.
+Extend the audio analyser; expose new events on the Show API.
 
-- Implement rolling 4-8 second history buffers for the three continuous descriptors
-- Implement a state machine identifying verse / chorus / build-up / breakdown / vocals-only / instrumental-break / unknown
+- Identify snare (~200-2000 Hz, sub-bands 5-15) and hi-hat (~5000-8000 Hz, sub-bands 22-30) sub-band ranges given the existing FFT setup
+- Apply Epic 4.5's adaptive-threshold algorithm per band, with band-appropriate threshold multipliers and refractory periods
+- Implement spectral centroid (per-frame scalar)
+- Implement rolling-RMS energy envelope (smoothed over ~0.5-1 s)
+- Implement onset-density tracker (events-per-second, smoothed)
+- Add `on_snare_detected`, `on_hihat_detected`, `on_music_descriptor` hooks to the `Show` base class
+- Rate-limit `on_music_descriptor` delivery: only fire when any value moves > 5 % from previous
+- Native unit tests against captured audio samples
+- Commit: "Multi-band onset + spectral centroid + energy + density primitives"
+
+### Block 4: Section detection
+
+The longer-window state machine.
+
+- Rolling 4-8 second history buffers for centroid, energy, density
+- State machine identifying verse / chorus / build-up / breakdown / vocals-only / instrumental-break / unknown
 - Tune transition rules using captured audio samples with manual section labels as ground truth
-- Add SECTION_CHANGE (0x0A) message type
-- Wire up section transitions to fire over ESP-NOW
-- Native test: labelled test track produces correct section labels with >70% timing accuracy
-- Commit: "Section detection state machine and SECTION_CHANGE protocol message"
+- Add `on_section_change(SectionType)` hook to the `Show` base class
+- Native unit tests: labelled test track produces correct section labels with > 70 % timing accuracy
+- Commit: "Section detection state machine"
 
-### Block 4: Effect modulators
+### Block 5: `DynamicShow`
 
-Extend the existing effect primitives to consume the new descriptors.
+The Epic's headline Show, consuming everything Blocks 3-4 expose.
 
-- Refactor the effect rendering layer to support optional parameter modulators per effect: hue-from-centroid, brightness-from-energy, density-from-density, palette-from-section
-- Update existing Pulse, Probability Pulse, Random Palette Pulse, Hue Cycle, Starlight effect implementations to support the modulators
-- Add the new Continuous Wash effect primitive
-- Update Test Mode (§8.5 of spec) to include tests for each modulator
-- Commit: "Effect modulators consuming continuous descriptors"
+- New `src/shows/dynamic_show.cpp`
+- Hook routing: kick → group 1, snare → group 2, hi-hat → group 3 (via `render_fx("01:01", ev)` etc.)
+- Centroid → hue mapping in the colour palette
+- Energy → brightness mapping
+- Density → effect probability / layer count
+- Section transitions → palette changes
+- Optional composition of `BeatBarWidget` + `SpectrumBarsWidget` on screen for in-show level visibility
+- Commit: "DynamicShow consuming new analyser primitives with class+group routing"
 
-### Block 5: Hardware verification and tuning
+### Block 6: Hardware tuning
 
-The meaningful empirical work that this Epic exists to pass. Pure listening + watching effort.
+Empirical listening + watching. Pure (H) work; no code changes outside parameter constants.
 
-- Set up Plus2 and S3 side-by-side in a normal listening environment
-- Play a varied test playlist (Vengaboys, Coldplay ballad, drum & bass, dance with build/drop, ambient, drum machine, podcast as silence-test)
-- Tune threshold multipliers, smoothing time constants, section-detection rules until each genre produces a visibly distinct and pleasant show
-- Document the final tuning parameters in the spec for future reference and to enable contributors to retune for different deployment contexts
-- Phone-recorded walkthrough video for the README and demo material
+- Plus2 and S3 side-by-side with three or more slave devices on distinct groups
+- Varied test playlist (Vengaboys, Coldplay ballad, drum & bass, dance with build/drop, ambient, drum machine, podcast for silence-test, rock)
+- Tune threshold multipliers, smoothing time constants, section-detection rules, palette mappings until each genre produces a visibly distinct and pleasant show
+- Document final tuning parameters in the spec for future contributors
+- Phone-recorded walkthrough video for README and demo material
 - Commit: "Dynamic show tuning verified across genre playlist"
 
-### Block 6: Architecture spec update
+### Block 7: Developer documentation — writing a Show
 
-- Update spec §5 (Audio analysis pipeline) with the multi-band, centroid, energy, density, and section detection algorithms
-- Update spec §4.3 (Frame format) with the four new message types
-- Update spec §6 (Effects catalogue) with the new Continuous Wash primitive and the modulators concept
-- Bump spec to v0.21
-- Commit: "Architecture spec v0.21 reflecting dynamic show capabilities"
+A standalone developer guide so a contributor can write and register a Show without having to read the framework source. Doubles as a forcing function on the API: if something is awkward to explain in prose, that is a signal to revisit the API in the framework blocks before tuning lands.
+
+- New `docs/developing-shows.md` covering:
+  - **Concept**: Show as a master-side performance plug-in; how it fits between Modes, the audio analyser, the widget library, and the DAL.
+  - **File layout**: where Show headers / sources / registration live (`include/shows/`, `src/shows/`).
+  - **Show base-class API**: every virtual on `Show`, with "when fired / what to do" notes and the default no-op behaviour. Includes `id()`, `display_name()`, `on_enter()`, `on_exit()`, and every analyser, render, and button hook.
+  - **Registration**: `register_show()` call site and registry ordering; how Shows appear in the master-mode picker.
+  - **Analyser hook surface**: `on_beat_detected`, `on_snare_detected`, `on_hihat_detected`, `on_music_descriptor`, `on_section_change` — with timing characteristics (event rates, smoothing windows, refractory periods).
+  - **Sending light commands**: `DAL::render_fx("<class>:<group>", ev)` with the structured-target format from Epic 4.65, the `hal::DeviceClass` enum, group conventions (0 = all, 1..n = specific), and `RgbPulseEvent` field semantics (r, g, b, attack, sustain, release, chance).
+  - **Drawing to the screen**: `Canvas` API, frame cadence, what `on_render()` may and may not do.
+  - **Button handling**: `ButtonId` / `ButtonEvent`, the reserved back-gesture (returns to mode picker), conventions for level adjustment inside a Show.
+  - **Composing widgets**: how to instantiate and drive `BeatBarWidget` / `SpectrumBarsWidget` from inside a Show's `on_render()`.
+  - **Persistence**: NVS conventions for per-Show settings (key namespacing under the "noct" namespace, defaults, migration patterns).
+  - **Testing**: native-unit-test patterns for Shows using the existing test harness; hardware verification checklist.
+- Worked example: annotated walk-through of `DynamicShow` (from Block 5) as the reference implementation, with rationale for its hook handling, target routing, and screen composition decisions.
+- Cross-link from `README.md` (developer section) and `docs/architecture.md` (Plugin layers chapter).
+- Commit: "Developer guide: writing a Show plug-in"
+
+### Block 8: Architecture spec update
+
+- Update spec §5 (Audio analysis pipeline) with multi-band, centroid, energy, density, section detection
+- Add spec §7.x covering the new Show plug-in surface and the widget library; point readers at `docs/developing-shows.md` as the developer reference
+- Update spec §3 / §4 references where they mention "visualisations" to distinguish Shows vs widgets
+- Bump spec to v0.23
+- Sync to Notion
+- Commit: "Architecture spec v0.23 reflecting Show framework and dynamic show capabilities"
 
 ## Dependencies
 
 | Dependency | Type | Status | Owner |
 |---|---|---|---|
-| Epic 4.5 (sub-band beat detection with per-band magnitudes exposed) | Internal | In Progress | Jason |
-| Epic 4.6 (M5 UI cleanup) | Internal | Proposed | Jason |
-| Architecture spec v0.20+ (§5 with sub-band adaptive threshold) | Internal | Pending Epic 4.5 ship | Jason |
+| Epic 4.5 (sub-band beat detection with per-band magnitudes exposed) | Internal | Done | Jason |
+| Epic 4.6 (M5 UI cleanup, Visualisation plug-in surface) | Internal | Done | Jason |
+| Epic 4.65 (class+group device addressing, render_fx structured targets) | Internal | Done | Jason |
+| Architecture spec v0.22 (current baseline) | Internal | Done | Jason |
 | Captured audio samples (varied genre playlist) | External | Available (Mac + audio interface) | Jason |
 | Labelled test track (for section-detection accuracy testing) | External | To be prepared (manual labelling, ~1 hour) | Jason |
 
 ## Status Notes
 
-Proposed 2026-05-09 in response to Jason's observation during Epic 4.5 design that simple beat detection leaves most of the FFT's information on the floor. The architectural unblock (per-band magnitudes exposed via the audio analyser interface) is captured in Epic 4.5 Block 2, so this Epic builds on a stable interface rather than re-architecting.
+Proposed 2026-05-09, refined 2026-05-11 following the Epic 4.65 close-out and a terminology pass with Jason that surfaced the Show vs widget distinction. The framework was the missing piece: today's BeatPulse / SpectrumBars conflated three concerns (analyser consumer, fx generator, screen renderer) with no seam. Splitting them into a Show plug-in surface + a widget library makes future Show contributions a drop-in exercise rather than a fork-and-modify.
 
-**Sequencing decision (2026-05-09)**: Epic 4.7 ships **before Epic 5 (Tildagon)** so EMF 2026 gets a properly dynamic show rather than just beat-flash. The trade-off is honest: this puts more work between now and EMF and pushes Tildagon submission later. The plan only fits if EMF 2026 is comfortably more than ~6 months out when Epic 4.5 ships, or if Tildagon submission to EMF 2027 is acceptable as a fallback. If the calendar gets tight during execution, swap 4.7 and 5 in the queue and ship dynamic shows post-EMF. **The walk-before-run discipline still holds: 4.5 → 4.6 → 4.7 → 5.** Don't start 4.7 until 4.5 has shipped and 4.6 is at least planned.
+**Sequencing**: 4.7 ships **before Epic 5 (Tildagon)** so EMF 2026 gets a properly dynamic show and so the Tildagon receiver app lands on a stable richer-protocol baseline. If the calendar tightens during execution, swap 4.7 and 5 and ship the dynamic show post-EMF. **The walk-before-run discipline still holds:** 4.5 → 4.6 → 4.65 → 4.7 → 5.
 
-Key technical risk: this Epic genuinely is more substantive than 4.5. Four new event types, four new descriptors, a new effect primitive, modulators on existing effects, plus the section-detection state machine which has the highest tuning effort. Realistic effort estimate is 12-18 hours of focused work plus an open-ended tuning tail. Don't underestimate the tuning tail - the difference between "works" and "feels alive" is hours of subjective listening, not algorithm changes.
+**Key technical risk**: Block 6's tuning tail is open-ended. The difference between "works" and "feels alive" is hours of subjective listening, not algorithm changes. Realistic effort estimate for Blocks 1-5 is 12-18 hours; Block 6 adds an indeterminate listening-and-tuning tail that is best done across multiple sessions.
 
-**EMF 2026 demo angle**: this Epic's deliverable is what makes the EMF demo *demonstrable*. A single Stick on a tripod running Continuous Wash with hue-from-centroid produces a properly atmospheric installation - the kind of thing visitors stop and watch rather than glance past. That is itself worth EMF for, regardless of whether the Tildagon receiver app ships in time.
+**EMF 2026 demo angle**: this Epic's deliverable is what makes the EMF demo *demonstrable*. A single Stick on a tripod running `DynamicShow` produces a properly atmospheric installation — the kind of thing visitors stop and watch rather than glance past. That is itself worth showing at EMF, regardless of whether the Tildagon receiver app ships in time.
 
-Processing Type stays Hybrid because algorithm work is well-suited to laptop-driven coding (with native unit tests), but Block 5's tuning work is genuinely Manual - Jason listening to music with hardware in hand for several hours is the only reliable test for "does this feel right?".
+**Forward-looking note on widget plug-in surface**: widgets stay library-only this Epic. If contributors propose useful new widgets (VU meter, waveform scope, kick/snare/hihat scrolling histogram, etc.), promoting widgets to a plug-in surface is a small, contained follow-up Epic.
+
+Processing Type stays **Hybrid** because algorithm work is well-suited to laptop-driven coding (with native unit tests), but Block 6 is genuinely **Manual** — Jason listening to music with hardware in hand for several hours is the only reliable test for "does this feel right?".
