@@ -18,6 +18,7 @@
 #include "modes/mode_machine.h"
 #include "shows/show_registry.h"
 #include "shows/simple_beat_show.h"
+#include "shows/dynamic_show.h"
 #include "output_bindings/output_binding_registry.h"
 #include "output_bindings/local_display.h"
 #include "output_bindings/pixmob_ir.h"
@@ -42,6 +43,8 @@ void setup() {
     // > Level Tuning hosts the widgets standalone for bench work.
     nocturnation::shows::show_registry().register_plugin(
         nocturnation::shows::simple_beat_show_instance());
+    nocturnation::shows::show_registry().register_plugin(
+        nocturnation::shows::dynamic_show_instance());
 
     // Register slave-side output bindings (Epic 4.6 Block 9). SlaveMode
     // walks this registry on enter() and activates every binding whose
