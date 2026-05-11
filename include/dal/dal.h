@@ -172,6 +172,31 @@ struct AudioFrameEvent {
     // reserved). Master orchestration broadcasts MUSIC_EVENT frames
     // when this is non-zero. Epic 4.5 Block 4.
     uint8_t  music_event   = 0;
+
+    // Per-onset-band strengths (Epic 4.7 Block 3). Non-zero values
+    // signal "an onset fired on this frame in this band"; zero means
+    // no onset. The kick path coexists with is_beat for back-compat:
+    // is_beat is the legacy boolean from Epic 4.5; beat_strength is
+    // the Block 3 quantised intensity that AutonomousMasterMode
+    // passes to Show::on_beat_detected. snare / hihat are new in
+    // Block 3 - their detectors watch ~200-2000 Hz and ~4-8 kHz
+    // sub-bands respectively.
+    uint8_t  beat_strength  = 0;
+    uint8_t  snare_strength = 0;
+    uint8_t  hihat_strength = 0;
+
+    // Continuous music descriptors (Epic 4.7 Block 3). Updated every
+    // frame at FFT rate (~30-40 Hz). AutonomousMasterMode applies a
+    // 5 %-change rate limit before delivering to Show::on_music_descriptor
+    // so Shows don't have to filter every-frame churn.
+    //
+    //   centroid: tonal centre of the spectrum, 0 = bass, 255 = bright.
+    //   energy:   smoothed RMS envelope, 0 = silence, 255 = loud.
+    //   density:  events-per-second across all onset bands, 0 = sparse,
+    //             255 = >= 16 events / s.
+    uint8_t  centroid  = 0;
+    uint8_t  energy    = 0;
+    uint8_t  density   = 0;
 };
 
 // 32-band log-spaced spectrum frame, master-local. Delivered alongside

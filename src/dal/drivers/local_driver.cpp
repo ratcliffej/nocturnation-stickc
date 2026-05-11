@@ -137,40 +137,54 @@ bool LocalDriver::begin() {
     // into start_audio_input() below.
     if (auto* mic = hal::HAL::mic()) {
         mic->set_frame_callback([](const hal::AudioFrame& frame) {
-            // Run the beat detector over the spectrum frame. Build a
-            // SpectrumFrame view for the detector; then we'll fan the
-            // same magnitudes into the SpectrumFrameEvent below.
+            // Build a SpectrumFrame view that every detector consumes.
             analyser::SpectrumFrame sf;
             for (size_t i = 0; i < analyser::kSpectrumBands; ++i) {
                 sf.magnitudes[i] = frame.spectrum[i];
             }
-            const bool beat = s_instance.beat_detector_.process(sf, frame.timestamp_ms);
 
-            // Run the drop detector over the bass-energy roll-up. Uses
-            // the 3-band B/M/T summary's bass field (full <250 Hz
-            // energy) rather than spectrum bins directly - drops
-            // manifest as broadband bass-region energy shifts and the
-            // pre-rolled-up scalar is exactly that signal.
+            // Onset detectors: kick (legacy) + snare + hi-hat (Block 3).
+            // Each watches a different sub-band range over the same
+            // spectrum frame.
+            const bool beat  = s_instance.beat_detector_ .process(sf, frame.timestamp_ms);
+            const bool snare = s_instance.snare_detector_.process(sf, frame.timestamp_ms);
+            const bool hihat = s_instance.hihat_detector_.process(sf, frame.timestamp_ms);
+
+            // Drop detector: same lifecycle, runs on the bass-energy
+            // roll-up (pre-rolled-up scalar) rather than spectrum bins.
             const analyser::DropEvent music =
                 s_instance.drop_detector_.process(frame.bass_energy, frame.timestamp_ms);
 
-            // Band-summary event: 3-band B/M/T + 8-band perceptual + is_beat.
+            // Continuous descriptors (Block 3). Always updated; the
+            // consumer (AutonomousMasterMode) applies rate-limiting
+            // before delivering to Show::on_music_descriptor.
+            s_instance.music_descriptors_.process(
+                sf, frame.overall_rms, beat || snare || hihat,
+                frame.timestamp_ms);
+
+            // Band-summary event + onset / descriptor stamps.
             AudioFrameEvent af;
-            af.timestamp_ms  = frame.timestamp_ms;
-            af.bass_energy   = frame.bass_energy;
-            af.mid_energy    = frame.mid_energy;
-            af.treble_energy = frame.treble_energy;
-            af.mud           = frame.mud;
-            af.sub_bass      = frame.sub_bass;
-            af.bass          = frame.bass;
-            af.low_mids      = frame.low_mids;
-            af.midrange      = frame.midrange;
-            af.high_mids     = frame.high_mids;
-            af.presence      = frame.presence;
-            af.air           = frame.air;
-            af.overall_rms   = frame.overall_rms;
-            af.is_beat       = beat;
-            af.music_event   = static_cast<uint8_t>(music);
+            af.timestamp_ms    = frame.timestamp_ms;
+            af.bass_energy     = frame.bass_energy;
+            af.mid_energy      = frame.mid_energy;
+            af.treble_energy   = frame.treble_energy;
+            af.mud             = frame.mud;
+            af.sub_bass        = frame.sub_bass;
+            af.bass            = frame.bass;
+            af.low_mids        = frame.low_mids;
+            af.midrange        = frame.midrange;
+            af.high_mids       = frame.high_mids;
+            af.presence        = frame.presence;
+            af.air             = frame.air;
+            af.overall_rms     = frame.overall_rms;
+            af.is_beat         = beat;
+            af.music_event     = static_cast<uint8_t>(music);
+            af.beat_strength   = beat  ? s_instance.beat_detector_ .last_strength() : 0;
+            af.snare_strength  = snare ? s_instance.snare_detector_.last_strength() : 0;
+            af.hihat_strength  = hihat ? s_instance.hihat_detector_.last_strength() : 0;
+            af.centroid        = s_instance.music_descriptors_.centroid();
+            af.energy          = s_instance.music_descriptors_.energy();
+            af.density         = s_instance.music_descriptors_.density();
             DAL::deliver_audio_frame("local", af);
 
             // Spectrum-frame event: 32 log-spaced magnitudes. Master-

@@ -76,6 +76,19 @@ private:
     bool      paused_           = false;
     uint32_t  last_draw_ms_     = 0;
 
+    // Last delivered MUSIC_DESCRIPTOR values (Epic 4.7 Block 3). The
+    // descriptors are computed every audio frame (~30-40 Hz) but
+    // delivery to Show::on_music_descriptor is rate-limited: a value
+    // only reaches the show when any component has moved by more than
+    // kMusicDescriptorDelta from the previously-delivered values. The
+    // _delivered_ flag marks the first delivery so the very first
+    // descriptor always reaches the show.
+    bool      descriptor_delivered_       = false;
+    uint8_t   last_centroid_delivered_    = 0;
+    uint8_t   last_energy_delivered_      = 0;
+    uint8_t   last_density_delivered_     = 0;
+    static constexpr uint8_t kMusicDescriptorDelta = 13;   // ~5 % of 255
+
     // Overlay state. Picker enumerates show_registry; Settings walks
     // active_show_'s PropertyDef schema. Both consume InputActions and
     // own the screen while open so the Show's on_render() is skipped.

@@ -15,6 +15,7 @@
 
 #include "dal/analyser/beat_detector.h"
 #include "dal/analyser/drop_detector.h"
+#include "dal/analyser/music_descriptors.h"
 #include "dal/dal.h"
 
 namespace nocturnation {
@@ -124,12 +125,46 @@ private:
     uint32_t  last_render_ms_   = 0;
     static constexpr uint32_t kFramePeriodMs = 33;   // ~30 Hz cap
 
-    // Sub-band adaptive-threshold beat detector. Driven from the mic
-    // frame callback, one update per FFT cycle. The result is stamped
-    // onto each AudioFrameEvent's is_beat field so orchestration
-    // consumers (mode_machine's Master and TestMode audio paths) can
-    // act on a beat without re-running their own threshold logic.
+    // Sub-band adaptive-threshold onset detectors. All three run on
+    // every FFT cycle over the same SpectrumFrame; results stamp onto
+    // AudioFrameEvent fields so orchestration consumers don't have to
+    // re-run threshold logic. The "BeatDetector" name is legacy from
+    // Epic 4.5; the class itself is a generic per-band onset detector
+    // that Block 3 instantiates three times with different watched-band
+    // ranges and tuning constants:
+    //   beat_detector_  - kick band  (~30-150 Hz, k=2.2, refractory 200 ms)
+    //   snare_detector_ - snare band (~200-2000 Hz, k=2.0, refractory 150 ms)
+    //   hihat_detector_ - hi-hat band (~4-8 kHz, k=1.8, refractory 80 ms)
+    // Configs for the three Block 3 detectors. Returned by static
+    // helpers so the in-class member initialisers below stay short.
+    // Band ranges derived from the canonical 16 kHz / 512 FFT
+    // operating point: ratio_per_band ~= 1.191 covering [30, 8000) Hz
+    // in 32 log-spaced bands. Block 6 hardware tuning may refine.
+    static analyser::BeatDetectorConfig snare_config() {
+        analyser::BeatDetectorConfig c;
+        c.watch_start  = 11;     // ~200 Hz
+        c.watch_count  = 13;     // through band 23, ~2 kHz
+        c.threshold_k  = 2.0f;   // slightly lower than kick - snare
+                                 // transients are smaller relative
+                                 // to baseline mid-band energy
+        c.refractory_ms = 150;   // shorter than kick - snare-fill
+                                 // patterns can fire faster
+        return c;
+    }
+    static analyser::BeatDetectorConfig hihat_config() {
+        analyser::BeatDetectorConfig c;
+        c.watch_start  = 27;     // ~3.5 kHz
+        c.watch_count  = 5;      // through band 31, ~8 kHz Nyquist
+        c.threshold_k  = 1.8f;   // smaller transients again
+        c.refractory_ms = 80;    // 16th-note hi-hat patterns can
+                                 // hit ~12 Hz; 80 ms allows up to
+                                 // 12.5 Hz before merging hits
+        return c;
+    }
+
     analyser::BeatDetector beat_detector_;
+    analyser::BeatDetector snare_detector_{snare_config()};
+    analyser::BeatDetector hihat_detector_{hihat_config()};
 
     // Drop and breakdown detector. Same lifecycle as beat_detector_ -
     // one update per FFT cycle, the result is stamped onto each
@@ -137,6 +172,11 @@ private:
     // broadcasts MUSIC_EVENT frames over ESP-NOW when the field is
     // non-zero.
     analyser::DropDetector drop_detector_;
+
+    // Continuous music descriptors (Epic 4.7 Block 3). Computes
+    // centroid + energy + density per frame and stamps the u8 values
+    // onto AudioFrameEvent.{centroid, energy, density}.
+    analyser::MusicDescriptors music_descriptors_;
 };
 
 // Singleton accessor used by DAL::begin() to register the driver.

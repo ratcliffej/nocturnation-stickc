@@ -97,22 +97,34 @@ constexpr size_t kBeatDetectorDefaultWatchCount = 8;
 // nested type so default member initialisers can reference the
 // kBeatDetector* constants without the nested-class chicken-and-egg
 // the C++ standard catches at parse time.
+//
+// The class is named "BeatDetector" but is generic per-band onset
+// detection - Epic 4.7 Block 3 instantiates two further detectors
+// (snare + hi-hat) over the same spectrum frame using different
+// watch_start / watch_count / threshold_k / refractory_ms settings.
 struct BeatDetectorConfig {
-    // Number of low-frequency sub-bands to watch. Indices 0..N-1.
-    // Watch count up to kSpectrumBands is permitted; exceeding it is
-    // clamped at construction time.
+    // First sub-band index to watch (Epic 4.7 Block 3). Kick stays
+    // at the default 0 (covers ~30 Hz upward); snare and hi-hat
+    // detectors set this to skip the kick range entirely.
+    size_t   watch_start   = 0;
+
+    // Number of sub-bands to watch starting at watch_start. Indices
+    // watch_start..watch_start+watch_count-1. Total watched range is
+    // clamped against kSpectrumBands at construction.
     size_t   watch_count   = kBeatDetectorDefaultWatchCount;
 
     // Threshold multiplier. A frame's per-band magnitude must exceed
     // (mean + k × std_dev) of the history to flag the band as a
-    // candidate. Typical range 2.0 - 3.0; default 2.2 settles the
+    // candidate. Typical range 1.8 - 3.0; default 2.2 settles the
     // sensitivity between the maker-community 1.5 (over-fires on
     // multi-band watching) and the legacy single-threshold detector's
     // 2.5 (misses softer kicks that follow a loud kick within ~1 s,
     // because the loud kick's history elevates the per-band mean).
     // 2.2 catches the soft kicks without re-introducing the over-
     // fire seen at 1.5 - confirmed empirically on Jason's hardware
-    // tests with Plus2 + S3 (2026-05-10).
+    // tests with Plus2 + S3 (2026-05-10). Block 3 snare uses ~2.0
+    // and hi-hat uses ~1.8 because high-frequency transients have
+    // smaller magnitudes relative to their baseline.
     float    threshold_k   = 2.2f;
 
     // Refractory period in milliseconds. After a beat fires, no
@@ -122,6 +134,8 @@ struct BeatDetectorConfig {
     // envelope from re-triggering as it decays through different
     // sub-bands - the failure mode that produced 155-BPM readouts
     // on a 112-BPM track during Jason's hardware test (2026-05-10).
+    // Block 3 snare uses ~150 ms; hi-hat uses ~80 ms so denser
+    // 16th-note patterns can fire without merging adjacent hits.
     uint32_t refractory_ms = 200;
 
     // Minimum frames before the detector starts firing. Until the
@@ -157,8 +171,21 @@ public:
     void reset();
 
     // Read-only diagnostics.
-    size_t   frames_seen() const { return frames_seen_; }
+    size_t   frames_seen()  const { return frames_seen_; }
     uint32_t last_beat_ms() const { return last_beat_ms_; }
+
+    // Strength of the most recent fired beat, in 0..255. Updated each
+    // time process() returns true; returns 0 if no beat has fired since
+    // construction / reset. Computed from the ratio of the triggering
+    // band's magnitude to its threshold (mean + k × std_dev), clamped:
+    //
+    //   strength = clamp((magnitude / threshold - 1.0) * 128.0, 0, 255)
+    //
+    // i.e. a magnitude exactly equal to the threshold reads ~0, a
+    // magnitude twice the threshold reads ~128, and anything 3x+ saturates.
+    // Block 3 of Epic 4.7 stamps this onto AudioFrameEvent.beat_strength
+    // so Shows that care about hit intensity get a useful signal.
+    uint8_t  last_strength() const { return last_strength_; }
 
 private:
     Config cfg_;
@@ -167,9 +194,10 @@ private:
     // the (i)th most-recent magnitude for the band. Size is fixed at
     // compile time so this struct fits in BSS without dynamic alloc.
     float    history_[kSpectrumBands][kBeatDetectorHistorySize];
-    size_t   history_idx_   = 0;          // next slot to write across all bands
-    size_t   frames_seen_   = 0;          // capped at kHistorySize for stats
-    uint32_t last_beat_ms_  = 0;
+    size_t   history_idx_    = 0;         // next slot to write across all bands
+    size_t   frames_seen_    = 0;         // capped at kHistorySize for stats
+    uint32_t last_beat_ms_   = 0;
+    uint8_t  last_strength_  = 0;
 };
 
 }  // namespace analyser

@@ -65,10 +65,14 @@ bool show_capability_gate_open(const shows::Show& s) {
 }  // namespace
 
 void AutonomousMasterMode::enter() {
-    last_draw_ms_      = 0;
-    paused_            = false;
-    overlay_           = Overlay::None;
-    overlay_cursor_    = 0;
+    last_draw_ms_              = 0;
+    paused_                    = false;
+    overlay_                   = Overlay::None;
+    overlay_cursor_            = 0;
+    descriptor_delivered_      = false;
+    last_centroid_delivered_   = 0;
+    last_energy_delivered_     = 0;
+    last_density_delivered_    = 0;
 
     resolve_active_show_from_nvs();
 
@@ -161,11 +165,42 @@ void AutonomousMasterMode::on_audio_frame(const AudioFrameEvent& ev) {
     // Forward raw frame to show (flux trackers, level readouts, etc).
     if (active_show_ && ctx_) {
         active_show_->on_audio_frame(*ctx_, ev);
-        // Translate is_beat -> on_beat_detected. Block 1 passes 255 as
-        // strength (no per-band magnitude surfaced yet); Block 3 will
-        // refine when multi-band onset analyser primitives land.
-        if (ev.is_beat) {
-            active_show_->on_beat_detected(*ctx_, 255);
+
+        // Onset hooks - fire when the corresponding analyser detector
+        // stamped a strength on the frame. is_beat is the legacy
+        // boolean kept for back-compat; beat_strength is the Block 3
+        // quantised intensity. snare / hihat are new Block 3 surfaces.
+        if (ev.beat_strength > 0) {
+            active_show_->on_beat_detected(*ctx_, ev.beat_strength);
+        }
+        if (ev.snare_strength > 0) {
+            active_show_->on_snare_detected(*ctx_, ev.snare_strength);
+        }
+        if (ev.hihat_strength > 0) {
+            active_show_->on_hihat_detected(*ctx_, ev.hihat_strength);
+        }
+
+        // Continuous descriptor - rate-limited to >= 5 % change in any
+        // component, so a show that updates a colour palette per
+        // descriptor doesn't get every-frame churn at ~30 Hz.
+        const int dc = static_cast<int>(ev.centroid) - static_cast<int>(last_centroid_delivered_);
+        const int de = static_cast<int>(ev.energy)   - static_cast<int>(last_energy_delivered_);
+        const int dd = static_cast<int>(ev.density)  - static_cast<int>(last_density_delivered_);
+        const int abs_dc = dc < 0 ? -dc : dc;
+        const int abs_de = de < 0 ? -de : de;
+        const int abs_dd = dd < 0 ? -dd : dd;
+        if (!descriptor_delivered_
+            || abs_dc >= kMusicDescriptorDelta
+            || abs_de >= kMusicDescriptorDelta
+            || abs_dd >= kMusicDescriptorDelta) {
+            active_show_->on_music_descriptor(*ctx_,
+                                               ev.centroid,
+                                               ev.energy,
+                                               ev.density);
+            last_centroid_delivered_ = ev.centroid;
+            last_energy_delivered_   = ev.energy;
+            last_density_delivered_  = ev.density;
+            descriptor_delivered_    = true;
         }
     }
 }

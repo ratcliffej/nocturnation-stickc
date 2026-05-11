@@ -284,6 +284,104 @@ static void test_adapts_to_louder_background(void) {
 }
 
 // ---------------------------------------------------------------------------
+// Epic 4.7 Block 3: watch_start enables snare / hi-hat detectors via
+// the same class instantiated with different ranges.
+// ---------------------------------------------------------------------------
+
+static void test_snare_config_fires_on_mid_band_not_kick(void) {
+    // Snare config from LocalDriver: bands 11-23 (~200-2000 Hz).
+    BeatDetector::Config cfg;
+    cfg.watch_start  = 11;
+    cfg.watch_count  = 13;
+    cfg.threshold_k  = 2.0f;
+    cfg.refractory_ms = 150;
+    BeatDetector det(cfg);
+
+    SpectrumFrame quiet;
+    quiet_noise_frame(quiet, 1.0f);
+    for (uint32_t t = 0; t < 20; ++t) det.process(quiet, t * 25);
+
+    // A kick-band spike (bands 0-10) must NOT fire the snare detector.
+    SpectrumFrame kick;
+    kick_frame(kick, 1.0f, 50.0f);
+    TEST_ASSERT_FALSE(det.process(kick, 21 * 25));
+
+    // A snare-band spike (bands 11-15) MUST fire the snare detector.
+    SpectrumFrame snare;
+    for (size_t i = 0; i < kSpectrumBands; ++i) snare.magnitudes[i] = 1.0f;
+    for (size_t i = 11; i < 16; ++i) snare.magnitudes[i] = 50.0f;
+    TEST_ASSERT_TRUE(det.process(snare, 22 * 25));
+}
+
+static void test_hihat_config_fires_on_high_band_only(void) {
+    // Hi-hat config from LocalDriver: bands 27-31 (~4-8 kHz).
+    BeatDetector::Config cfg;
+    cfg.watch_start  = 27;
+    cfg.watch_count  = 5;
+    cfg.threshold_k  = 1.8f;
+    cfg.refractory_ms = 80;
+    BeatDetector det(cfg);
+
+    SpectrumFrame quiet;
+    quiet_noise_frame(quiet, 1.0f);
+    for (uint32_t t = 0; t < 20; ++t) det.process(quiet, t * 25);
+
+    // Mid-band spike (bands 11-15) must NOT fire the hi-hat detector.
+    SpectrumFrame snare;
+    for (size_t i = 0; i < kSpectrumBands; ++i) snare.magnitudes[i] = 1.0f;
+    for (size_t i = 11; i < 16; ++i) snare.magnitudes[i] = 50.0f;
+    TEST_ASSERT_FALSE(det.process(snare, 21 * 25));
+
+    // High-band spike (bands 28-30) MUST fire the hi-hat detector.
+    SpectrumFrame hihat;
+    for (size_t i = 0; i < kSpectrumBands; ++i) hihat.magnitudes[i] = 1.0f;
+    for (size_t i = 28; i < 31; ++i) hihat.magnitudes[i] = 50.0f;
+    TEST_ASSERT_TRUE(det.process(hihat, 22 * 25));
+}
+
+static void test_last_strength_zero_before_any_beat(void) {
+    BeatDetector det;
+    TEST_ASSERT_EQUAL_UINT8(0, det.last_strength());
+
+    // Run quiet frames - no beats fire, strength stays 0.
+    SpectrumFrame quiet;
+    quiet_noise_frame(quiet, 1.0f);
+    for (uint32_t t = 0; t < 20; ++t) det.process(quiet, t * 25);
+    TEST_ASSERT_EQUAL_UINT8(0, det.last_strength());
+}
+
+static void test_last_strength_scales_with_magnitude(void) {
+    // After warm-up on quiet noise, a kick that's ~2x the threshold
+    // should give strength near 128; a much larger kick should saturate
+    // toward 255. The exact numbers depend on the threshold value the
+    // detector computes from the history, but ordering is robust.
+    BeatDetector det;
+    SpectrumFrame quiet;
+    quiet_noise_frame(quiet, 5.0f);
+    for (uint32_t t = 0; t < 20; ++t) det.process(quiet, t * 25);
+
+    // Soft kick must produce a strength below the 255 ceiling so the
+    // "loud > soft" comparison is meaningful (a magnitude many times
+    // the threshold saturates).
+    SpectrumFrame soft_kick, loud_kick;
+    kick_frame(soft_kick, 5.0f,  12.0f);
+    kick_frame(loud_kick, 5.0f, 200.0f);
+
+    TEST_ASSERT_TRUE(det.process(soft_kick, 600));
+    const uint8_t soft = det.last_strength();
+    TEST_ASSERT_GREATER_THAN_UINT8(0, soft);
+
+    // Reset so the loud kick doesn't fall in soft_kick's refractory
+    // and the history is identical for both.
+    det.reset();
+    for (uint32_t t = 0; t < 20; ++t) det.process(quiet, t * 25);
+
+    TEST_ASSERT_TRUE(det.process(loud_kick, 600));
+    const uint8_t loud = det.last_strength();
+    TEST_ASSERT_GREATER_THAN_UINT8(soft, loud);
+}
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
@@ -300,6 +398,10 @@ int main(int, char**) {
     RUN_TEST(test_higher_threshold_suppresses_marginal_kicks);
     RUN_TEST(test_reset_clears_state);
     RUN_TEST(test_adapts_to_louder_background);
+    RUN_TEST(test_snare_config_fires_on_mid_band_not_kick);
+    RUN_TEST(test_hihat_config_fires_on_high_band_only);
+    RUN_TEST(test_last_strength_zero_before_any_beat);
+    RUN_TEST(test_last_strength_scales_with_magnitude);
 
     return UNITY_END();
 }

@@ -8,7 +8,10 @@ namespace analyser {
 
 BeatDetector::BeatDetector(const Config& cfg) : cfg_(cfg) {
     if (cfg_.watch_count == 0)                cfg_.watch_count = kDefaultWatchCount;
-    if (cfg_.watch_count > kSpectrumBands)    cfg_.watch_count = kSpectrumBands;
+    if (cfg_.watch_start >= kSpectrumBands)   cfg_.watch_start = 0;
+    if (cfg_.watch_start + cfg_.watch_count > kSpectrumBands) {
+        cfg_.watch_count = kSpectrumBands - cfg_.watch_start;
+    }
     reset();
 }
 
@@ -16,9 +19,10 @@ void BeatDetector::reset() {
     for (size_t b = 0; b < kSpectrumBands; ++b) {
         for (size_t i = 0; i < kHistorySize; ++i) history_[b][i] = 0.0f;
     }
-    history_idx_  = 0;
-    frames_seen_  = 0;
-    last_beat_ms_ = 0;
+    history_idx_   = 0;
+    frames_seen_   = 0;
+    last_beat_ms_  = 0;
+    last_strength_ = 0;
 }
 
 bool BeatDetector::process(const SpectrumFrame& frame, uint32_t now_ms) {
@@ -37,7 +41,8 @@ bool BeatDetector::process(const SpectrumFrame& frame, uint32_t now_ms) {
             (last_beat_ms_ != 0) && ((now_ms - last_beat_ms_) < cfg_.refractory_ms);
 
         if (!in_refractory) {
-            for (size_t b = 0; b < cfg_.watch_count; ++b) {
+            const size_t b_end = cfg_.watch_start + cfg_.watch_count;
+            for (size_t b = cfg_.watch_start; b < b_end; ++b) {
                 // Single-pass mean + variance via Welford's online
                 // algorithm. Combines the two history walks (one for
                 // mean, one for sum-of-squared-deviations) into a
@@ -76,6 +81,17 @@ bool BeatDetector::process(const SpectrumFrame& frame, uint32_t now_ms) {
                 const float threshold = mean + cfg_.threshold_k * std_dev;
                 if (frame.magnitudes[b] > threshold) {
                     fired = true;
+                    // Strength: linear over the magnitude-vs-threshold
+                    // ratio. mag == threshold reads 0; mag == 2*threshold
+                    // reads ~128; mag >= 3*threshold saturates at 255.
+                    if (threshold > 0.0f) {
+                        float s = (frame.magnitudes[b] / threshold - 1.0f) * 128.0f;
+                        if (s < 0.0f)    s = 0.0f;
+                        if (s > 255.0f)  s = 255.0f;
+                        last_strength_ = static_cast<uint8_t>(s);
+                    } else {
+                        last_strength_ = 255;   // degenerate: no baseline yet
+                    }
                     break;  // any watched band exceeding threshold fires the beat
                 }
             }
