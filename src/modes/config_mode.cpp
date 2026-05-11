@@ -30,18 +30,46 @@ using nocturnation::hal::ButtonEvent;
 // the slave's IR forward group rides PixMobIrBinding's property bag.
 namespace {
 
-// Slave IR group cycles 0..5 via the binding's "group" property. Read
-// hits the bag's NVS-backed (or, on native, in-memory) value; write
-// clamps via PropertyValue::from_enum and the bag's bounds check.
+// Slave IR group cycles 0..31 (PixMob protocol's native range, Epic 4.65
+// Block 6) via the binding's "group" property. Read hits the bag's
+// NVS-backed (or, on native, in-memory) value; write clamps via
+// PropertyValue::from_enum and the bag's bounds check.
 uint8_t load_slave_ir_group() {
     return nocturnation::output_bindings::pixmob_ir_property_bag()
         .get("group").as_enum();
 }
 
 void save_slave_ir_group(uint8_t g) {
-    if (g > 5) g = 0;
+    if (g > 31) g = 0;
     nocturnation::output_bindings::pixmob_ir_property_bag().set(
         "group", plugins::PropertyValue::from_enum(g));
+}
+
+// Submenu row geometry (used by draw_top + the variable-row submenus).
+// Footer hint lives at y=122 at size 1 (~8 px tall). Body rows are size 2
+// at 16 px stride. Most screens use a row origin around y=22 (top menu)
+// or y=30 (submenus, leaving room for a size-2 title above).
+constexpr int kRowStride       = 16;
+constexpr int kFooterTextY     = 122;
+constexpr int kBodyBottomLimit = kFooterTextY - 4;   // 4 px gap above footer
+
+// Returns the index of the first visible row given the selected index,
+// total item count, and the maximum rows the screen can show. Keeps the
+// selected row in view via a minimal sliding window - if the selection
+// is past the bottom of the current window, scroll down so it sits on
+// the last visible row; otherwise leave the window where it is.
+// Stateless: derived purely from the inputs, recomputed each draw.
+size_t scroll_offset(size_t selected, size_t total, size_t max_visible) {
+    if (total <= max_visible) return 0;
+    size_t first = 0;
+    if (selected >= max_visible) {
+        first = selected - max_visible + 1;
+    }
+    // Never scroll past the end (avoids empty rows at the bottom).
+    if (first + max_visible > total) {
+        first = total - max_visible;
+    }
+    return first;
 }
 
 }  // namespace
@@ -134,13 +162,24 @@ void ConfigMode::draw_top() {
     DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         10, 5, "Config", WHITE, BLACK, 2});
-    for (size_t i = 0; i < kTopCount; ++i) {
+
+    // 8 top-menu items don't all fit between y=22 and the footer at y=122
+    // at size-2 stride 16. Slide the visible window with the cursor.
+    constexpr int  kRowY0     = 22;
+    const size_t   max_visible = static_cast<size_t>(
+        (kBodyBottomLimit - kRowY0) / kRowStride);   // 6 rows visible
+    const size_t   first      = scroll_offset(top_selected_, kTopCount, max_visible);
+    const size_t   last_excl  = (first + max_visible > kTopCount)
+                                ? kTopCount
+                                : first + max_visible;
+
+    for (size_t i = first; i < last_excl; ++i) {
         const bool sel = (i == top_selected_);
         char buf[24];
         std::snprintf(buf, sizeof(buf), "%s %s",
                       sel ? ">" : " ", kTop[i].label);
         DAL::fire_display_show_text("local", DisplayShowTextEvent{
-            10, 22 + (int)i * 16, buf,
+            10, kRowY0 + static_cast<int>(i - first) * kRowStride, buf,
             sel ? YELLOW : WHITE, BLACK, 2});
     }
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
@@ -287,9 +326,11 @@ void ConfigMode::handle_ir(const ButtonPressEvent& ev) {
             persistence::save_ir_enabled(next);
             draw();
         } else if ((IRItem)sub_selected_ == IRItem::SlaveGroup) {
-            // Cycle 0 (broadcast / all-pixmobs) -> 1 .. 5 -> 0.
+            // Cycle 0 (broadcast / all-pixmobs) -> 1 .. 31 -> 0. Range
+            // widened from 1..5 in Epic 4.65 Block 6 to cover the PixMob
+            // protocol's full native group field.
             uint8_t g = load_slave_ir_group();
-            g = (g + 1) % 6;
+            g = (g + 1) % 32;
             save_slave_ir_group(g);
             draw();
         }
@@ -435,18 +476,28 @@ void ConfigMode::draw_espnow() {
                   (unsigned)persistence::load_slv_group());
     const char* lines[kEspNowFunctionalItemCount] = { m_line, s_line, r_line, g_line };
 
-    for (size_t i = 0; i < kEspNowFunctionalItemCount; ++i) {
+    // 4 items now (Block 5 added Group). Drop the "(applies on mode entry)"
+    // hint line - it collided with the 4th row at y=78 and the footer
+    // already tells the operator how to interact. If item count grows past
+    // ~5, scroll_offset starts windowing the visible rows.
+    constexpr int  kRowY0      = 30;
+    const size_t   max_visible = static_cast<size_t>(
+        (kBodyBottomLimit - kRowY0) / kRowStride);   // 5 rows visible
+    const size_t   first       = scroll_offset(
+        sub_selected_, kEspNowFunctionalItemCount, max_visible);
+    const size_t   last_excl   = (first + max_visible > kEspNowFunctionalItemCount)
+                                 ? kEspNowFunctionalItemCount
+                                 : first + max_visible;
+
+    for (size_t i = first; i < last_excl; ++i) {
         const bool sel = (i == sub_selected_);
         char buf[40];
         std::snprintf(buf, sizeof(buf), "%s %s",
                       sel ? ">" : " ", lines[i]);
         DAL::fire_display_show_text("local", DisplayShowTextEvent{
-            10, 30 + (int)i * 16, buf,
+            10, kRowY0 + static_cast<int>(i - first) * kRowStride, buf,
             sel ? YELLOW : WHITE, BLACK, 2});
     }
-    DAL::fire_display_show_text("local", DisplayShowTextEvent{
-        10, 80, "(applies on mode entry)",
-        WHITE, BLACK, 1});
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         10, 122, "B: cycle  A: select  B-hold: back",
         WHITE, BLACK, 1});
