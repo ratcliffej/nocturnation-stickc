@@ -1,6 +1,6 @@
 ---
 title: "Epic 4.65: Class+group device addressing"
-status: Proposed
+status: In Progress
 notion_url:
 notion_id:
 notion_status:

@@ -265,7 +265,7 @@ Offset  Field             Size  Notes
 <tr>
 <td>0x03</td>
 <td>LIGHT_COMMAND</td>
-<td>`target_group: u8` (0=broadcast, 1-3=auto-assigned coordination, 4+=specialist), RGB + envelope; allows direct remote driving</td>
+<td>9 bytes: `target_class: u8` (0=all classes, 0x01=light, 0x02=screen, 0x03=multi-LED+screen, 0x04+ reserved; see §7.6 plug-in surfaces for the OutputBinding::class() taxonomy), `target_group: u8` (0=all groups, 1-255 specific), `r: u8`, `g: u8`, `b: u8`, `attack: u8` (pixmob::Time index), `sustain: u8` (pixmob::Time index), `release: u8` (pixmob::Time index), `chance: u8` (pixmob::Chance index). Slaves filter inbound LIGHT_COMMAND on `(target_class, target_group)` against each active `OutputBinding`'s `(class(), configured group)` pair and only render where both axes match (`0x00` matches anything on either axis). Pre-Epic-4.65 shape was 8 bytes without `target_class`.</td>
 </tr>
 <tr>
 <td>0x04</td>
@@ -398,6 +398,8 @@ The 5-bit field width (groups 0-31) matches the PixMob protocol's existing const
 Receivers that haven't been assigned a group default to group 1, ensuring something happens out of the box. Operators can verify group assignment by entering Test Mode on the receiver and triggering Group Targeting Test.
 For PixMob bracelets specifically, group ID is set via the `buildSetGroupId` IR command per §4.4. For Tildagons, group ID is set via the on-device Config Mode menu and stored in app settings. Both paths produce the same protocol-level behaviour.
 Note that group IDs and the per-device addressing flagged in §4.5 are complementary, not alternative: groups handle coarse "this section vs that section" coordination cheaply, per-device addressing (if and when implemented) handles surgical positioning. A future commercial deployment might use both - group 4 for VIP front rows with per-device addressing within them, group 0 for everyone else as broadcast targets.
+
+**Epic 4.65 update (post-architecture-stream)**: group ID widens from the original 5-bit (0-31) PixMob-derived width to a full 8-bit field (0-255) on the NocturNation wire, with a parallel `target_class` byte added to `LIGHT_COMMAND` for hardware-class addressing (light bracelets / screen devices / multi-LED+screen devices / future classes - see §7.6 for the `OutputBinding::class()` contract that drives slave-side filtering). PixMob bracelets remain a 5-bit-group device protocol-internally; `PixMobIrBinding` enforces the 0-31 cap and drops frames addressed to higher groups with a debug log. Group 0 still means "all groups" across both PixMob IR and NocturNation-native ESP-NOW. The 32-255 group range is for future deployments needing more than 32 zones (e.g. stadium seating sections); no current consumer.
 ---
 ## 5. Audio analysis pipeline
 The analyser is a HAL+DAL capability cluster. Each host's HAL provides FFT magnitudes; the DAL analyser composes them into typed events. Implementation: vendor-neutral pure functions in `src/dal/analyser/` linking unchanged into Plus2 (arduinoFFT), S3 (esp-dsp), and native test builds.
@@ -679,9 +681,21 @@ The contract surface includes a `Visualisation::wants_full_screen()` virtual (de
 
 **Slave-side: `OutputBinding` plug-ins.** An output binding consumes `RenderEvent`s and turns them into hardware action. The contract lives in [`include/output_bindings/output_binding.h`](https://github.com/ratcliffej/nocturnation-stickc/blob/main/include/output_bindings/output_binding.h): same Plugin base as Visualisation, same property-bag and capability machinery. Differences from Visualisation: bindings have no `render_fx` accessor (they *are* the render destination, calling `render_fx` from one would be circular) and their hook surface is `on_light_command` rather than `on_audio_frame`. `SlaveMode` is a thin shell that fans inbound `LIGHT_COMMAND` events out to every registered binding.
 
-Two bindings ship today: `LocalDisplayBinding` (paints the slave's LCD full-bleed with the broadcast colour and ASR envelope - the "display-as-light" behaviour from Epic 4) and `PixMobIrBinding` (IR + PixMob protocol with a `group` property, 0=broadcast/all-pixmobs, 1-5=specific group). Both can run simultaneously; either can be disabled in Config to limit the slave to one output. The legacy NVS keys (`slv_ir_grp`) migrated one-shot to the per-binding namespace at first boot.
+Two bindings ship today: `LocalDisplayBinding` (paints the slave's LCD full-bleed with the broadcast colour and ASR envelope - the "display-as-light" behaviour from Epic 4) and `PixMobIrBinding` (IR + PixMob protocol with a `group` property, 0=broadcast, 1-31=specific group; Epic 4.65 widened the range from the original 0-5 cap which was a `SlaveMode` artifact). Both can run simultaneously; either can be disabled in Config to limit the slave to one output. The legacy NVS keys (`slv_ir_grp`) migrated one-shot to the per-binding namespace at first boot.
 
 Future hosts add their own bindings without touching slave code: Tildagon (Epic 5) will ship a `TildagonLedRingBinding` for its six perimeter RGB LEDs; a DMX deployment (Epic 7) lands a `DmxOutputBinding`; a BLE-controlled bracelet line lands a `BleBinding`. None of those require a recompile of `SlaveMode`.
+
+**Device-class taxonomy (Epic 4.65).** Each `OutputBinding` declares a `DeviceClass` via `OutputBinding::class()` so the master can address render targets by *what they are* rather than by transport-specific name strings. The taxonomy is operator-facing (lighting designers think in classes, not capability sets):
+
+- `0x00` **All** - reserved as the addressing wildcard; never returned by a binding.
+- `0x01` **Light** - light-only devices (PixMob X4 bracelets via `PixMobIrBinding`; future NocturNation-native light wristbands).
+- `0x02` **Screen** - screen-only devices (`LocalDisplayBinding` on a StickC slave).
+- `0x03` **MultiLedScreen** - multi-LED + screen devices (Tildagon-class; `TildagonLedRingBinding` returns this in Epic 5).
+- `0x04+` - reserved for future classes (accelerometer-stick, smoke-machine, etc.).
+
+`render_fx` targets become `"<class>:<group>"` in hex: `"00:00"` = everyone-everywhere, `"01:00"` = every light-class device any group, `"01:07"` = light-class group 7, `"03:01"` = Tildagon-class group 1. The master encodes both bytes into `LIGHT_COMMAND.target_class` and `target_group` (§4.3); slaves filter inbound frames against `(binding.class(), binding.configured_group())` per active binding and only fan out where both axes match.
+
+A StickC slave with both `LocalDisplayBinding` (class `Screen`) and `PixMobIrBinding` (class `Light`) active is conceptually two classed devices on one host: a master firing `"01:00"` hits the IR binding only; firing `"02:00"` hits the display only; firing `"00:00"` hits both. The class lives on the binding, not the chassis.
 
 **Shared infrastructure** (Block 3): a `Plugin` base class providing id, display name, capability requirements, NVS-backed `PropertyBag` (namespace `nv_<id>` for visualisations, `nb_<id>` for output bindings; plugin id capped at 12 chars so the namespace stays under NVS's 15-char limit), and `PowerProfile` declaration. Templated `Registry<T>` machinery with explicit `register_plugin()` calls in `setup()` (no static-init magic). Both Visualisation and OutputBinding extend the same base.
 ---
