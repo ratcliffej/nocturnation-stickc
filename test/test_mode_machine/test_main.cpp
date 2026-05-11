@@ -167,6 +167,68 @@ static void test_long_press_btnb_returns_to_menu_from_each_runtime_mode(void) {
     TEST_ASSERT_EQUAL_INT((int)ModeId::Menu, (int)ModeMachine::current());
 }
 
+// Config top-level menu shape (post-Epic-4.65 restructure):
+//   0: Group       (direct action, A increments slv_group)
+//   1: Display     (drill -> leaf)
+//   2: Connectivity (drill -> picker -> IR / ESP-NOW / WiFi / DMX)
+//   3: Utilities   (drill -> picker -> PixMob)
+//   4: System      (drill -> leaf)
+//
+// Three navigation levels (Top / Picker / Sub) - the picker layer is
+// new in this restructure. The B-hold contract:
+//   Sub via picker -> Picker
+//   Sub from Top   -> Top
+//   Picker         -> Top
+//   Top            -> Menu (exits Config)
+//
+// This test exercises the deepest path (Top -> Picker -> Sub) and
+// asserts the picker-layer pop: from a leaf reached via Connectivity,
+// the first B-hold must NOT exit Config (it should land on the picker),
+// the second B-hold must NOT exit Config (it should land on Top), and
+// only the third B-hold finally exits to Menu.
+static void test_config_picker_layer_bhold_pops_one_level(void) {
+    ModeMachine::switch_to(ModeId::Config);
+    TEST_ASSERT_EQUAL_INT((int)ModeId::Config, (int)ModeMachine::current());
+
+    // Top cursor starts at 0 (Group). Two Btn2 presses cycles to
+    // Connectivity (index 2).
+    inject_button_press(hal::ButtonId::Btn2, hal::ButtonEvent::Pressed);
+    inject_button_press(hal::ButtonId::Btn2, hal::ButtonEvent::Pressed);
+    // Btn1 drills into the Connectivity picker.
+    inject_button_press(hal::ButtonId::Btn1, hal::ButtonEvent::Pressed);
+    TEST_ASSERT_EQUAL_INT((int)ModeId::Config, (int)ModeMachine::current());
+    // Btn1 again drills into the first picker entry (IR).
+    inject_button_press(hal::ButtonId::Btn1, hal::ButtonEvent::Pressed);
+    TEST_ASSERT_EQUAL_INT((int)ModeId::Config, (int)ModeMachine::current());
+
+    // Three B-holds to climb out: Sub -> Picker -> Top -> Menu.
+    inject_button_press(hal::ButtonId::Btn2, hal::ButtonEvent::LongPressed);
+    TEST_ASSERT_EQUAL_INT((int)ModeId::Config, (int)ModeMachine::current());
+    inject_button_press(hal::ButtonId::Btn2, hal::ButtonEvent::LongPressed);
+    TEST_ASSERT_EQUAL_INT((int)ModeId::Config, (int)ModeMachine::current());
+    inject_button_press(hal::ButtonId::Btn2, hal::ButtonEvent::LongPressed);
+    TEST_ASSERT_EQUAL_INT((int)ModeId::Menu, (int)ModeMachine::current());
+}
+
+// Display is a direct-drill leaf submenu (not behind a picker). B-hold
+// from Display must skip the picker layer and pop straight to Top, so
+// only two B-holds total are needed to escape Config.
+static void test_config_direct_leaf_bhold_skips_picker(void) {
+    ModeMachine::switch_to(ModeId::Config);
+    TEST_ASSERT_EQUAL_INT((int)ModeId::Config, (int)ModeMachine::current());
+
+    // Top cursor at 0 (Group); one Btn2 lands on Display (index 1).
+    inject_button_press(hal::ButtonId::Btn2, hal::ButtonEvent::Pressed);
+    inject_button_press(hal::ButtonId::Btn1, hal::ButtonEvent::Pressed);
+    TEST_ASSERT_EQUAL_INT((int)ModeId::Config, (int)ModeMachine::current());
+
+    // Two B-holds to climb out: Sub -> Top -> Menu (no picker layer).
+    inject_button_press(hal::ButtonId::Btn2, hal::ButtonEvent::LongPressed);
+    TEST_ASSERT_EQUAL_INT((int)ModeId::Config, (int)ModeMachine::current());
+    inject_button_press(hal::ButtonId::Btn2, hal::ButtonEvent::LongPressed);
+    TEST_ASSERT_EQUAL_INT((int)ModeId::Menu, (int)ModeMachine::current());
+}
+
 static void test_test_mode_short_press_does_not_leave_mode(void) {
     // In Test mode, Btn1 should fire IR (no driver registered, so it's a
     // silent no-op) but must not transition out of Test.
@@ -189,6 +251,8 @@ int main(int, char**) {
     RUN_TEST(test_menu_btn2_cycles_then_btn1_selects_slave);
     RUN_TEST(test_menu_cycle_wraps);
     RUN_TEST(test_long_press_btnb_returns_to_menu_from_each_runtime_mode);
+    RUN_TEST(test_config_picker_layer_bhold_pops_one_level);
+    RUN_TEST(test_config_direct_leaf_bhold_skips_picker);
     RUN_TEST(test_test_mode_short_press_does_not_leave_mode);
     return UNITY_END();
 }

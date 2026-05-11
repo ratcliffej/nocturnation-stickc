@@ -26,24 +26,11 @@ using nocturnation::hal::ButtonId;
 using nocturnation::hal::ButtonEvent;
 
 // ConfigMode reads/writes operator-mutable settings. Channel + repeat
-// for the slave route through persistence:: shared helpers (Block 9);
-// the slave's IR forward group rides PixMobIrBinding's property bag.
+// for the slave route through persistence:: shared helpers (Block 9).
+// The NocturNation receive-filter slv_group setting (was Config >
+// ESP-NOW > Group) now lives at the top level as a direct-action
+// "Group" item per the post-Epic-4.65 menu restructure.
 namespace {
-
-// Slave IR group cycles 0..31 (PixMob protocol's native range, Epic 4.65
-// Block 6) via the binding's "group" property. Read hits the bag's
-// NVS-backed (or, on native, in-memory) value; write clamps via
-// PropertyValue::from_enum and the bag's bounds check.
-uint8_t load_slave_ir_group() {
-    return nocturnation::output_bindings::pixmob_ir_property_bag()
-        .get("group").as_enum();
-}
-
-void save_slave_ir_group(uint8_t g) {
-    if (g > 31) g = 0;
-    nocturnation::output_bindings::pixmob_ir_property_bag().set(
-        "group", plugins::PropertyValue::from_enum(g));
-}
 
 // Submenu row geometry (used by draw_top + the variable-row submenus).
 // Footer hint lives at y=122 at size 1 (~8 px tall). Body rows are size 2
@@ -74,20 +61,20 @@ size_t scroll_offset(size_t selected, size_t total, size_t max_visible) {
 
 }  // namespace
 
-// Out-of-class definitions for the ODR-used static constexpr members
-// (preserved exactly from mode_machine.cpp).
-constexpr ConfigMode::TopEntry ConfigMode::kTop[8];
-constexpr const char* ConfigMode::kAudioItems[];
-constexpr const char* ConfigMode::kIrItems[];
-constexpr const char* ConfigMode::kEspNowItems[];
+// Out-of-class definitions for the ODR-used static constexpr members.
+constexpr ConfigMode::TopEntry    ConfigMode::kTop[5];
+constexpr ConfigMode::PickerEntry ConfigMode::kConnectivity[4];
+constexpr ConfigMode::PickerEntry ConfigMode::kUtilities[1];
 constexpr const char* ConfigMode::kWifiItems[];
 constexpr const char* ConfigMode::kDmxItems[];
 
 void ConfigMode::enter() {
-    level_         = Level::Top;
-    active_sub_    = SubMenu::None;
-    top_selected_  = 0;
-    sub_selected_  = 0;
+    level_           = Level::Top;
+    active_picker_   = SubMenu::None;
+    active_sub_      = SubMenu::None;
+    top_selected_    = 0;
+    picker_selected_ = 0;
+    sub_selected_    = 0;
     confirm_until_ms_ = 0;
     last_drawn_battery_ = -2;     // force first battery redraw
     draw();
@@ -116,46 +103,93 @@ void ConfigMode::on_button_event(const ButtonPressEvent& ev) {
     if (ev.kind != ButtonEvent::Pressed
      && ev.kind != ButtonEvent::LongPressed) return;
 
-    // BtnB long-press pops one level. PixMob's two-level structure
-    // (menu -> SetGroupId/GroupTarget workflow) gets an extra pop step
-    // before it returns to the Config top-level.
+    // BtnB long-press pops one level per the navigation contract. PixMob's
+    // workflow sub-state (SetGroupId / GroupTarget) gets an extra pop
+    // before it returns to the PixMob menu. A leaf submenu reached via a
+    // picker pops back to that picker; reached directly from Top, it pops
+    // back to Top.
     if (ev.id == ButtonId::Btn2 && ev.kind == ButtonEvent::LongPressed) {
         if (level_ == Level::Top) {
             ModeMachine::switch_to(ModeId::Menu);
-        } else if (active_sub_ == SubMenu::PixMob
+        } else if (level_ == Level::Sub
+                && active_sub_ == SubMenu::PixMob
                 && pixmob_state_ != PixMobState::Menu) {
             pixmob_state_     = PixMobState::Menu;
             confirm_until_ms_ = 0;
             draw();
-        } else {
-            level_      = Level::Top;
+        } else if (level_ == Level::Sub && active_picker_ != SubMenu::None) {
+            // Came in via a picker - return to the picker, not Top.
+            level_      = Level::Picker;
             active_sub_ = SubMenu::None;
+            draw();
+        } else {
+            // Either Sub-reached-from-Top or Picker - both pop to Top.
+            level_         = Level::Top;
+            active_picker_ = SubMenu::None;
+            active_sub_    = SubMenu::None;
             draw();
         }
         return;
     }
 
     if (ev.kind != ButtonEvent::Pressed) return;
-    if (level_ == Level::Top) handle_top(ev);
-    else                       handle_sub(ev);
+    switch (level_) {
+        case Level::Top:    handle_top(ev);    break;
+        case Level::Picker: handle_picker(ev); break;
+        case Level::Sub:    handle_sub(ev);    break;
+    }
 }
+
+// ------------------------------------------------------------------
+// Top level
+// ------------------------------------------------------------------
 
 void ConfigMode::handle_top(const ButtonPressEvent& ev) {
     if (ev.id == ButtonId::Btn2) {
         top_selected_ = (top_selected_ + 1) % kTopCount;
         draw();
-    } else if (ev.id == ButtonId::Btn1) {
+        return;
+    }
+    if (ev.id != ButtonId::Btn1) return;
+
+    const TopEntry& entry = kTop[top_selected_];
+    switch (entry.action) {
+        case TopAction::GroupId:
+            // Increment 0..255 wrapping. A long-press fast-cycle would be
+            // a future polish if 256 presses to wrap proves tiresome.
+            persistence::save_slv_group(
+                static_cast<uint8_t>(persistence::load_slv_group() + 1));
+            draw();
+            return;
+        case TopAction::Drill:
+            break;
+    }
+
+    // Drill into either a picker (Connectivity / Utilities) or a leaf
+    // submenu (Display / System). The picker level is only entered for
+    // SubMenu::Connectivity and SubMenu::Utilities; everything else
+    // skips straight to Level::Sub with active_picker_ left at None
+    // (so B-hold from that leaf goes back to Top, per the contract).
+    if (entry.target == SubMenu::Connectivity
+     || entry.target == SubMenu::Utilities) {
+        level_           = Level::Picker;
+        active_picker_   = entry.target;
+        picker_selected_ = 0;
+    } else {
         level_         = Level::Sub;
-        active_sub_    = kTop[top_selected_].target;
+        active_picker_ = SubMenu::None;
+        active_sub_    = entry.target;
         sub_selected_  = 0;
         last_drawn_battery_ = -2;
         // Fresh entry into PixMob always lands on the menu screen
-        // (not in a previous workflow).
+        // (not in a previous workflow). PixMob isn't currently a
+        // direct top-level target but keep the reset here so the
+        // invariant holds if Utilities-style routing ever changes.
         pixmob_state_     = PixMobState::Menu;
         pixmob_selected_  = 0;
         confirm_until_ms_ = 0;
-        draw();
     }
+    draw();
 }
 
 void ConfigMode::draw_top() {
@@ -163,11 +197,13 @@ void ConfigMode::draw_top() {
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         10, 5, "Config", WHITE, BLACK, 2});
 
-    // 8 top-menu items don't all fit between y=22 and the footer at y=122
-    // at size-2 stride 16. Slide the visible window with the cursor.
+    // 5 top-menu items fit comfortably between y=22 and the footer at
+    // y=122 at size-2 stride 16 (5 rows = 80 px). scroll_offset() is
+    // a no-op at this count but stays in place so further items don't
+    // require touching the draw call.
     constexpr int  kRowY0     = 22;
     const size_t   max_visible = static_cast<size_t>(
-        (kBodyBottomLimit - kRowY0) / kRowStride);   // 6 rows visible
+        (kBodyBottomLimit - kRowY0) / kRowStride);
     const size_t   first      = scroll_offset(top_selected_, kTopCount, max_visible);
     const size_t   last_excl  = (first + max_visible > kTopCount)
                                 ? kTopCount
@@ -175,9 +211,15 @@ void ConfigMode::draw_top() {
 
     for (size_t i = first; i < last_excl; ++i) {
         const bool sel = (i == top_selected_);
-        char buf[24];
-        std::snprintf(buf, sizeof(buf), "%s %s",
-                      sel ? ">" : " ", kTop[i].label);
+        char buf[28];
+        if (kTop[i].action == TopAction::GroupId) {
+            std::snprintf(buf, sizeof(buf), "%s %s: %u",
+                          sel ? ">" : " ", kTop[i].label,
+                          (unsigned)persistence::load_slv_group());
+        } else {
+            std::snprintf(buf, sizeof(buf), "%s %s",
+                          sel ? ">" : " ", kTop[i].label);
+        }
         DAL::fire_display_show_text("local", DisplayShowTextEvent{
             10, kRowY0 + static_cast<int>(i - first) * kRowStride, buf,
             sel ? YELLOW : WHITE, BLACK, 2});
@@ -187,6 +229,90 @@ void ConfigMode::draw_top() {
         WHITE, BLACK, 1});
 }
 
+// ------------------------------------------------------------------
+// Picker level (Connectivity / Utilities)
+// ------------------------------------------------------------------
+
+const ConfigMode::PickerEntry* ConfigMode::picker_entries() const {
+    switch (active_picker_) {
+        case SubMenu::Connectivity: return kConnectivity;
+        case SubMenu::Utilities:    return kUtilities;
+        default:                    return nullptr;
+    }
+}
+
+size_t ConfigMode::picker_count() const {
+    switch (active_picker_) {
+        case SubMenu::Connectivity: return kConnectivityCount;
+        case SubMenu::Utilities:    return kUtilitiesCount;
+        default:                    return 0;
+    }
+}
+
+const char* ConfigMode::picker_title() const {
+    switch (active_picker_) {
+        case SubMenu::Connectivity: return "Connectivity";
+        case SubMenu::Utilities:    return "Utilities";
+        default:                    return "";
+    }
+}
+
+void ConfigMode::handle_picker(const ButtonPressEvent& ev) {
+    const size_t count = picker_count();
+    if (count == 0) return;
+    if (ev.id == ButtonId::Btn2) {
+        picker_selected_ = (picker_selected_ + 1) % count;
+        draw();
+        return;
+    }
+    if (ev.id == ButtonId::Btn1) {
+        const PickerEntry& entry = picker_entries()[picker_selected_];
+        level_        = Level::Sub;
+        active_sub_   = entry.target;
+        sub_selected_ = 0;
+        last_drawn_battery_ = -2;
+        pixmob_state_     = PixMobState::Menu;
+        pixmob_selected_  = 0;
+        confirm_until_ms_ = 0;
+        draw();
+    }
+}
+
+void ConfigMode::draw_picker() {
+    DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 5, picker_title(), WHITE, BLACK, 2});
+
+    const PickerEntry* entries = picker_entries();
+    const size_t       count   = picker_count();
+    if (entries == nullptr || count == 0) return;
+
+    constexpr int  kRowY0     = 30;
+    const size_t   max_visible = static_cast<size_t>(
+        (kBodyBottomLimit - kRowY0) / kRowStride);
+    const size_t   first      = scroll_offset(picker_selected_, count, max_visible);
+    const size_t   last_excl  = (first + max_visible > count)
+                                ? count
+                                : first + max_visible;
+
+    for (size_t i = first; i < last_excl; ++i) {
+        const bool sel = (i == picker_selected_);
+        char buf[28];
+        std::snprintf(buf, sizeof(buf), "%s %s",
+                      sel ? ">" : " ", entries[i].label);
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, kRowY0 + static_cast<int>(i - first) * kRowStride, buf,
+            sel ? YELLOW : WHITE, BLACK, 2});
+    }
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 122, "B: cycle  A: select  B-hold: back",
+        WHITE, BLACK, 1});
+}
+
+// ------------------------------------------------------------------
+// Submenu dispatch
+// ------------------------------------------------------------------
+
 void ConfigMode::handle_sub(const ButtonPressEvent& ev) {
     switch (active_sub_) {
         case SubMenu::System:  handle_system(ev);  break;
@@ -194,7 +320,6 @@ void ConfigMode::handle_sub(const ButtonPressEvent& ev) {
         case SubMenu::Display: handle_display(ev); break;
         case SubMenu::EspNow:  handle_espnow(ev);  break;
         case SubMenu::PixMob:  handle_pixmob(ev);  break;
-        case SubMenu::Audio:
         case SubMenu::WiFi:
         case SubMenu::Dmx:
             // Stub submenus accept Btn2 cycling for read-only browsing
@@ -211,23 +336,21 @@ void ConfigMode::handle_sub(const ButtonPressEvent& ev) {
 
 void ConfigMode::draw_sub() {
     switch (active_sub_) {
-        case SubMenu::Audio:   draw_stub("Audio", kAudioItems, kAudioItemCount, "Epic 3"); break;
         case SubMenu::Display: draw_display(); break;
         case SubMenu::IR:      draw_ir(); break;
         case SubMenu::EspNow:  draw_espnow(); break;
-        case SubMenu::WiFi:   draw_stub("WiFi",    kWifiItems,   kWifiItemCount,   "Epic 4"); break;
-        case SubMenu::Dmx:    draw_stub("DMX",     kDmxItems,    kDmxItemCount,    "Epic 7"); break;
-        case SubMenu::PixMob: draw_pixmob(); break;
-        case SubMenu::System: draw_system(); break;
+        case SubMenu::WiFi:    draw_stub("WiFi", kWifiItems, kWifiItemCount, "Epic 4"); break;
+        case SubMenu::Dmx:     draw_stub("DMX",  kDmxItems,  kDmxItemCount,  "Epic 7"); break;
+        case SubMenu::PixMob:  draw_pixmob(); break;
+        case SubMenu::System:  draw_system(); break;
         default: break;
     }
 }
 
 size_t ConfigMode::stub_item_count() const {
     switch (active_sub_) {
-        case SubMenu::Audio:   return kAudioItemCount;
         case SubMenu::Display: return kDisplayFunctionalItemCount;
-        case SubMenu::IR:      return kIrItemCount;
+        case SubMenu::IR:      return kIrFunctionalItemCount;
         case SubMenu::EspNow:  return kEspNowFunctionalItemCount;
         case SubMenu::WiFi:    return kWifiItemCount;
         case SubMenu::Dmx:     return kDmxItemCount;
@@ -310,7 +433,14 @@ void ConfigMode::draw_display() {
 }
 
 // -------------------------------------------------------------------------
-// IR submenu (functional: Enable toggles + persists; Protocol/GroupID info)
+// IR submenu (functional: Enable toggle + Protocol info)
+//
+// The "Slave Group" item that used to surface PixMobIrBinding's `group`
+// property here was dropped post-Epic-4.65: the protocol IR group is
+// now relay-driven via inbound LIGHT_COMMAND target_group (Block 5);
+// the per-binding group property still exists as broadcast fallback
+// (target_group=0) and is reachable via the auto-generated settings
+// overlay, but it confused operators on the IR screen.
 // -------------------------------------------------------------------------
 
 void ConfigMode::handle_ir(const ButtonPressEvent& ev) {
@@ -319,21 +449,12 @@ void ConfigMode::handle_ir(const ButtonPressEvent& ev) {
         draw();
         return;
     }
-    if (ev.id == ButtonId::Btn1) {
-        if ((IRItem)sub_selected_ == IRItem::EnableDisable) {
-            const bool next = !DAL::driver_enabled("ir-pixmob");
-            DAL::set_driver_enabled("ir-pixmob", next);
-            persistence::save_ir_enabled(next);
-            draw();
-        } else if ((IRItem)sub_selected_ == IRItem::SlaveGroup) {
-            // Cycle 0 (broadcast / all-pixmobs) -> 1 .. 31 -> 0. Range
-            // widened from 1..5 in Epic 4.65 Block 6 to cover the PixMob
-            // protocol's full native group field.
-            uint8_t g = load_slave_ir_group();
-            g = (g + 1) % 32;
-            save_slave_ir_group(g);
-            draw();
-        }
+    if (ev.id == ButtonId::Btn1
+     && (IRItem)sub_selected_ == IRItem::EnableDisable) {
+        const bool next = !DAL::driver_enabled("ir-pixmob");
+        DAL::set_driver_enabled("ir-pixmob", next);
+        persistence::save_ir_enabled(next);
+        draw();
     }
     // Protocol is info-only - no Btn1 action.
 }
@@ -346,17 +467,9 @@ void ConfigMode::draw_ir() {
     char ena[24];
     std::snprintf(ena, sizeof(ena), "Enable: %s",
                   DAL::driver_enabled("ir-pixmob") ? "ON" : "OFF");
-    char grp[24];
-    const uint8_t cur_grp = load_slave_ir_group();
-    if (cur_grp == 0) {
-        std::snprintf(grp, sizeof(grp), "Slave Grp: all");
-    } else {
-        std::snprintf(grp, sizeof(grp), "Slave Grp: %u", (unsigned)cur_grp);
-    }
     const char* lines[kIrFunctionalItemCount] = {
         ena,
         "Protocol: PixMob",
-        grp,
     };
 
     for (size_t i = 0; i < kIrFunctionalItemCount; ++i) {
@@ -374,13 +487,15 @@ void ConfigMode::draw_ir() {
 }
 
 // -------------------------------------------------------------------------
-// ESP-NOW submenu (functional: Master Channel + Slave Channel)
+// ESP-NOW submenu (functional: Master Channel + Slave Channel + Repeat)
 //
 // Per architecture spec §4.5 the project's two-channel social contract
 // is channel 1 = hobby/community/open, channel 11 = show/commercial.
 // Master picks 1, 11, or 6 (advanced override). Slave picks Auto (dual-
 // channel scan with show priority) or locks to a specific channel.
-// Both persist to NVS and survive reboot.
+// Both persist to NVS and survive reboot. The receive-filter slv_group
+// setting (Epic 4.65 Block 5) moved to the top-level "Group" item in
+// the post-Epic-4.65 menu restructure.
 // -------------------------------------------------------------------------
 
 const char* ConfigMode::master_channel_label(uint8_t c) {
@@ -443,13 +558,6 @@ void ConfigMode::handle_espnow(const ButtonPressEvent& ev) {
                 persistence::save_slave_repeat_enabled(
                     !persistence::load_slave_repeat_enabled());
                 break;
-            case EspNowItem::SlaveGroup:
-                // Increment 0..255 wrapping. A long-press fast-cycle is
-                // a future polish if 256 single presses to wrap proves
-                // tiresome; manual increment matches the brief.
-                persistence::save_slv_group(
-                    static_cast<uint8_t>(persistence::load_slv_group() + 1));
-                break;
         }
         // New value applies on next AutonomousMaster / SlaveMode enter().
         // Operator returns to Menu and re-enters the mode to pick it up.
@@ -465,24 +573,17 @@ void ConfigMode::draw_espnow() {
     char m_line[28];
     char s_line[28];
     char r_line[28];
-    char g_line[28];
     std::snprintf(m_line, sizeof(m_line), "Master: %s",
                   master_channel_label(persistence::load_master_channel()));
     std::snprintf(s_line, sizeof(s_line), "Slave:  %s",
                   slave_channel_label(persistence::load_slave_channel()));
     std::snprintf(r_line, sizeof(r_line), "Repeat: %s",
                   persistence::load_slave_repeat_enabled() ? "ON" : "OFF");
-    std::snprintf(g_line, sizeof(g_line), "Group:  %u",
-                  (unsigned)persistence::load_slv_group());
-    const char* lines[kEspNowFunctionalItemCount] = { m_line, s_line, r_line, g_line };
+    const char* lines[kEspNowFunctionalItemCount] = { m_line, s_line, r_line };
 
-    // 4 items now (Block 5 added Group). Drop the "(applies on mode entry)"
-    // hint line - it collided with the 4th row at y=78 and the footer
-    // already tells the operator how to interact. If item count grows past
-    // ~5, scroll_offset starts windowing the visible rows.
     constexpr int  kRowY0      = 30;
     const size_t   max_visible = static_cast<size_t>(
-        (kBodyBottomLimit - kRowY0) / kRowStride);   // 5 rows visible
+        (kBodyBottomLimit - kRowY0) / kRowStride);
     const size_t   first       = scroll_offset(
         sub_selected_, kEspNowFunctionalItemCount, max_visible);
     const size_t   last_excl   = (first + max_visible > kEspNowFunctionalItemCount)
@@ -510,7 +611,7 @@ void ConfigMode::draw_espnow() {
 //
 // Two-level navigation within the submenu: menu lists the items, Btn1
 // drills into a workflow screen. B-hold pops one level (workflow ->
-// menu -> Config top).
+// menu -> Utilities picker).
 // -------------------------------------------------------------------------
 
 void ConfigMode::handle_pixmob(const ButtonPressEvent& ev) {
@@ -704,8 +805,11 @@ const char* ConfigMode::mode_label_short(ModeId m) {
 }
 
 void ConfigMode::draw() {
-    if (level_ == Level::Top) draw_top();
-    else                       draw_sub();
+    switch (level_) {
+        case Level::Top:    draw_top();    break;
+        case Level::Picker: draw_picker(); break;
+        case Level::Sub:    draw_sub();    break;
+    }
 }
 
 }  // namespace modes

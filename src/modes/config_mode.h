@@ -1,18 +1,28 @@
-// ConfigMode - the §8.4 config tree.
+// ConfigMode - the operator-facing settings tree.
 //
-// Two-level navigation: top-level submenu list -> submenu items. Btn2
-// cycles selection at either level. Btn1 enters a submenu from the top
-// level, and activates an item within a submenu (toggling, cycling, or
-// triggering depending on item type). B-hold pops one level (submenu
-// -> top, top -> mode menu).
+// Three-level navigation: top-level list -> optional picker -> leaf
+// submenu. Btn2 cycles selection at every level. Btn1 either descends
+// (Top -> Picker -> Sub) or activates a leaf item (toggle / cycle /
+// trigger depending on item type); a leaf item can also be a direct
+// action right at Top (Group ID). B-hold pops one level:
 //
-// Pre-Epic-4 / pre-Epic-7 status: the menu *shape* is built out per spec
-// §8.4 so users can see what config will exist. Functional leaves at
-// this milestone live under System (firmware version, default boot mode
-// info, factory reset, battery status). Audio / IR / ESP-NOW / WiFi /
-// DMX submenus list their planned items as labels but are non-
-// interactive; they fill in when the relevant transport / capability
-// epics ship.
+//   Sub (reached via Picker)  -> Picker
+//   Sub (reached from Top)    -> Top
+//   Picker                    -> Top
+//   Top                       -> mode menu (exits Config)
+//
+// Top-level shape (5 items):
+//   Group: N       direct action - A-click increments wrapping 0..255
+//   Display        existing submenu (drill straight in)
+//   Connectivity   picker -> IR / ESP-NOW / WiFi / DMX
+//   Utilities      picker -> PixMob
+//   System         existing submenu (drill straight in)
+//
+// FSM shape choice: explicit Level::Picker plus active_picker_ +
+// picker_selected_ alongside the existing active_sub_ + sub_selected_.
+// A path stack would over-engineer two transient levels; a "came from"
+// sentinel hides the back-target inside Sub state and is harder to
+// reason about. The explicit level keeps the state machine readable.
 
 #pragma once
 
@@ -34,9 +44,25 @@ public:
     void on_button_event(const dal::ButtonPressEvent& ev) override;
 
 private:
-    enum class Level   : uint8_t { Top, Sub };
+    enum class Level   : uint8_t { Top, Picker, Sub };
+
+    // Top-level entries. SubMenu::None marks a direct-action top item
+    // (no drill-down). SubMenu::Connectivity / Utilities mark picker
+    // top items (drill into a level-2 picker). Everything else drills
+    // straight into a leaf submenu.
     enum class SubMenu : uint8_t {
-        None = 0, Audio, Display, IR, EspNow, WiFi, Dmx, PixMob, System,
+        None = 0,
+        // Pickers (level-2 lists).
+        Connectivity,
+        Utilities,
+        // Leaf submenus.
+        Display,
+        IR,
+        EspNow,
+        WiFi,
+        Dmx,
+        PixMob,
+        System,
     };
 
     // Within the PixMob submenu, drilling into one of its items enters a
@@ -45,25 +71,57 @@ private:
     // workflow screens.
     enum class PixMobState : uint8_t { Menu, SetGroupId, GroupTarget };
 
+    // Top-level item shape. A Top entry is either:
+    //   (a) a direct action: target == SubMenu::None, handled inline at
+    //       Top via the GroupAction discriminant; or
+    //   (b) a picker: target is Connectivity or Utilities, drills into
+    //       a level-2 picker; or
+    //   (c) a leaf submenu: target is the leaf, drill straight in.
+    enum class TopAction : uint8_t {
+        Drill,      // descend into target (picker or leaf)
+        GroupId,    // direct action: increment slv_group 0..255
+    };
     struct TopEntry {
         SubMenu     target;
+        TopAction   action;
         const char* label;
     };
-    static constexpr TopEntry kTop[8] = {
-        { SubMenu::Audio,   "Audio"   },
-        { SubMenu::Display, "Display" },
-        { SubMenu::IR,      "IR"      },
-        { SubMenu::EspNow,  "ESP-NOW" },
-        { SubMenu::WiFi,    "WiFi"    },
-        { SubMenu::Dmx,     "DMX"     },
-        { SubMenu::PixMob,  "PixMob"  },
-        { SubMenu::System,  "System"  },
+    static constexpr TopEntry kTop[5] = {
+        { SubMenu::None,         TopAction::GroupId, "Group"        },
+        { SubMenu::Display,      TopAction::Drill,   "Display"      },
+        { SubMenu::Connectivity, TopAction::Drill,   "Connectivity" },
+        { SubMenu::Utilities,    TopAction::Drill,   "Utilities"    },
+        { SubMenu::System,       TopAction::Drill,   "System"       },
     };
     static constexpr size_t kTopCount = sizeof(kTop) / sizeof(kTop[0]);
 
+    // Connectivity picker entries (level-2 list under Connectivity).
+    struct PickerEntry {
+        SubMenu     target;
+        const char* label;
+    };
+    static constexpr PickerEntry kConnectivity[4] = {
+        { SubMenu::IR,     "IR"      },
+        { SubMenu::EspNow, "ESP-NOW" },
+        { SubMenu::WiFi,   "WiFi"    },
+        { SubMenu::Dmx,    "DMX"     },
+    };
+    static constexpr size_t kConnectivityCount =
+        sizeof(kConnectivity) / sizeof(kConnectivity[0]);
+
+    // Utilities picker entries (level-2 list under Utilities). Single
+    // entry today; future utilities slot in here.
+    static constexpr PickerEntry kUtilities[1] = {
+        { SubMenu::PixMob, "PixMob" },
+    };
+    static constexpr size_t kUtilitiesCount =
+        sizeof(kUtilities) / sizeof(kUtilities[0]);
+
     Level       level_              = Level::Top;
+    SubMenu     active_picker_      = SubMenu::None;
     SubMenu     active_sub_         = SubMenu::None;
     size_t      top_selected_       = 0;
+    size_t      picker_selected_    = 0;
     size_t      sub_selected_       = 0;
     uint32_t    confirm_until_ms_   = 0;
     int         last_drawn_battery_ = -2;
@@ -78,26 +136,18 @@ private:
     void handle_top(const dal::ButtonPressEvent& ev);
     void draw_top();
 
+    // Picker level (Connectivity / Utilities).
+    void handle_picker(const dal::ButtonPressEvent& ev);
+    void draw_picker();
+    const PickerEntry* picker_entries() const;
+    size_t             picker_count() const;
+    const char*        picker_title() const;
+
     // Submenu dispatch.
     void handle_sub(const dal::ButtonPressEvent& ev);
     void draw_sub();
 
     // Stub-submenu data (planned items per spec §8.4; non-interactive).
-    static constexpr const char* kAudioItems[] = {
-        "Enable / Disable", "Show FFT spectrum", "Show beat meter", "Tuning",
-    };
-    static constexpr size_t kAudioItemCount = sizeof(kAudioItems) / sizeof(kAudioItems[0]);
-
-    static constexpr const char* kIrItems[] = {
-        "Enable / Disable", "Protocol", "Group ID assignment",
-    };
-    static constexpr size_t kIrItemCount = sizeof(kIrItems) / sizeof(kIrItems[0]);
-
-    static constexpr const char* kEspNowItems[] = {
-        "Enable / Disable", "Channel number", "Source ID",
-    };
-    static constexpr size_t kEspNowItemCount = sizeof(kEspNowItems) / sizeof(kEspNowItems[0]);
-
     static constexpr const char* kWifiItems[] = {
         "Enable / Disable", "SSID", "Password", "Soft-AP mode",
     };
@@ -123,29 +173,29 @@ private:
     void handle_display(const dal::ButtonPressEvent& ev);
     void draw_display();
 
-    // IR submenu (functional: Enable toggles + persists; Protocol/GroupID info).
+    // IR submenu (functional: Enable toggle + Protocol info). PixMob
+    // protocol IR group is now relay-driven via inbound target_group
+    // (Epic 4.65 Block 5); the per-binding "group" property still
+    // exists as broadcast fallback and is surfaced via the auto-
+    // generated settings overlay, but no longer lives on this screen.
     enum class IRItem : uint8_t {
         EnableDisable = 0,
         Protocol,
-        SlaveGroup,
     };
-    static constexpr size_t kIrFunctionalItemCount = 3;
+    static constexpr size_t kIrFunctionalItemCount = 2;
 
     void handle_ir(const dal::ButtonPressEvent& ev);
     void draw_ir();
 
     // ESP-NOW submenu (functional: Master Channel + Slave Channel +
-    // Slave Repeat + Slave Group). SlaveGroup is the NocturNation
-    // receive-filter group ID (Epic 4.65 Block 5); distinct from
-    // PixMobIrBinding's `group` property which is the PixMob protocol
-    // IR group code (lives in the IR submenu).
+    // Slave Repeat). The Slave Group setting moved to the top-level
+    // Config > Group item (direct action).
     enum class EspNowItem : uint8_t {
         MasterChannel = 0,
         SlaveChannel,
         SlaveRepeat,
-        SlaveGroup,
     };
-    static constexpr size_t kEspNowFunctionalItemCount = 4;
+    static constexpr size_t kEspNowFunctionalItemCount = 3;
 
     static const char* master_channel_label(uint8_t c);
     static const char* slave_channel_label(uint8_t c);
