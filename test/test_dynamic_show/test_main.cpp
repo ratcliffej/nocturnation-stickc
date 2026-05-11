@@ -171,6 +171,7 @@ void setUp(void) {
     dal::DAL::begin();
     dal::DAL::register_driver(&g_ir_driver);
     dal::DAL::register_driver(&g_espnow_driver);
+    dal::DAL::reset_ir_primer_state_for_tests();
 }
 
 void tearDown(void) {}
@@ -296,9 +297,10 @@ static void test_kick_fires_master_ir_via_loopback(void) {
 
     // ESP-NOW broadcast fires once (groups=1 default -> 00:00).
     TEST_ASSERT_EQUAL_INT(1, g_espnow_driver.count());
-    // Master IR fires once via the dispatch loopback (target_class=0
-    // -> wildcard, ir-pixmob driver enabled).
-    TEST_ASSERT_EQUAL_INT(1, g_ir_driver.count());
+    // Master IR fires twice via the dispatch loopback: a zero-rgb
+    // primer (idle-gated, sent because the IR transmitter has been
+    // idle since the test's setUp reset) followed by the main fire.
+    TEST_ASSERT_EQUAL_INT(2, g_ir_driver.count());
 }
 
 // =============================================================================

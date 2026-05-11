@@ -234,6 +234,7 @@ void setUp(void) {
     dal::DAL::begin();
     dal::DAL::register_driver(&g_ir_driver);
     dal::DAL::register_driver(&g_espnow_driver);
+    dal::DAL::reset_ir_primer_state_for_tests();
 }
 
 void tearDown(void) {}
@@ -387,9 +388,14 @@ static void test_on_beat_fires_three_targets(void) {
     TEST_ASSERT_EQUAL_UINT8(0x00, g_espnow_driver.last_rgb_pulse().g);
     TEST_ASSERT_EQUAL_UINT8(0x00, g_espnow_driver.last_rgb_pulse().b);
 
-    // 2. IR (all-pixmobs via effects::Pulse on the master): one
-    // RgbPulseEvent.
-    TEST_ASSERT_EQUAL_INT(1, g_ir_driver.rgb_pulse_count());
+    // 2. IR fires twice: dispatch_output_class_group sends a zero-rgb
+    // primer (idle-gated, > 300 ms since last fire) BEFORE the main
+    // colour, so bracelets see "go to black, then red". Last event
+    // is the main; first event is the primer.
+    TEST_ASSERT_EQUAL_INT(2, g_ir_driver.rgb_pulse_count());
+    TEST_ASSERT_EQUAL_UINT8(0xFF, g_ir_driver.last_rgb_pulse().r);
+    TEST_ASSERT_EQUAL_UINT8(0x00, g_ir_driver.last_rgb_pulse().g);
+    TEST_ASSERT_EQUAL_UINT8(0x00, g_ir_driver.last_rgb_pulse().b);
 
     // 3. Screen flash fires DisplayClearEvent through LocalDriver,
     // which is registered by DAL::begin(); driver_send_count("local")

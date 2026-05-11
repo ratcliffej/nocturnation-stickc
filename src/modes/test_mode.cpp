@@ -367,18 +367,10 @@ void TestMode::tick_sparkle(uint32_t now) {
     }
     if (now - last_step_ms_ < kSparkleStepMs) return;
 
-    // Reset primer before each step (broadcast, all bracelets to
-    // black). Clears the residue from the previous step's envelope
-    // so the next sparkle fire's fade reads as clean white-to-black
-    // rather than picking up blue/green tints from the prior tail.
-    {
-        const RgbPulseEvent reset{
-            0x00, 0x00, 0x00,
-            pixmob::T_0_MS, pixmob::T_0_MS, pixmob::T_0_MS,
-            pixmob::CHANCE_100};
-        DAL::render_fx("00:00", reset);
-    }
-
+    // No explicit primer here - dispatch_output_class_group's
+    // idle-gated reset frame handles it automatically (the 1100 ms
+    // step interval is well past the 300 ms idle threshold).
+    //
     // Operator spec: white, ~1 s fade envelope (T_0 + T_480 + T_480
     // = 960 ms total), ~0.9 Hz fire cadence (kSparkleStepMs above -
     // slowed from 2 Hz so the 1 s fade completes before the next
@@ -415,21 +407,10 @@ void TestMode::draw_sparkle_screen() {
 // -------------------------------------------------------------------------
 
 void TestMode::fire_whiteout() {
-    // Reset primer: rgb=0, instant transition, broadcast. Tells every
-    // bracelet to go to black immediately, clearing any residual
-    // envelope / colour state from a prior test before the new white
-    // pulse runs. Without this, bench observation showed the white
-    // fade picked up blue/green tints and ended abruptly - residue
-    // from the previous test's envelope leaking into the new fade.
-    {
-        const RgbPulseEvent reset{
-            0x00, 0x00, 0x00,
-            pixmob::T_0_MS, pixmob::T_0_MS, pixmob::T_0_MS,
-            pixmob::CHANCE_100};
-        DAL::render_fx("00:00", reset);
-    }
-
     // Main white pulse: instant attack, ~2.4 s sustain, ~0.96 s release.
+    // The dispatch_output_class_group helper sends a reset primer
+    // automatically before this fire (idle-gated, > 300 ms since
+    // last IR), so no explicit primer needed here.
     const RgbPulseEvent ev{
         0xFF, 0xFF, 0xFF,
         pixmob::T_0_MS, pixmob::T_2400_MS, pixmob::T_960_MS,
