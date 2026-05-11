@@ -40,8 +40,10 @@ public:
     const char* name() const override { return "Config"; }
 
     void enter() override;
+    void exit() override;
     void loop_tick() override;
     void on_button_event(const dal::ButtonPressEvent& ev) override;
+    void on_audio_frame (const dal::AudioFrameEvent&    ev) override;
 
 private:
     enum class Level   : uint8_t { Top, Picker, Sub };
@@ -178,16 +180,44 @@ private:
     void handle_show(const dal::ButtonPressEvent& ev);
     void draw_show();
 
-    // Level Tuning submenu (Epic 4.7 Block 2). Hosts BeatBarWidget and
-    // SpectrumBarsWidget standalone with manual level injection. Btn2
-    // cycles a test level (0 / 25 / 50 / 75 / 100 %); Btn1 fires a
-    // render_fx pulse with the current level as RGB intensity so the
-    // operator can verify IR + ESP-NOW output without audio.
-    static constexpr uint8_t kLevelTuningSteps = 5;     // 0, 25, 50, 75, 100 %
-    uint8_t  level_tuning_step_ = 0;                    // 0..kLevelTuningSteps-1
+    // Level Tuning submenu (Epic 4.7 Block 2). Live audio drives the
+    // BeatBarWidget (flux ratio with threshold marker at 2.5x baseline)
+    // and the SpectrumBarsWidget (7-band perceptual roll-up from the
+    // AudioFrameEvent's per-band summary). Btn2 cycles the display
+    // mode (Live / 25 / 50 / 75 / 100 %); the four percentage modes
+    // override the widgets to fixed values so a developer can verify
+    // the IR + ESP-NOW path without audio. Btn1 fires a render_fx
+    // pulse at the currently-displayed level (live ratio or fixed %).
+    enum class LevelTuningMode : uint8_t {
+        Live = 0,
+        Pct25,
+        Pct50,
+        Pct75,
+        Pct100,
+    };
+    static constexpr size_t kLevelTuningModeCount = 5;
+    LevelTuningMode level_tuning_mode_ = LevelTuningMode::Live;
+
+    // Audio state captured by on_audio_frame while the sub is active.
+    bool      level_tuning_audio_active_  = false;
+    float     level_tuning_prev_bass_     = 0.0f;
+    float     level_tuning_baseline_      = 100.0f;
+    float     level_tuning_flux_          = 0.0f;
+    float     level_tuning_level_rms_     = 0.0f;
+    float     level_tuning_spectrum_[7]   = {0, 0, 0, 0, 0, 0, 0};
+    uint32_t  last_level_tuning_draw_ms_  = 0;
 
     void handle_level_tuning(const dal::ButtonPressEvent& ev);
     void draw_level_tuning();
+    // Audio lifecycle helpers - called when the operator transitions
+    // into / out of the Level Tuning sub-mode. Starts / stops mic
+    // capture so audio frames only flow while the widgets are visible.
+    void level_tuning_audio_enter();
+    void level_tuning_audio_exit();
+    // Translate LevelTuningMode to its display label and override
+    // fraction. Static so the helpers don't widen the public surface.
+    static float       mode_to_fraction(LevelTuningMode m);
+    static const char* mode_label(LevelTuningMode m);
 
     // Display submenu (functional: Pulse Enable toggle + persists).
     enum class DisplayItem : uint8_t {

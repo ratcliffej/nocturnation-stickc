@@ -83,7 +83,18 @@ void ConfigMode::enter() {
     sub_selected_    = 0;
     confirm_until_ms_ = 0;
     last_drawn_battery_ = -2;     // force first battery redraw
+    level_tuning_audio_active_ = false;
     draw();
+}
+
+void ConfigMode::exit() {
+    // Defensive: if the operator switches modes from inside the Level
+    // Tuning sub (via Btn2-long -> Menu from Top is the only Config
+    // exit path that doesn't go through B-hold-pops), stop the mic so
+    // it doesn't leak into the next mode.
+    if (level_tuning_audio_active_) {
+        level_tuning_audio_exit();
+    }
 }
 
 void ConfigMode::loop_tick() {
@@ -95,6 +106,19 @@ void ConfigMode::loop_tick() {
         confirm_until_ms_ = 0;
         draw();
         return;
+    }
+    // Level Tuning Live mode: redraw at ~20 Hz so the bars track
+    // audio smoothly. Skipped in fixed % modes where the display
+    // doesn't change between button presses.
+    if (level_tuning_audio_active_
+     && level_tuning_mode_ == LevelTuningMode::Live
+     && level_ == Level::Sub
+     && active_sub_ == SubMenu::LevelTuning) {
+        if (now - last_level_tuning_draw_ms_ > 50) {
+            draw();
+            last_level_tuning_draw_ms_ = now;
+            return;
+        }
     }
     if (level_ == Level::Sub && active_sub_ == SubMenu::System) {
         const int batt = DAL::battery_level("local");
@@ -125,6 +149,10 @@ void ConfigMode::on_button_event(const ButtonPressEvent& ev) {
             draw();
         } else if (level_ == Level::Sub && active_picker_ != SubMenu::None) {
             // Came in via a picker - return to the picker, not Top.
+            if (active_sub_ == SubMenu::LevelTuning
+             && level_tuning_audio_active_) {
+                level_tuning_audio_exit();
+            }
             level_      = Level::Picker;
             active_sub_ = SubMenu::None;
             draw();
@@ -280,6 +308,9 @@ void ConfigMode::handle_picker(const ButtonPressEvent& ev) {
         pixmob_state_     = PixMobState::Menu;
         pixmob_selected_  = 0;
         confirm_until_ms_ = 0;
+        if (entry.target == SubMenu::LevelTuning) {
+            level_tuning_audio_enter();
+        }
         draw();
     }
 }
@@ -474,25 +505,135 @@ void ConfigMode::draw_show() {
 // -------------------------------------------------------------------------
 // Level Tuning submenu (Epic 4.7 Block 2)
 //
-// Hosts BeatBarWidget + SpectrumBarsWidget standalone for bench
-// work. Btn2 cycles a test level through 0 / 25 / 50 / 75 / 100 %;
-// the widgets render at that level. Btn1 fires a render_fx pulse
-// with the current level as RGB intensity so the operator can
-// verify IR + ESP-NOW output independently of audio - the slaves
-// pulse, the master's PixMobIrBinding transmits, and the test driver
-// (in native test envs) records the dispatch.
+// Live mode: the audio analyser runs while the sub is active and the
+// widgets render incoming flux / spectrum data. Btn2 cycles the
+// display mode (Live / 25 / 50 / 75 / 100 %); the four percentage
+// modes override to fixed values so a developer can verify the
+// IR + ESP-NOW path without audio. Btn1 fires a render_fx pulse at
+// the displayed level so slaves pulse and the master's
+// PixMobIrBinding transmits.
+//
+// Audio input starts on entering the sub and stops on the B-hold
+// pop or any other transition out. Spectrum data is taken from the
+// AudioFrameEvent's per-band perceptual summary (mud / sub_bass /
+// bass / low_mids / midrange / high_mids / presence / air) so the
+// sub doesn't need a separate spectrum-frame subscription.
 // -------------------------------------------------------------------------
+
+namespace {
+// Flux-meter tuning - mirrors SimpleBeatShow exactly so the display
+// reads the same on bench and in master mode.
+constexpr float kLevelTuningBeatMultiplier = 2.5f;
+constexpr float kLevelTuningBaselineAlpha  = 0.02f;
+constexpr float kLevelTuningVolumeGate     = 500.0f;
+
+// Bar widget at 220 px x 14 px - 218 px drawable inside the frame.
+constexpr float kLevelTuningBarScale       = 50.0f / 218.0f;
+constexpr float kLevelTuningMarkerFraction =
+    kLevelTuningBeatMultiplier * 50.0f / 218.0f;
+
+// Spectrum log-normalisation - matches SpectrumBarsWidget defaults.
+constexpr float kLevelTuningMagFloorLog2   = 13.0f;
+constexpr float kLevelTuningSensScale      = 0.025f;
+constexpr uint8_t kLevelTuningSensitivity  = 5;
+
+inline float normalise_band(float band_sum) {
+    if (band_sum <= 0.0f) return 0.0f;
+    const float log_mag = std::log2(1.0f + band_sum);
+    float v = (log_mag - kLevelTuningMagFloorLog2)
+            * static_cast<float>(kLevelTuningSensitivity)
+            * kLevelTuningSensScale;
+    if (v < 0.0f) v = 0.0f;
+    if (v > 1.0f) v = 1.0f;
+    return v;
+}
+}  // namespace
+
+float ConfigMode::mode_to_fraction(LevelTuningMode m) {
+    switch (m) {
+        case LevelTuningMode::Live:   return 0.0f;
+        case LevelTuningMode::Pct25:  return 0.25f;
+        case LevelTuningMode::Pct50:  return 0.50f;
+        case LevelTuningMode::Pct75:  return 0.75f;
+        case LevelTuningMode::Pct100: return 1.0f;
+    }
+    return 0.0f;
+}
+
+const char* ConfigMode::mode_label(LevelTuningMode m) {
+    switch (m) {
+        case LevelTuningMode::Live:   return "Live";
+        case LevelTuningMode::Pct25:  return " 25%";
+        case LevelTuningMode::Pct50:  return " 50%";
+        case LevelTuningMode::Pct75:  return " 75%";
+        case LevelTuningMode::Pct100: return "100%";
+    }
+    return "?";
+}
+
+void ConfigMode::level_tuning_audio_enter() {
+    level_tuning_prev_bass_   = 0.0f;
+    level_tuning_baseline_    = 100.0f;
+    level_tuning_flux_        = 0.0f;
+    level_tuning_level_rms_   = 0.0f;
+    for (size_t i = 0; i < 7; ++i) level_tuning_spectrum_[i] = 0.0f;
+    level_tuning_mode_        = LevelTuningMode::Live;
+    DAL::start_audio_input("local", 16000, 512);
+    level_tuning_audio_active_ = true;
+}
+
+void ConfigMode::level_tuning_audio_exit() {
+    DAL::stop_audio_input("local");
+    level_tuning_audio_active_ = false;
+}
+
+void ConfigMode::on_audio_frame(const dal::AudioFrameEvent& ev) {
+    if (!level_tuning_audio_active_) return;
+
+    // Flux + baseline - same math as SimpleBeatShow's flux meter.
+    level_tuning_level_rms_ = ev.overall_rms;
+    if (level_tuning_level_rms_ < kLevelTuningVolumeGate) {
+        level_tuning_prev_bass_ = 0.0f;
+    } else {
+        float flux = ev.bass_energy - level_tuning_prev_bass_;
+        if (flux < 0) flux = 0;
+        level_tuning_prev_bass_ = ev.bass_energy;
+        level_tuning_flux_      = flux;
+        level_tuning_baseline_  =
+            level_tuning_baseline_ * (1.0f - kLevelTuningBaselineAlpha)
+            + flux * kLevelTuningBaselineAlpha;
+    }
+
+    // 7 perceptual bands from the AudioFrameEvent's pre-aggregated
+    // per-band sums. Maps 1:1 to SpectrumBarsWidget's band order.
+    level_tuning_spectrum_[0] = normalise_band(ev.sub_bass);
+    level_tuning_spectrum_[1] = normalise_band(ev.bass);
+    level_tuning_spectrum_[2] = normalise_band(ev.low_mids);
+    level_tuning_spectrum_[3] = normalise_band(ev.midrange);
+    level_tuning_spectrum_[4] = normalise_band(ev.high_mids);
+    level_tuning_spectrum_[5] = normalise_band(ev.presence);
+    level_tuning_spectrum_[6] = normalise_band(ev.air);
+}
 
 void ConfigMode::handle_level_tuning(const ButtonPressEvent& ev) {
     if (ev.id == ButtonId::Btn2) {
-        level_tuning_step_ = (level_tuning_step_ + 1) % kLevelTuningSteps;
+        level_tuning_mode_ = static_cast<LevelTuningMode>(
+            (static_cast<uint8_t>(level_tuning_mode_) + 1)
+            % kLevelTuningModeCount);
         draw();
         return;
     }
     if (ev.id == ButtonId::Btn1) {
-        // Map step [0..4] to intensity [0, 64, 128, 192, 255].
-        const uint8_t intensity = static_cast<uint8_t>(
-            level_tuning_step_ * (255 / (kLevelTuningSteps - 1)));
+        // Intensity:
+        //   Live -> 255 (loud test pulse for visible verification)
+        //   Pct25..100 -> 64 / 128 / 192 / 255
+        uint8_t intensity;
+        if (level_tuning_mode_ == LevelTuningMode::Live) {
+            intensity = 255;
+        } else {
+            const float frac = mode_to_fraction(level_tuning_mode_);
+            intensity = static_cast<uint8_t>(frac * 255.0f + 0.5f);
+        }
         dal::RgbPulseEvent pulse{};
         pulse.r = intensity;
         pulse.g = intensity;
@@ -512,45 +653,52 @@ void ConfigMode::draw_level_tuning() {
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         10, 5, "Level Tuning", WHITE, BLACK, 2});
 
-    // Map step to a 0..1 fraction (0, 0.25, 0.5, 0.75, 1.0).
-    const float level_fraction =
-        static_cast<float>(level_tuning_step_) /
-        static_cast<float>(kLevelTuningSteps - 1);
+    // Mode readout top-right.
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        195, 6, mode_label(level_tuning_mode_), YELLOW, BLACK, 1});
 
-    // Current level readout (size 1, top-right). 100% takes 4 chars.
-    {
-        char buf[12];
-        std::snprintf(buf, sizeof(buf), "%3d%%",
-                      static_cast<int>(level_fraction * 100.0f + 0.5f));
-        DAL::fire_display_show_text("local", DisplayShowTextEvent{
-            195, 6, buf, YELLOW, BLACK, 1});
-    }
-
-    // Beat bar: top half, 220 px wide x 14 px tall, marker at 50 %.
+    // Beat bar (220 px x 14 px).
     {
         widgets::BeatBarWidget bar;
-        bar.update(level_fraction, 0.5f);
+        if (level_tuning_mode_ == LevelTuningMode::Live) {
+            const float ratio = (level_tuning_baseline_ > 1.0f)
+                                    ? level_tuning_flux_ / level_tuning_baseline_
+                                    : 0.0f;
+            bar.update(ratio * kLevelTuningBarScale,
+                       kLevelTuningMarkerFraction);
+        } else {
+            const float frac = mode_to_fraction(level_tuning_mode_);
+            // Marker still at the audio threshold so the operator can
+            // compare a fixed level against where a beat would fire.
+            bar.update(frac, kLevelTuningMarkerFraction);
+        }
         bar.draw(10, 28, 220, 14);
     }
 
-    // Spectrum bars: bottom half, 7 bands uniform at level_fraction.
+    // Spectrum bars (full-width band of 70 px height).
     {
         widgets::SpectrumBarsWidget spec;
         float values[widgets::kSpectrumBandCount];
-        for (size_t i = 0; i < widgets::kSpectrumBandCount; ++i) {
-            values[i] = level_fraction;
+        if (level_tuning_mode_ == LevelTuningMode::Live) {
+            for (size_t i = 0; i < widgets::kSpectrumBandCount; ++i) {
+                values[i] = level_tuning_spectrum_[i];
+            }
+        } else {
+            const float frac = mode_to_fraction(level_tuning_mode_);
+            for (size_t i = 0; i < widgets::kSpectrumBandCount; ++i) {
+                values[i] = frac;
+            }
         }
         spec.update(values);
         spec.draw(0, 50, 240, 70);
     }
 
-    // Footer hint with brief "Fired" flash after Btn1.
     if (confirm_until_ms_ > millis()) {
         DAL::fire_display_show_text("local", DisplayShowTextEvent{
             10, 122, "Fired.", GREEN, BLACK, 1});
     } else {
         DAL::fire_display_show_text("local", DisplayShowTextEvent{
-            10, 122, "B: level  A: fire  B-hold: back",
+            10, 122, "B: mode  A: fire  B-hold: back",
             WHITE, BLACK, 1});
     }
 }
