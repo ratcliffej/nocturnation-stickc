@@ -1,21 +1,24 @@
 // SimpleBeatShow - implementation (Epic 4.7 Block 1).
 //
 // Preserves Epic 4.6 BeatPulse behaviour under the new Show plug-in
-// framework. The per-beat render fan-out, IBI/BPM tracking, and
-// Colour enum match BeatPulseVisualisation byte-for-byte; the flux
-// meter tracking + full-screen rendering (previously chrome owned by
-// AutonomousMasterMode) move here so the Show owns its canvas.
+// framework. IBI/BPM tracking, Colour enum, and the per-beat fan-out
+// match BeatPulseVisualisation; the flux meter tracking + full-screen
+// rendering (previously chrome owned by AutonomousMasterMode) live
+// here so the Show owns its canvas.
 //
-// Wire output is byte-identical to the pre-Epic-4.7 path: three render
-// targets fire on each beat in the same order with the same envelope
-// picker, same CHANCE_100, same RGB lookup. Block 2 will retire the
-// BeatPulseVisualisation TU; until then the two coexist (only
-// SimpleBeatShow is wired into AutonomousMasterMode).
+// Post-Epic-4.7 master-IR loopback (dispatch_output_class_group fires
+// the master's ir-pixmob driver automatically when target_class is
+// Light or wildcard and rgb is non-zero) means the Show no longer
+// has to fire IR explicitly via effects::Pulse - one
+// render_fx("00:00", ev) call reaches the wire AND the master's own
+// IR LED. The Off colour gates inside the loopback (zero rgb skips IR)
+// preserving the legacy "muted on Off" behaviour.
 
 #include "shows/simple_beat_show.h"
 #include "shows/show_context.h"
 
 #include "dal/dal.h"
+#include "effects/effects.h"          // PulseEnvelope + envelope_for_bpm
 #include "pixmob_protocol.h"
 
 #include <cstdio>
@@ -143,7 +146,7 @@ PowerProfile SimpleBeatShow::power() const {
     return p;
 }
 
-void SimpleBeatShow::enter(ShowContext& ctx) {
+void SimpleBeatShow::enter(ShowContext& /*ctx*/) {
     // Reset all per-show state. Property values come from the bag
     // (which falls back to the schema default if never set).
     last_beat_ms_      = 0;
@@ -155,14 +158,9 @@ void SimpleBeatShow::enter(ShowContext& ctx) {
     prev_bass_energy_  = 0.0f;
     current_flux_      = 0.0f;
     current_level_     = 0.0f;
-
-    pulse_.enter();
-    sync_pulse_colour(ctx);
 }
 
-void SimpleBeatShow::exit(ShowContext& /*ctx*/) {
-    pulse_.exit();
-}
+void SimpleBeatShow::exit(ShowContext& /*ctx*/) {}
 
 void SimpleBeatShow::on_audio_frame(ShowContext& /*ctx*/,
                                      const AudioFrameEvent& ev) {
@@ -210,31 +208,34 @@ void SimpleBeatShow::on_beat_detected(ShowContext& ctx, uint8_t /*strength*/) {
     const Colour colour =
         static_cast<Colour>(ctx.get_property("color").as_enum());
 
-    // ---- Render fan-out, in the exact order BeatPulseVisualisation used.
-
-    // 1. Wire to slaves. "00:00" = broadcast to every class, every
-    //    group (Epic 4.65 unified target format).
+    // ---- Render fan-out.
+    //
+    // Single render_fx("00:00", ev) reaches both:
+    //   - slaves via the esp-now-broadcast driver (target_class=0,
+    //     target_group=0 = everyone everywhere)
+    //   - master's own IR LED via the dispatch_output_class_group
+    //     loopback that fires the ir-pixmob driver when target_class
+    //     is 0 or 1 and rgb is non-zero (Off colour skips IR)
+    //
+    // Plus a separate fire_display_clear for the master-screen flash
+    // (the screen uses DisplayClearEvent, not RgbPulseEvent).
     {
         uint8_t r=0, g=0, b=0;
         colour_to_rgb(colour, r, g, b);
         const effects::PulseEnvelope env = effects::envelope_for_bpm(estimated_bpm_);
-        RgbPulseEvent wire{};
-        wire.r = r; wire.g = g; wire.b = b;
-        wire.attack  = env.attack;
-        wire.sustain = env.sustain;
-        wire.release = env.release;
-        wire.chance  = pixmob::CHANCE_100;
-        DAL::render_fx("00:00", wire);
+        RgbPulseEvent ev{};
+        ev.r = r; ev.g = g; ev.b = b;
+        ev.attack  = env.attack;
+        ev.sustain = env.sustain;
+        ev.release = env.release;
+        ev.chance  = pixmob::CHANCE_100;
+        DAL::render_fx("00:00", ev);
     }
 
-    // 2. Screen flash. Preserved as DisplayClearEvent, not RgbPulseEvent.
     DAL::fire_display_clear("local",
         DisplayClearEvent{colour_screen_rgb(colour)});
 
-    // 3. IR via PixMob driver. Pulse owns BPM->envelope; its on_beat
-    //    fan-outs DAL::fire_rgb_pulse("all-pixmobs", ...). The OFF
-    //    colour gates inside Pulse::fire (zero rgb -> early-return).
-    pulse_.on_beat(now, estimated_bpm_);
+    (void)now;   // silence unused-variable warning if BPM tracking is the only consumer
 }
 
 void SimpleBeatShow::on_input_action(ShowContext& ctx,
@@ -243,21 +244,6 @@ void SimpleBeatShow::on_input_action(ShowContext& ctx,
     const uint8_t cur = ctx.get_property("color").as_enum();
     const uint8_t next = (cur + 1) % 6;
     ctx.set_property("color", PropertyValue::from_enum(next));
-    sync_pulse_colour(ctx);
-}
-
-void SimpleBeatShow::on_property_changed(ShowContext& ctx, const char* key) {
-    if (key != nullptr && std::strcmp(key, "color") == 0) {
-        sync_pulse_colour(ctx);
-    }
-}
-
-void SimpleBeatShow::sync_pulse_colour(ShowContext& ctx) {
-    const Colour colour =
-        static_cast<Colour>(ctx.get_property("color").as_enum());
-    uint8_t r=0, g=0, b=0;
-    colour_to_rgb(colour, r, g, b);
-    pulse_.set_colour(r, g, b);
 }
 
 void SimpleBeatShow::update_bpm_from_buffer() {

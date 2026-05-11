@@ -170,21 +170,46 @@ bool dispatch_output(const char* target, CapabilityId cap, const Event& ev) {
     return ok;
 }
 
-// Structured-target dispatch. Bypasses the device-name lookup; routes
-// through the "esp-now-broadcast" transport driver (whichever Driver
-// claimed it via register_driver - production is EspNowBroadcastDriver,
-// tests substitute recording drivers). Slaves filter on receive
-// (Block 5). The Driver base's 3-arg send default forwards to the 2-arg
-// dropping the class, so non-ESPNow drivers degrade gracefully.
+// Structured-target dispatch. Routes through the "esp-now-broadcast"
+// transport driver (slaves filter on receive per Epic 4.65 Block 5)
+// AND fires the master's own IR transmit when the target class is
+// the addressing wildcard (0) or Light (1) - the master is "its own
+// slave" with respect to its IR output, so a `render_fx("01:02", ev)`
+// fires the master's IR LED with PixMob group byte 2 (matching what
+// a slave's relay PixMobIrBinding would emit downstream). Gated on:
+//   - target_class in {0, 1} so non-Light routes (Screen, etc.) don't
+//     fire IR
+//   - target rgb non-zero so the Off colour (operator mute) doesn't
+//     fire IR (matches Pulse::fire's pre-Epic-4.7 gate)
+//   - ir-pixmob driver enabled, so Config > IR > Disable mutes IR
+//     without the Show needing to know
+// Non-ESPNow drivers degrade gracefully via the Driver base's 3-arg
+// send default that forwards to the 2-arg dropping the class.
 bool dispatch_output_class_group(uint8_t target_class,
                                   uint8_t target_group,
                                   const RgbPulseEvent& ev) {
-    Driver* driver = find_driver_for_transport("esp-now-broadcast");
-    if (!driver) return false;
-    if (!driver->enabled()) return false;
-    const bool ok = driver->send(target_class, target_group, ev);
-    if (ok) driver->increment_send_count();
-    return ok;
+    // 1. Wire to slaves via ESP-NOW broadcast.
+    Driver* wire = find_driver_for_transport("esp-now-broadcast");
+    bool wire_ok = false;
+    if (wire && wire->enabled()) {
+        wire_ok = wire->send(target_class, target_group, ev);
+        if (wire_ok) wire->increment_send_count();
+    }
+
+    // 2. Master-local IR loopback. Treats the master as if it were its
+    // own slave: target_group is passed through as the PixMob protocol
+    // group byte, so the master's IR LED fires with the same per-group
+    // filter the slave's relay binding would apply. Skipped on zero-
+    // rgb so the operator's Off colour doesn't fire a hidden pulse.
+    const bool any_rgb = (ev.r != 0 || ev.g != 0 || ev.b != 0);
+    if ((target_class == 0 || target_class == 1) && any_rgb) {
+        Driver* ir = find_driver_for_transport("ir-pixmob");
+        if (ir && ir->enabled()) {
+            ir->send(target_group, ev);
+            ir->increment_send_count();
+        }
+    }
+    return wire_ok;
 }
 
 }  // anonymous namespace

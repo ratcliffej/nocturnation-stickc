@@ -21,8 +21,17 @@
 // perceptual summary so the operator can see live levels alongside
 // the section state.
 //
-// No properties in Block 5 - the analyser does the tuning. Future
-// blocks may add palette overrides.
+// Properties:
+//   "groups" : U8, 1..3, default 1. How the kick / snare / hi-hat
+//              streams distribute across PixMob bracelet groups.
+//                1 -> all events broadcast to group 0 (every bracelet
+//                     responds regardless of its programmed group).
+//                     Default - works out of the box on any deployment.
+//                2 -> kick to group 1, snare + hi-hat both to group 2.
+//                     Pair-of-groups split for two-tier deployments.
+//                3 -> kick to group 1, snare to group 2, hi-hat to
+//                     group 3. Requires bracelets pre-programmed into
+//                     the three groups; full per-drum separation.
 //
 // Power profile: needs_audio_frames=true (drives the spectrum widget +
 // BPM tracking via IBI buffer). Capability requirements: Mic.
@@ -45,6 +54,7 @@ public:
     const char* display_name() const override { return "Dynamic"; }
 
     hal::CapabilityMask                  required_capabilities() const override;
+    plugins::Span<const plugins::PropertyDef> properties()         const override;
     plugins::PowerProfile                power()                 const override;
 
     void enter(ShowContext&) override;

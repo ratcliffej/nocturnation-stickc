@@ -29,8 +29,53 @@ namespace shows {
 using namespace nocturnation::dal;
 using nocturnation::plugins::PowerProfile;
 using nocturnation::plugins::PropertyBag;
+using nocturnation::plugins::PropertyDef;
+using nocturnation::plugins::PropertyType;
+using nocturnation::plugins::PropertyValue;
+using nocturnation::plugins::Span;
 
 namespace {
+
+// =============================================================================
+// Property schema
+// =============================================================================
+//
+// `groups` controls how kick / snare / hi-hat distribute across PixMob
+// bracelet groups. Default 1 broadcasts everything to group 0 so a
+// fresh bench deployment with un-grouped bracelets responds out of
+// the box; the operator bumps to 3 once bracelets are programmed
+// into groups 1 / 2 / 3 for full per-drum separation.
+
+const PropertyDef kProps[] = {
+    PropertyDef{
+        /*key=*/"groups",
+        /*type=*/PropertyType::U8,
+        /*default_value=*/PropertyValue::from_u8(1),
+        /*min_value=*/    PropertyValue::from_u8(1),
+        /*max_value=*/    PropertyValue::from_u8(3),
+        /*display_name=*/"Groups",
+        /*unit=*/nullptr,
+        /*enum_names=*/nullptr,
+    },
+};
+
+constexpr size_t kPropCount = sizeof(kProps) / sizeof(kProps[0]);
+
+// Map (drum, group_count) to a render_fx target string. Static
+// constants so we don't construct strings every fire.
+const char* kick_target_for(uint8_t group_count) {
+    if (group_count >= 2) return "01:01";
+    return "00:00";
+}
+const char* snare_target_for(uint8_t group_count) {
+    if (group_count >= 2) return "01:02";
+    return "00:00";
+}
+const char* hihat_target_for(uint8_t group_count) {
+    if (group_count >= 3) return "01:03";
+    if (group_count >= 2) return "01:02";
+    return "00:00";
+}
 
 // =============================================================================
 // Colour math
@@ -156,6 +201,10 @@ hal::CapabilityMask DynamicShow::required_capabilities() const {
     return hal::make_capability_mask(hal::Capability::Mic);
 }
 
+Span<const PropertyDef> DynamicShow::properties() const {
+    return Span<const PropertyDef>{kProps, kPropCount};
+}
+
 PowerProfile DynamicShow::power() const {
     PowerProfile p;
     p.needs_audio_frames   = true;
@@ -223,8 +272,8 @@ void DynamicShow::on_beat_detected(ShowContext& ctx, uint8_t strength) {
 
     if (ctx.paused()) return;
 
-    // Fire kick effect to Light-class group 1.
-    fire_event(ctx, "01:01", strength);
+    const uint8_t group_count = ctx.get_property("groups").as_u8();
+    fire_event(ctx, kick_target_for(group_count), strength);
 
     // Master local screen flash on kick so the operator sees the show
     // is alive even without bracelets. Colour from the same compute
@@ -237,12 +286,14 @@ void DynamicShow::on_beat_detected(ShowContext& ctx, uint8_t strength) {
 
 void DynamicShow::on_snare_detected(ShowContext& ctx, uint8_t strength) {
     if (ctx.paused()) return;
-    fire_event(ctx, "01:02", strength);
+    const uint8_t group_count = ctx.get_property("groups").as_u8();
+    fire_event(ctx, snare_target_for(group_count), strength);
 }
 
 void DynamicShow::on_hihat_detected(ShowContext& ctx, uint8_t strength) {
     if (ctx.paused()) return;
-    fire_event(ctx, "01:03", strength);
+    const uint8_t group_count = ctx.get_property("groups").as_u8();
+    fire_event(ctx, hihat_target_for(group_count), strength);
 }
 
 void DynamicShow::on_music_descriptor(ShowContext& /*ctx*/,

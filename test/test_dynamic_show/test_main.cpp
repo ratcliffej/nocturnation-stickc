@@ -196,9 +196,35 @@ static void test_required_capabilities_includes_mic(void) {
 // Routing: kick -> group 1, snare -> group 2, hi-hat -> group 3.
 // =============================================================================
 
-static void test_kick_routes_to_group_1(void) {
+// All-events-to-group-0 routing is the new default (groups=1). Tests
+// that exercise per-drum group routing must explicitly opt into the
+// 3-group config first.
+static void set_groups(uint8_t n) {
+    dynamic_show_property_bag().set("groups",
+        PropertyValue::from_u8(n));
+}
+
+static void test_default_groups_property_is_1(void) {
+    auto& bag = dynamic_show_property_bag();
+    TEST_ASSERT_EQUAL_UINT8(1, bag.get("groups").as_u8());
+}
+
+static void test_groups_1_broadcasts_kick_to_group_0(void) {
     DynamicShow* d = dynamic_show_instance();
     auto& ctx = dynamic_show_context();
+    d->enter(ctx);
+
+    set_test_millis(100);
+    d->on_beat_detected(ctx, 200);
+
+    TEST_ASSERT_EQUAL_INT(1, g_espnow_driver.count());
+    TEST_ASSERT_EQUAL_UINT8(0, g_espnow_driver.last_group());
+}
+
+static void test_groups_3_kick_routes_to_group_1(void) {
+    DynamicShow* d = dynamic_show_instance();
+    auto& ctx = dynamic_show_context();
+    set_groups(3);
     d->enter(ctx);
 
     set_test_millis(100);
@@ -208,9 +234,10 @@ static void test_kick_routes_to_group_1(void) {
     TEST_ASSERT_EQUAL_UINT8(1, g_espnow_driver.last_group());
 }
 
-static void test_snare_routes_to_group_2(void) {
+static void test_groups_3_snare_routes_to_group_2(void) {
     DynamicShow* d = dynamic_show_instance();
     auto& ctx = dynamic_show_context();
+    set_groups(3);
     d->enter(ctx);
 
     set_test_millis(100);
@@ -220,9 +247,10 @@ static void test_snare_routes_to_group_2(void) {
     TEST_ASSERT_EQUAL_UINT8(2, g_espnow_driver.last_group());
 }
 
-static void test_hihat_routes_to_group_3(void) {
+static void test_groups_3_hihat_routes_to_group_3(void) {
     DynamicShow* d = dynamic_show_instance();
     auto& ctx = dynamic_show_context();
+    set_groups(3);
     d->enter(ctx);
 
     set_test_millis(100);
@@ -230,6 +258,47 @@ static void test_hihat_routes_to_group_3(void) {
 
     TEST_ASSERT_EQUAL_INT(1, g_espnow_driver.count());
     TEST_ASSERT_EQUAL_UINT8(3, g_espnow_driver.last_group());
+}
+
+static void test_groups_2_merges_snare_and_hihat(void) {
+    DynamicShow* d = dynamic_show_instance();
+    auto& ctx = dynamic_show_context();
+    set_groups(2);
+    d->enter(ctx);
+
+    set_test_millis(100);
+    d->on_beat_detected(ctx, 200);
+    TEST_ASSERT_EQUAL_UINT8(1, g_espnow_driver.last_group());
+
+    g_espnow_driver.reset();
+    d->on_snare_detected(ctx, 200);
+    TEST_ASSERT_EQUAL_UINT8(2, g_espnow_driver.last_group());
+
+    g_espnow_driver.reset();
+    d->on_hihat_detected(ctx, 200);
+    TEST_ASSERT_EQUAL_UINT8(2, g_espnow_driver.last_group());
+}
+
+// Master-IR loopback: the dispatch_output_class_group helper fires the
+// master's ir-pixmob driver alongside the ESP-NOW broadcast whenever
+// target_class is 0 or 1. Tests that opt into the loopback see an
+// ir-pixmob send call per render_fx.
+static void test_kick_fires_master_ir_via_loopback(void) {
+    DynamicShow* d = dynamic_show_instance();
+    auto& ctx = dynamic_show_context();
+    d->enter(ctx);
+
+    // Non-zero centroid + energy so the colour math doesn't bottom out
+    // at the rgb floor and skip the IR-loopback's rgb-non-zero gate.
+    d->on_music_descriptor(ctx, /*c=*/128, /*e=*/200, /*d=*/100);
+    set_test_millis(100);
+    d->on_beat_detected(ctx, 200);
+
+    // ESP-NOW broadcast fires once (groups=1 default -> 00:00).
+    TEST_ASSERT_EQUAL_INT(1, g_espnow_driver.count());
+    // Master IR fires once via the dispatch loopback (target_class=0
+    // -> wildcard, ir-pixmob driver enabled).
+    TEST_ASSERT_EQUAL_INT(1, g_ir_driver.count());
 }
 
 // =============================================================================
@@ -384,9 +453,13 @@ int main(int /*argc*/, char** /*argv*/) {
     UNITY_BEGIN();
     RUN_TEST(test_identity);
     RUN_TEST(test_required_capabilities_includes_mic);
-    RUN_TEST(test_kick_routes_to_group_1);
-    RUN_TEST(test_snare_routes_to_group_2);
-    RUN_TEST(test_hihat_routes_to_group_3);
+    RUN_TEST(test_default_groups_property_is_1);
+    RUN_TEST(test_groups_1_broadcasts_kick_to_group_0);
+    RUN_TEST(test_groups_3_kick_routes_to_group_1);
+    RUN_TEST(test_groups_3_snare_routes_to_group_2);
+    RUN_TEST(test_groups_3_hihat_routes_to_group_3);
+    RUN_TEST(test_groups_2_merges_snare_and_hihat);
+    RUN_TEST(test_kick_fires_master_ir_via_loopback);
     RUN_TEST(test_low_centroid_fires_cool_colour);
     RUN_TEST(test_high_centroid_fires_warm_colour);
     RUN_TEST(test_drop_section_fires_white);

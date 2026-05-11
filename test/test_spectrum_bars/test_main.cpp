@@ -373,8 +373,12 @@ static void test_confirm_fires_manual_beat_white(void) {
     TEST_ASSERT_EQUAL_UINT8(0xFF, wire.b);
     TEST_ASSERT_EQUAL_INT((int)pixmob::CHANCE_100, (int)wire.chance);
 
-    // 2. IR (all-pixmobs) RgbPulseEvent: same bytes.
-    TEST_ASSERT_EQUAL_INT(1, g_ir_driver.rgb_pulse_count());
+    // 2. ir-pixmob fires twice this beat: once via SpectrumBarsVis's
+    //    explicit all-pixmobs call, once via dispatch_output_class_group's
+    //    master-IR loopback added post-Block-5 (render_fx("00:00", ev)
+    //    now reaches the master's IR alongside the ESP-NOW broadcast).
+    //    Both fires carry the same WHITE bytes.
+    TEST_ASSERT_EQUAL_INT(2, g_ir_driver.rgb_pulse_count());
     auto ir = g_ir_driver.last_rgb_pulse();
     TEST_ASSERT_EQUAL_UINT8(0xFF, ir.r);
     TEST_ASSERT_EQUAL_UINT8(0xFF, ir.g);

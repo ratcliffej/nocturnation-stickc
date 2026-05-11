@@ -321,8 +321,17 @@ static void test_on_beat_fires_wire_screen_ir_in_order(void) {
     TEST_ASSERT_EQUAL_UINT32(local_before + 1,
                               dal::DAL::driver_send_count("local"));
 
-    // 3. all-pixmobs got an RgbPulseEvent via Pulse::on_beat.
-    TEST_ASSERT_EQUAL_INT(1, g_ir_driver.rgb_pulse_count());
+    // 3. ir-pixmob got two RgbPulseEvents this beat:
+    //    (a) via Pulse::on_beat (the pre-Epic-4.7 BeatPulseVis path)
+    //    (b) via dispatch_output_class_group's master-IR loopback
+    //        added in the post-Block-5 fix - render_fx("00:00", ev)
+    //        now fires the local ir-pixmob driver alongside the
+    //        ESP-NOW broadcast because target_class is the wildcard.
+    //    BeatPulseVis is retired production-side (Block 2 dropped its
+    //    main.cpp registration); the test still exercises the legacy
+    //    Vis to keep coverage of effects::Pulse, hence two fires.
+    //    Colour and envelope are identical in both fires.
+    TEST_ASSERT_EQUAL_INT(2, g_ir_driver.rgb_pulse_count());
     auto ir = g_ir_driver.last_rgb_pulse();
     TEST_ASSERT_EQUAL_UINT8(0xFF, ir.r);
     TEST_ASSERT_EQUAL_UINT8(0x00, ir.g);
@@ -474,7 +483,9 @@ static void test_property_changed_resyncs_pulse_colour_on_next_beat(void) {
     ev.is_beat = true;
     v->on_audio_frame(ctx, ev);
 
-    TEST_ASSERT_EQUAL_INT(1, g_ir_driver.rgb_pulse_count());
+    // Post-Block-5 IR loopback fires ir-pixmob twice (Pulse::on_beat +
+    // render_fx("00:00") master-IR loopback). Both fires carry BLUE.
+    TEST_ASSERT_EQUAL_INT(2, g_ir_driver.rgb_pulse_count());
     auto ir = g_ir_driver.last_rgb_pulse();
     TEST_ASSERT_EQUAL_UINT8(0x00, ir.r);
     TEST_ASSERT_EQUAL_UINT8(0x00, ir.g);
@@ -509,7 +520,8 @@ static void test_property_changed_ignores_unrelated_keys(void) {
     ev.is_beat = true;
     v->on_audio_frame(ctx, ev);
 
-    TEST_ASSERT_EQUAL_INT(1, g_ir_driver.rgb_pulse_count());
+    // Post-Block-5 IR loopback: 2 fires (Pulse + render_fx loopback).
+    TEST_ASSERT_EQUAL_INT(2, g_ir_driver.rgb_pulse_count());
     auto ir = g_ir_driver.last_rgb_pulse();
     TEST_ASSERT_EQUAL_UINT8(0xFF, ir.r);
     TEST_ASSERT_EQUAL_UINT8(0x00, ir.g);

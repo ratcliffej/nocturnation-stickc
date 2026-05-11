@@ -36,7 +36,6 @@
 
 #include "shows/show.h"
 #include "plugins/property_bag.h"
-#include "effects/effects.h"
 #include "widgets/beat_bar.h"
 
 namespace nocturnation {
@@ -57,7 +56,6 @@ public:
     void on_audio_frame    (ShowContext&, const dal::AudioFrameEvent&) override;
     void on_beat_detected  (ShowContext&, uint8_t strength) override;
     void on_input_action   (ShowContext&, const hal::InputEvent&) override;
-    void on_property_changed(ShowContext&, const char* key) override;
     void on_render         (ShowContext&) override;
 
     // Per-show context accessor.
@@ -73,8 +71,6 @@ public:
 
 private:
     static constexpr size_t kIbiBufferSize = 8;
-
-    effects::Pulse pulse_{"all-pixmobs"};
 
     // Block 2: flux meter rendering moved into the BeatBarWidget
     // library. SimpleBeatShow's on_render owns the widget instance and
@@ -96,7 +92,6 @@ private:
     float     current_level_    = 0.0f;
 
     void update_bpm_from_buffer();
-    void sync_pulse_colour(ShowContext&);
 };
 
 // Singletons. main.cpp registers via:
