@@ -97,6 +97,13 @@ private:
     uint32_t  last_chan_switch_ms_  = 0;
     static constexpr uint32_t kChannelDwellMs = 2000;
 
+    // NocturNation group ID for receive filtering (Epic 4.65 Block 5).
+    // Loaded from NVS on enter() via persistence::load_slv_group();
+    // operator sets via Config > Slave > Group. Default 0 means
+    // "respond to everything". Distinct from the per-PixMobIrBinding
+    // `group` property which is the PixMob protocol's IR group code.
+    uint8_t   slv_group_            = 0;
+
     // Sequence-loss-rate signal quality. Transport-agnostic; could feed
     // off any sequenced protocol (future BLE / IR ack channels) the same
     // way it does ESP-NOW today.

@@ -63,6 +63,16 @@ void             save_slave_channel(uint8_t c);
 bool             load_slave_repeat_enabled();
 void             save_slave_repeat_enabled(bool e);
 
+// Slave NocturNation group ID (Epic 4.65 Block 5). Device-wide value
+// used by SlaveMode's receive filter: a binding is local (not a relay)
+// only fires when LIGHT_COMMAND.target_group is 0 OR matches this
+// value. Default 0 ("respond to everything"). Range 0-255; operator
+// sets via Config > Slave > Group. Distinct from PixMobIrBinding's
+// own "group" property which is the PixMob protocol's IR group code
+// (output concern), not the NocturNation receive-filter group.
+uint8_t          load_slv_group();
+void             save_slv_group(uint8_t g);
+
 // Active master-side visualisation id. AutonomousMasterMode resolves the
 // returned id against visualisation_registry() on enter(); if the saved
 // id no longer resolves to a registered vis (uninstalled, renamed) the

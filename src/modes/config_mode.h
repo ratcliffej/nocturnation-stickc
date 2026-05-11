@@ -134,13 +134,18 @@ private:
     void handle_ir(const dal::ButtonPressEvent& ev);
     void draw_ir();
 
-    // ESP-NOW submenu (functional: Master Channel + Slave Channel).
+    // ESP-NOW submenu (functional: Master Channel + Slave Channel +
+    // Slave Repeat + Slave Group). SlaveGroup is the NocturNation
+    // receive-filter group ID (Epic 4.65 Block 5); distinct from
+    // PixMobIrBinding's `group` property which is the PixMob protocol
+    // IR group code (lives in the IR submenu).
     enum class EspNowItem : uint8_t {
         MasterChannel = 0,
         SlaveChannel,
         SlaveRepeat,
+        SlaveGroup,
     };
-    static constexpr size_t kEspNowFunctionalItemCount = 3;
+    static constexpr size_t kEspNowFunctionalItemCount = 4;
 
     static const char* master_channel_label(uint8_t c);
     static const char* slave_channel_label(uint8_t c);

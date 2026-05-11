@@ -99,7 +99,7 @@ Battery* HAL::battery()  { return nullptr; }
 
 using namespace nocturnation;
 using nocturnation::dal::RgbPulseEvent;
-using nocturnation::plugins::DeviceClass;
+using nocturnation::hal::DeviceClass;
 using nocturnation::plugins::PluginKind;
 using nocturnation::plugins::PropertyBag;
 using nocturnation::plugins::PropertyDef;
@@ -383,6 +383,67 @@ static void test_registry_register_both(void) {
 // (preserved byte-for-byte from the pre-Block-9 render_light() path).
 // =============================================================================
 
+// Epic 4.65 Block 5: relay flag distinguishes pass-through bindings
+// (PixMobIr) from local bindings (LocalDisplay). The SlaveMode filter
+// uses this to decide whether to apply the slv_group check.
+static void test_is_relay_flag(void) {
+    TEST_ASSERT_FALSE(local_display_instance()->is_relay());
+    TEST_ASSERT_TRUE (pixmob_ir_instance()->is_relay());
+}
+
+// Epic 4.65 Block 5: PixMobIrBinding takes its IR group code from the
+// inbound target_group threaded through OutputBindingContext, falling
+// back to its configured "group" property only when target_group is 0
+// (broadcast). Preserves the pre-Epic-4.65 broadcast behaviour while
+// enabling the new class:group relay model.
+static void test_pixmob_ir_uses_current_target_group_when_nonzero(void) {
+    PixMobIrBinding*      b   = pixmob_ir_instance();
+    OutputBindingContext& ctx = pixmob_ir_context();
+
+    // Configure the binding's default group to 2, but feed an inbound
+    // target_group of 5 - the inbound wins, IR fires at group 5.
+    TEST_ASSERT_TRUE(pixmob_ir_property_bag().set(
+        "group", PropertyValue::from_enum(2)));
+    ctx.set_current_target(/*target_class=*/0x01, /*target_group=*/5);
+
+    g_ir_driver.reset();
+    RgbPulseEvent ev{0x11, 0x22, 0x33, pixmob::T_32_MS, pixmob::T_96_MS,
+                     pixmob::T_96_MS, pixmob::CHANCE_100};
+    b->on_light_command(ctx, ev);
+
+    TEST_ASSERT_EQUAL_INT(1, g_ir_driver.rgb_pulse_count());
+    TEST_ASSERT_EQUAL_UINT8(5, g_ir_driver.last_group_id());
+}
+
+static void test_pixmob_ir_falls_back_to_property_when_target_group_zero(void) {
+    PixMobIrBinding*      b   = pixmob_ir_instance();
+    OutputBindingContext& ctx = pixmob_ir_context();
+
+    // Configure group=4, feed inbound target_group=0 (broadcast).
+    // Expect IR at the configured default (4), not 0.
+    TEST_ASSERT_TRUE(pixmob_ir_property_bag().set(
+        "group", PropertyValue::from_enum(4)));
+    ctx.set_current_target(/*target_class=*/0x00, /*target_group=*/0);
+
+    g_ir_driver.reset();
+    RgbPulseEvent ev{0x10, 0x20, 0x30, pixmob::T_32_MS, pixmob::T_96_MS,
+                     pixmob::T_96_MS, pixmob::CHANCE_100};
+    b->on_light_command(ctx, ev);
+
+    TEST_ASSERT_EQUAL_INT(1, g_ir_driver.rgb_pulse_count());
+    TEST_ASSERT_EQUAL_UINT8(4, g_ir_driver.last_group_id());
+}
+
+// Epic 4.65 Block 5: slv_group NVS round-trip. The native persistence
+// stub stores in a process-static, mirroring the Arduino Preferences
+// path for SlaveMode + ConfigMode read/write.
+static void test_slv_group_nvs_round_trip(void) {
+    nocturnation::modes::persistence::save_slv_group(7);
+    TEST_ASSERT_EQUAL_UINT8(7, nocturnation::modes::persistence::load_slv_group());
+    nocturnation::modes::persistence::save_slv_group(0);
+    TEST_ASSERT_EQUAL_UINT8(0, nocturnation::modes::persistence::load_slv_group());
+}
+
 static void test_fan_out_both_bindings_fire_with_same_event(void) {
     auto& reg = output_binding_registry();
     reg.register_plugin(local_display_instance());
@@ -564,6 +625,11 @@ int main(int, char**) {
     RUN_TEST(test_pixmob_ir_group_five_fires_group_5);
     RUN_TEST(test_pixmob_ir_group_clamps_out_of_range);
     RUN_TEST(test_registry_register_both);
+    // Block 5 - relay flag + PixMobIr context-driven group
+    RUN_TEST(test_is_relay_flag);
+    RUN_TEST(test_pixmob_ir_uses_current_target_group_when_nonzero);
+    RUN_TEST(test_pixmob_ir_falls_back_to_property_when_target_group_zero);
+    RUN_TEST(test_slv_group_nvs_round_trip);
     RUN_TEST(test_fan_out_both_bindings_fire_with_same_event);
     RUN_TEST(test_only_local_registered_skips_pixmob);
     RUN_TEST(test_group_property_persists_across_clear);

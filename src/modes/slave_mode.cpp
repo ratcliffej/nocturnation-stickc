@@ -66,6 +66,7 @@ void SlaveMode::enter() {
     // it there and on_light_command reads it inline.
     slave_channel_pref_  = persistence::load_slave_channel();
     slave_repeat_en_     = persistence::load_slave_repeat_enabled();
+    slv_group_           = persistence::load_slv_group();
     quality_.reset();
 
     // Auto-scan starts on channel 11 (show priority) per spec §4.5.
@@ -294,11 +295,30 @@ void SlaveMode::fan_out_light_command(const transport::espnow::LightCommandPaylo
     ev.release = static_cast<pixmob::Time>(p.release);
     ev.chance  = static_cast<pixmob::Chance>(p.chance);
 
+    // Epic 4.65 Block 5: class+group filter per binding.
+    //   Class: target_class == 0 (All) OR matches the binding's class().
+    //   Group: target_group == 0 (All) OR matches slv_group_ - but ONLY
+    //          for local bindings. Relay bindings (PixMobIrBinding) bypass
+    //          this check because their downstream protocol (PixMob IR)
+    //          does its own group filtering at the bracelet level. The
+    //          relay then reads the inbound target_group from the context
+    //          and uses it as the downstream group code.
     for (size_t i = 0; i < active_binding_count_; ++i) {
         const auto& slot = active_bindings_[i];
-        if (slot.binding && slot.ctx) {
-            slot.binding->on_light_command(*slot.ctx, ev);
+        if (!slot.binding || !slot.ctx) continue;
+
+        // Class filter.
+        const uint8_t binding_class = static_cast<uint8_t>(slot.binding->device_class());
+        if (p.target_class != 0 && p.target_class != binding_class) continue;
+
+        // Group filter (skipped for relay bindings).
+        if (!slot.binding->is_relay()) {
+            if (p.target_group != 0 && p.target_group != slv_group_) continue;
         }
+
+        // Thread the inbound addressing through to the binding via ctx.
+        slot.ctx->set_current_target(p.target_class, p.target_group);
+        slot.binding->on_light_command(*slot.ctx, ev);
     }
 }
 

@@ -88,7 +88,7 @@ struct ModeChangePayload {
 constexpr uint8_t kModeChangePayloadLen = 2;
 
 struct LightCommandPayload {
-    uint8_t target_class;          // 0 = all classes; see plugins::DeviceClass enum (Epic 4.65)
+    uint8_t target_class;          // 0 = all classes; see hal::DeviceClass enum (Epic 4.65)
     uint8_t target_group;          // 0 = all groups; 1-255 specific (PixMob enforces its own 0-31 cap)
     uint8_t r;
     uint8_t g;

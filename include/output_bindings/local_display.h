@@ -28,8 +28,8 @@ public:
     const char* id()           const override { return "local-display"; }
     const char* display_name() const override { return "Local Display"; }
 
-    plugins::DeviceClass device_class() const override {
-        return plugins::DeviceClass::Screen;
+    hal::DeviceClass device_class() const override {
+        return hal::DeviceClass::Screen;
     }
 
     hal::CapabilityMask required_capabilities() const override;

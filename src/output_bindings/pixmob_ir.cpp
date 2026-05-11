@@ -80,12 +80,23 @@ Span<const PropertyDef> PixMobIrBinding::properties() const {
 
 void PixMobIrBinding::on_light_command(OutputBindingContext& ctx,
                                         const RgbPulseEvent& ev) {
-    // Resolve current group from the property bag. Group 0 = broadcast
-    // to all PixMobs; 1..5 = specific group. Operator picks via
-    // Config > IR > Slave Group; persisted to NVS under the binding's
-    // "nb_pixmob-ir" namespace as key "group". Fail-silent if IR is
-    // muted (Config > IR > Enable) or this host has no IR Tx capability.
-    const uint8_t g = ctx.get_property("group").as_enum();
+    // Epic 4.65 Block 5: relay-binding semantics. The inbound LIGHT_COMMAND
+    // carries a target_group byte (the NocturNation addressing group);
+    // SlaveMode threads it into ctx.current_target_group() before
+    // calling here. PixMob bracelets do their own filtering at the IR
+    // protocol level on the group byte, so we pass the inbound group
+    // straight through as the PixMob protocol group code.
+    //
+    // When the inbound target_group is 0 (broadcast across all groups),
+    // we fall back to the binding's configured "group" property - the
+    // operator's preferred default PixMob group for this slave. That
+    // preserves the pre-Epic-4.65 behaviour of "broadcast LIGHT_COMMAND
+    // -> fire PixMob IR with my locally-configured group" for installations
+    // that haven't migrated to class:group addressing.
+    uint8_t g = ctx.current_target_group();
+    if (g == 0) {
+        g = ctx.get_property("group").as_enum();
+    }
     DAL::render_fx(ir_target_name(g), ev);
 }
 

@@ -19,7 +19,7 @@
 #include <cstdint>
 
 namespace nocturnation {
-namespace plugins {
+namespace hal {
 
 enum class DeviceClass : uint8_t {
     All            = 0x00,  // addressing wildcard - never returned by a binding
@@ -29,5 +29,5 @@ enum class DeviceClass : uint8_t {
     // 0x04..0xFF reserved.
 };
 
-}  // namespace plugins
+}  // namespace hal
 }  // namespace nocturnation

@@ -32,9 +32,15 @@ public:
     const char* id()           const override { return "pixmob-ir"; }
     const char* display_name() const override { return "PixMob IR"; }
 
-    plugins::DeviceClass device_class() const override {
-        return plugins::DeviceClass::Light;
+    hal::DeviceClass device_class() const override {
+        return hal::DeviceClass::Light;
     }
+
+    // PixMobIrBinding is a relay binding: it transmits PixMob protocol
+    // IR with the inbound target_group as the PixMob group code, so the
+    // slave's own slv_group filter is bypassed for this binding. PixMob
+    // bracelets do their own group filtering at the IR protocol level.
+    bool is_relay() const override { return true; }
 
     hal::CapabilityMask                       required_capabilities() const override;
     plugins::Span<const plugins::PropertyDef> properties()            const override;

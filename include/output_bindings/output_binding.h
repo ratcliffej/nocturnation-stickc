@@ -36,7 +36,7 @@
 #include <cstdint>
 
 #include "plugins/plugin.h"
-#include "plugins/device_class.h"
+#include "hal/device_class.h"
 #include "dal/dal.h"
 #include "hal/input_action.h"
 
@@ -56,7 +56,19 @@ public:
     // bindings drift untagged and break the addressing contract. Never
     // returns DeviceClass::All (that value is the addressing wildcard,
     // not a device identity).
-    virtual plugins::DeviceClass device_class() const = 0;
+    virtual hal::DeviceClass device_class() const = 0;
+
+    // Relay flag (Epic 4.65 Block 5). When true the binding is a
+    // pass-through to a downstream protocol that does its own group
+    // filtering (PixMob bracelets check the IR group code at their
+    // own level), so the slave's slv_group filter is BYPASSED for this
+    // binding - it fires whenever the target_class matches, regardless
+    // of whether target_group matches the slave's own group. The
+    // binding's on_light_command reads OutputBindingContext::
+    // current_target_group() to relay the inbound group code into the
+    // downstream protocol. Default: false (local binding; slv_group
+    // filter applies). PixMobIrBinding overrides to true.
+    virtual bool is_relay() const { return false; }
 
     virtual void enter(OutputBindingContext&) {}
     virtual void exit (OutputBindingContext&) {}

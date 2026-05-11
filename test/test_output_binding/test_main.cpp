@@ -96,7 +96,7 @@ using namespace nocturnation;
 using nocturnation::hal::Capability;
 using nocturnation::hal::CapabilityMask;
 using nocturnation::hal::make_capability_mask;
-using nocturnation::plugins::DeviceClass;
+using nocturnation::hal::DeviceClass;
 using nocturnation::plugins::Plugin;
 using nocturnation::plugins::PluginKind;
 using nocturnation::plugins::PropertyBag;

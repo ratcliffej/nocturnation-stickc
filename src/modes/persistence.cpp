@@ -131,6 +131,23 @@ void save_slave_repeat_enabled(bool e) {
     prefs.end();
 }
 
+// Slave NocturNation group ID. Device-wide value used by SlaveMode's
+// receive filter. Range 0-255; default 0 means "respond to everything".
+uint8_t load_slv_group() {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/true);
+    uint8_t g = prefs.getUChar("slv_group", 0);
+    prefs.end();
+    return g;
+}
+
+void save_slv_group(uint8_t g) {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/false);
+    prefs.putUChar("slv_group", g);
+    prefs.end();
+}
+
 // Active visualisation id. Stored as a string under "noct/active_vis";
 // 16-byte read buffer is comfortable for the 12-char id() cap. Default
 // is "beat-pulse" because that is the only vis registered today and the
@@ -213,6 +230,7 @@ void save_calibration(const AudioCalibration& c) {
 namespace {
 uint8_t s_native_slave_channel    = 0;
 bool    s_native_slave_repeat_en  = false;
+uint8_t s_native_slv_group        = 0;
 bool    s_native_legacy_slv_ir_grp_present = false;
 uint8_t s_native_legacy_slv_ir_grp_value   = 0;
 constexpr size_t kActiveVisBufSize = 16;
@@ -234,6 +252,8 @@ void             save_slave_channel(uint8_t c)  {
 }
 bool             load_slave_repeat_enabled()           { return s_native_slave_repeat_en; }
 void             save_slave_repeat_enabled(bool e)     { s_native_slave_repeat_en = e; }
+uint8_t          load_slv_group()                       { return s_native_slv_group; }
+void             save_slv_group(uint8_t g)              { s_native_slv_group = g; }
 
 const char* load_active_vis_id() {
     return s_native_active_vis;

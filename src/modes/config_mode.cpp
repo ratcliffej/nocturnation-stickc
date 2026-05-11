@@ -402,6 +402,13 @@ void ConfigMode::handle_espnow(const ButtonPressEvent& ev) {
                 persistence::save_slave_repeat_enabled(
                     !persistence::load_slave_repeat_enabled());
                 break;
+            case EspNowItem::SlaveGroup:
+                // Increment 0..255 wrapping. A long-press fast-cycle is
+                // a future polish if 256 single presses to wrap proves
+                // tiresome; manual increment matches the brief.
+                persistence::save_slv_group(
+                    static_cast<uint8_t>(persistence::load_slv_group() + 1));
+                break;
         }
         // New value applies on next AutonomousMaster / SlaveMode enter().
         // Operator returns to Menu and re-enters the mode to pick it up.
@@ -417,13 +424,16 @@ void ConfigMode::draw_espnow() {
     char m_line[28];
     char s_line[28];
     char r_line[28];
+    char g_line[28];
     std::snprintf(m_line, sizeof(m_line), "Master: %s",
                   master_channel_label(persistence::load_master_channel()));
     std::snprintf(s_line, sizeof(s_line), "Slave:  %s",
                   slave_channel_label(persistence::load_slave_channel()));
     std::snprintf(r_line, sizeof(r_line), "Repeat: %s",
                   persistence::load_slave_repeat_enabled() ? "ON" : "OFF");
-    const char* lines[kEspNowFunctionalItemCount] = { m_line, s_line, r_line };
+    std::snprintf(g_line, sizeof(g_line), "Group:  %u",
+                  (unsigned)persistence::load_slv_group());
+    const char* lines[kEspNowFunctionalItemCount] = { m_line, s_line, r_line, g_line };
 
     for (size_t i = 0; i < kEspNowFunctionalItemCount; ++i) {
         const bool sel = (i == sub_selected_);
