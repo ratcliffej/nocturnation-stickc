@@ -48,8 +48,9 @@ Verification ownership: **(L)** = laptop / native test, **(B)** = build-time che
 - **`OutputBinding::class()` contract addition** - new virtual method on the `OutputBinding` base. `PixMobIrBinding` returns `Light`; `LocalDisplayBinding` returns `Screen`. Future `TildagonLedRingBinding` (Epic 5) returns `MultiLedScreen`.
 - **Wire format extension**: `LightCommandPayload` gains a `target_class: u8` field at offset 0 (existing `target_group` shifts to offset 1). Payload grows 8 → 9 bytes. `kLightCommandPayloadLen` bumps to 9. Encoder + decoder updated; native byte-parity tests track the new shape.
 - **Master encode path**: `EspNowBroadcastDriver::send` parses the structured target name and writes both `target_class` and `target_group` into the `LightCommandPayload`. The driver-level `device->group_id` carry-through stays (used by PixMob IR driver for its own protocol group byte) but `render_fx` callers now use the structured form.
-- **Slave filter**: `SlaveMode::on_recv` (or the per-binding fan-out wrapper) compares the inbound `(target_class, target_group)` against each active binding's `(class(), configured_group_property)` and only calls `on_light_command` where both match (with `0x00` matching anything on either axis).
-- **PixMob group range**: bump `PixMobIrBinding`'s `group` property max from 5 to 31 (PixMob protocol's native range; current 0-5 cap was a `SlaveMode::ir_target_name` artifact). Device registration adds `"group-6"..."group-31"` in `dal::DAL::begin()`.
+- **Slave filter**: `SlaveMode::on_recv` (or the per-binding fan-out wrapper) compares the inbound `(target_class, target_group)` against each active binding's `class()` AND the device-wide `slv_group` setting. Calls `on_light_command` only where `target_class == 0x00 OR target_class == binding.class()` AND `target_group == 0x00 OR target_group == slv_group`. The group axis is **device-wide** (one slv_group per slave host), distinct from per-binding group properties: those remain in the OutputBinding for output-protocol-specific reasons (PixMobIrBinding's `group` is the PixMob *protocol's* group code on the IR wire, not the NocturNation receive-filter group).
+- **slv_group NVS config**: new device-wide setting persisted under NVS key `slv_group`, default `0` (matches anything). Single Config menu item ("Slave Group", 0-255 manual selection) added under the slave-mode section. Distinct from the existing Test-Mode "Set Group ID" facility which programs PixMob bracelets via `buildSetGroupId`; this one is the local device's own NocturNation identity.
+- **PixMob group range**: bump `PixMobIrBinding`'s `group` property max from 5 to 31 (PixMob protocol's native range; current 0-5 cap was a `SlaveMode::ir_target_name` artifact). Device registration adds `"group-6"..."group-31"` in `dal::DAL::begin()`. This is a PixMob-protocol-output concern, orthogonal to slv_group.
 - **`render_fx` target parsing**: DAL parses `"<hex>:<hex>"` target strings into `(DeviceClass, uint8_t group)`. Legacy strings (`"all-pixmobs"`, `"group-N"`, `"local"`, `"esp-now-broadcast"`) keep working via a small compatibility shim for the duration of this Epic; removed in close-out.
 - **Auto-generated config UI**: each binding's `group` property surfaces in the Settings overlay (the auto-generated UI from Epic 4.6 Block 10 already handles `U8` properties; this Epic widens the value range and adds a small "Class: Light" read-only line above the group field as a sanity-check label).
 - **Master-side: visualisations choose their target class**. `BeatPulseVisualisation` and `SpectrumBarsVisualisation` (manual fire) update their `render_fx` calls to `"00:00"` (everyone) by default. A future vis that wants to address only screen-class devices uses `"02:00"`.
@@ -106,11 +107,13 @@ The wire-format break is acceptable - the project's only deployment is the bench
 
 - Commit: "Epic 4.65 Block 4: render_fx parses class:group; master encodes target_class"
 
-### Block 5: Slave filter
+### Block 5: Slave filter + slv_group config
 
-`SlaveMode::on_recv`'s `LIGHT_COMMAND` decode path now reads `target_class` and `target_group` from the payload. For each active binding, only call `on_light_command` if `target_class == 0x00 OR target_class == binding.class()` AND `target_group == 0x00 OR target_group == binding's configured group`. Active bindings without a `group` property (the framework provides a default of `0`) match group 0 only - or `All`, decide during implementation.
+`SlaveMode::on_recv`'s `LIGHT_COMMAND` decode path now reads `target_class` and `target_group` from the payload. For each active binding, only call `on_light_command` if `target_class == 0x00 OR target_class == binding.class()` AND `target_group == 0x00 OR target_group == slv_group`. The `slv_group` axis is **device-wide** (one value per slave host), loaded from NVS in `SlaveMode::enter()` via a new `persistence::load_slv_group()` helper.
 
-- Commit: "Epic 4.65 Block 5: slave filter on (target_class, target_group)"
+Block 5 also adds the Config menu item for `slv_group`: a single line under the slave-mode section showing the current value with the standard A-click / B-click cycle pattern (0-255 manual selection, persisted on change). Distinct from the existing per-PixMobIrBinding `group` property (which lives in the auto-generated Settings overlay and controls PixMob protocol output, not NocturNation receive filtering).
+
+- Commit: "Epic 4.65 Block 5: slave filter + slv_group config menu"
 
 ### Block 6: PixMob group range 0..31; new DAL device registrations
 
