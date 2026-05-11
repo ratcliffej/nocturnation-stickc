@@ -89,15 +89,12 @@ static size_t encodeBufferToUs(uint8_t* buf, size_t bufLen,
 
 // Display a single colour with full ASR control. Most-used command.
 //
-// When `restrictGroupId` is 0 the frame is encoded as 8 bytes (no
-// group filter byte appended) and bracelets respond regardless of
-// their stored group - the protocol's broadcast form. When
-// `restrictGroupId` is 1..31 the frame is 9 bytes with the group
-// byte appended; only bracelets stored at that group respond.
-// The difference matters: the 8-byte form has a different checksum
-// (sum over buf[2..7] vs buf[2..8]), so it's not equivalent to a
-// 9-byte frame with buf[8]=0 even though encodeBufferToUs trims
-// trailing zeros after the group byte's bits.
+// Always emits the 9-byte frame including the restrictGroupId byte
+// at buf[8]. restrictGroupId=0 means broadcast (every bracelet
+// responds regardless of stored group); 1..31 means only bracelets
+// stored at that group respond. Bench testing confirmed dropping
+// the byte for the broadcast case breaks bracelet response, so the
+// byte is always sent.
 static size_t buildSingleColor(uint16_t* outBuf, size_t outBufCapacity,
                                uint8_t r, uint8_t g, uint8_t b,
                                Time attack, Time sustain, Time release,
@@ -112,11 +109,6 @@ static size_t buildSingleColor(uint16_t* outBuf, size_t outBufCapacity,
   buf[5] = (b >> 2) & 0x3F;
   buf[6] = ((uint8_t)attack << 3) | ((uint8_t)chance & 0x07);
   buf[7] = ((uint8_t)release << 3) | ((uint8_t)sustain & 0x07);
-  if (restrictGroupId == 0) {
-      // Broadcast form: 8-byte frame, no group byte. Every bracelet
-      // responds. Checksum covers buf[2..7] only.
-      return encodeBufferToUs(buf, 8, outBuf, outBufCapacity);
-  }
   buf[8] = restrictGroupId & 0x1F;
   return encodeBufferToUs(buf, 9, outBuf, outBufCapacity);
 }
