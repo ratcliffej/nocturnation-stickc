@@ -50,7 +50,12 @@ constexpr uint32_t kPulseStepMs       = 1000;   // 1 Hz colour cycle
 constexpr uint32_t kFadeStepMs        = 1000;
 constexpr uint32_t kRainbowDurationMs = 6000;
 constexpr uint32_t kSparkleDurationMs = 10000;
-constexpr uint32_t kSparkleStepMs     = 500;   // 2 Hz fire cadence
+// Step interval gives the 1 s fade room to complete before the next
+// step's primer cuts it short. Fade total = T_0 + T_480 + T_480 = 960
+// ms after the main pulse arrives (+ ~100 ms for primer transmission).
+// 1100 ms step leaves a ~40 ms safety gap; cadence is ~0.9 Hz which
+// reads as "lingering twinkles" against the random-chance fire.
+constexpr uint32_t kSparkleStepMs     = 1100;
 
 }  // namespace
 
@@ -375,9 +380,11 @@ void TestMode::tick_sparkle(uint32_t now) {
     }
 
     // Operator spec: white, ~1 s fade envelope (T_0 + T_480 + T_480
-    // = 960 ms total), 2 Hz fire cadence (kSparkleStepMs above),
-    // ~20 % per-bracelet chance. PixMob protocol's 3-bit chance
-    // ladder has no exact 20 %; CHANCE_16 is the closest below.
+    // = 960 ms total), ~0.9 Hz fire cadence (kSparkleStepMs above -
+    // slowed from 2 Hz so the 1 s fade completes before the next
+    // step's primer cuts it short), ~20 % per-bracelet chance.
+    // PixMob protocol's 3-bit chance ladder has no exact 20 %;
+    // CHANCE_16 is the closest below.
     const auto& c = kSparkleColour;
     const RgbPulseEvent ev{
         c.r, c.g, c.b,
