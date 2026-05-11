@@ -258,6 +258,16 @@ public:
     virtual bool send(uint8_t /*group_id*/, const DisplayMeterEvent&)     { return false; }
     virtual bool send(uint8_t /*group_id*/, const AssignDeviceGroupEvent&){ return false; }
 
+    // Class+group dispatch (Epic 4.65 Block 4). Default forwards to the
+    // 2-arg send dropping the class - test drivers and protocols that
+    // don't carry a class field still see the pulse, just without class
+    // discrimination. EspNowBroadcastDriver overrides to write both
+    // bytes into the LIGHT_COMMAND payload.
+    virtual bool send(uint8_t /*target_class*/, uint8_t target_group,
+                       const RgbPulseEvent& ev) {
+        return send(target_group, ev);
+    }
+
     // Input lifecycle hooks. Called by DAL::start_audio_input / stop_audio_input
     // on the driver registered for the target's transport. Drivers that do
     // not source audio frames default to no-op (returns false).

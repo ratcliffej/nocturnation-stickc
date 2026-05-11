@@ -313,7 +313,7 @@ void SpectrumBarsVisualisation::fire_manual_beat(VisualisationContext& /*ctx*/) 
 
     // Three-target fan-out: wire -> screen flash -> IR. Same order as
     // BeatPulse's per-beat shape so the failure modes are symmetric.
-    DAL::render_fx("esp-now-broadcast", pulse);
+    DAL::render_fx("00:00", pulse);   // Epic 4.65 Block 7: structured target
     DAL::fire_display_clear("local", DisplayClearEvent{WHITE});
     DAL::render_fx("all-pixmobs", pulse);
 }

@@ -170,13 +170,16 @@ bool dispatch_output(const char* target, CapabilityId cap, const Event& ev) {
     return ok;
 }
 
-// Structured-target dispatch. Bypasses the device-name lookup; goes
-// straight to the ESP-NOW broadcaster with both class and group on the
-// LIGHT_COMMAND payload. Slaves filter on receive (Block 5).
+// Structured-target dispatch. Bypasses the device-name lookup; routes
+// through the "esp-now-broadcast" transport driver (whichever Driver
+// claimed it via register_driver - production is EspNowBroadcastDriver,
+// tests substitute recording drivers). Slaves filter on receive
+// (Block 5). The Driver base's 3-arg send default forwards to the 2-arg
+// dropping the class, so non-ESPNow drivers degrade gracefully.
 bool dispatch_output_class_group(uint8_t target_class,
                                   uint8_t target_group,
                                   const RgbPulseEvent& ev) {
-    EspNowBroadcastDriver* driver = esp_now_broadcast_driver_instance();
+    Driver* driver = find_driver_for_transport("esp-now-broadcast");
     if (!driver) return false;
     if (!driver->enabled()) return false;
     const bool ok = driver->send(target_class, target_group, ev);

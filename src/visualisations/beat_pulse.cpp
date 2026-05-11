@@ -197,7 +197,12 @@ void BeatPulseVisualisation::on_audio_frame(VisualisationContext& ctx,
         wire.sustain = env.sustain;
         wire.release = env.release;
         wire.chance  = pixmob::CHANCE_100;
-        DAL::render_fx("esp-now-broadcast", wire);
+        // "00:00" = broadcast to every class, every group. Epic 4.65 Block 7
+        // migration from the legacy "esp-now-broadcast" device name; routes
+        // to EspNowBroadcastDriver with target_class=0 / target_group=0 on
+        // the LIGHT_COMMAND payload, byte-identical to pre-migration wire
+        // output for slaves that pass the filter (everyone matches).
+        DAL::render_fx("00:00", wire);
     }
 
     // 2. Screen flash. Preserved as DisplayClearEvent, not RgbPulseEvent.

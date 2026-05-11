@@ -278,7 +278,7 @@ void TestMode::fire_cycle_step(bool fade) {
         c.r, c.g, c.b, attack, sustain, release, pixmob::CHANCE_100};
     DAL::render_fx("all-pixmobs", ev);
     DAL::render_fx("local",       ev);  // screen; gated by Config > Display > Pulse
-    DAL::render_fx("esp-now-broadcast", ev);
+    DAL::render_fx("00:00", ev);   /* Epic 4.65 Block 7 */
     last_step_ms_ = millis();
 }
 
@@ -333,7 +333,7 @@ void TestMode::tick_rainbow(uint32_t now) {
         pixmob::CHANCE_100};
     DAL::render_fx("all-pixmobs", ev);
     DAL::render_fx("local",       ev);
-    DAL::render_fx("esp-now-broadcast", ev);
+    DAL::render_fx("00:00", ev);   /* Epic 4.65 Block 7 */
 }
 
 void TestMode::draw_rainbow_screen() {
@@ -374,7 +374,7 @@ void TestMode::tick_sparkle(uint32_t now) {
     DAL::render_fx("all-pixmobs", ev);
     DAL::render_fx("local",       ev);   // LocalDriver rolls CHANCE_50
                                          // independently, like a bracelet
-    DAL::render_fx("esp-now-broadcast", ev);
+    DAL::render_fx("00:00", ev);   /* Epic 4.65 Block 7 */
     last_step_ms_ = now;
     // Status text redraws via the post-pulse hook in loop_tick.
 }
@@ -408,7 +408,7 @@ void TestMode::fire_whiteout() {
         pixmob::CHANCE_100};
     DAL::render_fx("all-pixmobs", ev);
     DAL::render_fx("local",       ev);
-    DAL::render_fx("esp-now-broadcast", ev);
+    DAL::render_fx("00:00", ev);   /* Epic 4.65 Block 7 */
 }
 
 void TestMode::draw_whiteout() {
