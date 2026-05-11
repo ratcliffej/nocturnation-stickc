@@ -463,12 +463,16 @@ static void test_input_cycle_advances_colour(void) {
 }
 
 // =============================================================================
-// SimpleBeatShow: OFF colour (enum 0) suppresses the wire and IR fires
-// (zero rgb gates inside Pulse::fire). DisplayClear still fires with
-// BLACK (the screen flash for the OFF "muted" mode shows a black flash).
+// SimpleBeatShow: OFF colour (enum 0) sends an rgb=0 reset frame on
+// each beat. The pre-Epic-4.7 behaviour gated IR on rgb != 0 so Off
+// produced no IR fires; post-fix the dispatch loopback always fires
+// when class matches so a zero-rgb frame can be used as a reset /
+// primer to actively clear bracelet state. Off semantics shift from
+// "no signal" to "actively turn off" - same visible result, cleaner
+// in the face of residual bracelet state.
 // =============================================================================
 
-static void test_off_colour_suppresses_ir_pulse(void) {
+static void test_off_colour_fires_reset_pulse(void) {
     SimpleBeatShow* sb = simple_beat_show_instance();
     auto& bag = simple_beat_show_property_bag();
     bag.set("color", PropertyValue::from_enum(0));   // Off
@@ -480,12 +484,17 @@ static void test_off_colour_suppresses_ir_pulse(void) {
     sb->on_beat_detected(ctx, 255);
 
     // Wire fires a RgbPulse with zero rgb (slaves' bindings decide
-    // what to do with it - same as pre-Block-1 behaviour).
+    // what to do with it).
     TEST_ASSERT_EQUAL_INT(1, g_espnow_driver.rgb_pulse_count());
     TEST_ASSERT_EQUAL_UINT8(0x00, g_espnow_driver.last_rgb_pulse().r);
 
-    // IR path gates inside Pulse::fire on zero rgb.
-    TEST_ASSERT_EQUAL_INT(0, g_ir_driver.rgb_pulse_count());
+    // IR fires too, with rgb=0 - bracelets receive the reset and go
+    // to black. Same visible result as the old gated path, but with
+    // any residual bracelet state actively cleared.
+    TEST_ASSERT_EQUAL_INT(1, g_ir_driver.rgb_pulse_count());
+    TEST_ASSERT_EQUAL_UINT8(0x00, g_ir_driver.last_rgb_pulse().r);
+    TEST_ASSERT_EQUAL_UINT8(0x00, g_ir_driver.last_rgb_pulse().g);
+    TEST_ASSERT_EQUAL_UINT8(0x00, g_ir_driver.last_rgb_pulse().b);
 }
 
 // =============================================================================
@@ -540,7 +549,7 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_on_beat_paused_skips_render);
     RUN_TEST(test_bpm_tracking_from_ibi);
     RUN_TEST(test_input_cycle_advances_colour);
-    RUN_TEST(test_off_colour_suppresses_ir_pulse);
+    RUN_TEST(test_off_colour_fires_reset_pulse);
     RUN_TEST(test_migrate_active_vis_beat_pulse);
     RUN_TEST(test_migrate_active_vis_spectrum_bars);
     RUN_TEST(test_migrate_active_vis_custom_id_pass_through);

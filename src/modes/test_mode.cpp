@@ -361,6 +361,19 @@ void TestMode::tick_sparkle(uint32_t now) {
         return;
     }
     if (now - last_step_ms_ < kSparkleStepMs) return;
+
+    // Reset primer before each step (broadcast, all bracelets to
+    // black). Clears the residue from the previous step's envelope
+    // so the next sparkle fire's fade reads as clean white-to-black
+    // rather than picking up blue/green tints from the prior tail.
+    {
+        const RgbPulseEvent reset{
+            0x00, 0x00, 0x00,
+            pixmob::T_0_MS, pixmob::T_0_MS, pixmob::T_0_MS,
+            pixmob::CHANCE_100};
+        DAL::render_fx("00:00", reset);
+    }
+
     // Operator spec: white, ~1 s fade envelope (T_0 + T_480 + T_480
     // = 960 ms total), 2 Hz fire cadence (kSparkleStepMs above),
     // ~20 % per-bracelet chance. PixMob protocol's 3-bit chance
@@ -395,9 +408,21 @@ void TestMode::draw_sparkle_screen() {
 // -------------------------------------------------------------------------
 
 void TestMode::fire_whiteout() {
-    // Single command: instant attack, ~2.4 s sustain, ~0.96 s release.
-    // The PixMob protocol's Time enum has values up to T_3840_MS so
-    // we don't need a multi-command staircase to span 2 s + 1 s.
+    // Reset primer: rgb=0, instant transition, broadcast. Tells every
+    // bracelet to go to black immediately, clearing any residual
+    // envelope / colour state from a prior test before the new white
+    // pulse runs. Without this, bench observation showed the white
+    // fade picked up blue/green tints and ended abruptly - residue
+    // from the previous test's envelope leaking into the new fade.
+    {
+        const RgbPulseEvent reset{
+            0x00, 0x00, 0x00,
+            pixmob::T_0_MS, pixmob::T_0_MS, pixmob::T_0_MS,
+            pixmob::CHANCE_100};
+        DAL::render_fx("00:00", reset);
+    }
+
+    // Main white pulse: instant attack, ~2.4 s sustain, ~0.96 s release.
     const RgbPulseEvent ev{
         0xFF, 0xFF, 0xFF,
         pixmob::T_0_MS, pixmob::T_2400_MS, pixmob::T_960_MS,

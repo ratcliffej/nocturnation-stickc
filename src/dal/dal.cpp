@@ -199,10 +199,14 @@ bool dispatch_output_class_group(uint8_t target_class,
     // 2. Master-local IR loopback. Treats the master as if it were its
     // own slave: target_group is passed through as the PixMob protocol
     // group byte, so the master's IR LED fires with the same per-group
-    // filter the slave's relay binding would apply. Skipped on zero-
-    // rgb so the operator's Off colour doesn't fire a hidden pulse.
-    const bool any_rgb = (ev.r != 0 || ev.g != 0 || ev.b != 0);
-    if ((target_class == 0 || target_class == 1) && any_rgb) {
+    // filter the slave's relay binding would apply.
+    //
+    // Zero-rgb frames are NOT gated here - they're useful as reset /
+    // primer frames that tell bracelets to actively go to black,
+    // clearing any residual envelope state from a prior command.
+    // Callers that want a true "no fire" (e.g. SimpleBeatShow's Off
+    // colour) should skip the render_fx call upstream.
+    if (target_class == 0 || target_class == 1) {
         Driver* ir = find_driver_for_transport("ir-pixmob");
         if (ir && ir->enabled()) {
             ir->send(target_group, ev);
