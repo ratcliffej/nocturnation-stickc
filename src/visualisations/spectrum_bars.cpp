@@ -39,22 +39,87 @@ using nocturnation::plugins::Span;
 
 namespace {
 
-// Band-focus enum value names. Index matches the persisted U8 value.
-const char* const kBandFocusNames[] = {
-    "All", "Bass", "Mid", "Treble"
+// =============================================================================
+// Perceptual band layout (7 bands, per Audible Genius music-production
+// reference - see PerceptualBoundsHz in band_layout.h). Mud (0-20 Hz) is
+// merged into Sub Bass because the spectrum surface starts at 30 Hz; Mud
+// bins are not present in the spectrum frame anyway.
+// =============================================================================
+
+enum class Perceptual : uint8_t {
+    SubBass = 0,    // 20-60 Hz (incl Mud below 20 Hz)
+    Bass,           // 60-250 Hz
+    LowMids,        // 250-500 Hz
+    Midrange,       // 500 Hz - 2 kHz
+    HighMids,       // 2 kHz - 4 kHz
+    Presence,       // 4 kHz - 6 kHz
+    Air,            // 6 kHz - 20 kHz
 };
 
+constexpr size_t kPerceptualCount = 7;
+
+// Hard-coded spectrum-band -> perceptual-band mapping for the canonical
+// 16 kHz / 32 log-spaced bands operating point. Spectrum band i covers
+// roughly [30 * 1.193^i, 30 * 1.193^(i+1)) Hz; the centre is used for
+// bucket assignment against PerceptualBoundsHz. Indices below worked
+// out from those centres:
+//   bands  0..3   -> Sub Bass   (centres ~33..55 Hz)
+//   bands  4..11  -> Bass       (centres ~66..227 Hz)
+//   bands 12..15  -> Low Mids   (centres ~271..460 Hz)
+//   bands 16..23  -> Midrange   (centres ~548..1884 Hz)
+//   bands 24..27  -> High Mids  (centres ~2247..3812 Hz)
+//   bands 28..29  -> Presence   (centres ~4546..5422 Hz)
+//   bands 30..31  -> Air        (centres ~6467..7713 Hz)
+//
+// Sum is 4+8+4+8+4+2+2 = 32. If the operating point ever changes
+// (future 48 kHz / 2048 FFT) this table will need to be recomputed or
+// generated dynamically from sample rate; flagged in a comment near
+// PowerProfile.
+constexpr Perceptual kBandMap[32] = {
+    Perceptual::SubBass, Perceptual::SubBass, Perceptual::SubBass, Perceptual::SubBass,
+    Perceptual::Bass,    Perceptual::Bass,    Perceptual::Bass,    Perceptual::Bass,
+    Perceptual::Bass,    Perceptual::Bass,    Perceptual::Bass,    Perceptual::Bass,
+    Perceptual::LowMids, Perceptual::LowMids, Perceptual::LowMids, Perceptual::LowMids,
+    Perceptual::Midrange,Perceptual::Midrange,Perceptual::Midrange,Perceptual::Midrange,
+    Perceptual::Midrange,Perceptual::Midrange,Perceptual::Midrange,Perceptual::Midrange,
+    Perceptual::HighMids,Perceptual::HighMids,Perceptual::HighMids,Perceptual::HighMids,
+    Perceptual::Presence,Perceptual::Presence,
+    Perceptual::Air,     Perceptual::Air,
+};
+
+// Short labels (3-4 chars) under each bar. Index by Perceptual.
+const char* const kPerceptualLabels[kPerceptualCount] = {
+    "Sub", "Bass", "Lows", "Mid", "Hi", "Pres", "Air"
+};
+
+// RGB565 colour per band - warm-to-cool rainbow mapping low frequencies
+// to warm and high frequencies to cool. Indices match Perceptual enum.
+//   Sub Bass: deep purple
+//   Bass:     red
+//   Low Mids: orange
+//   Midrange: yellow
+//   High Mids:green
+//   Presence: cyan
+//   Air:      light blue
+constexpr uint16_t kPerceptualColours[kPerceptualCount] = {
+    0x801F,   // Sub Bass  - deep purple
+    0xF800,   // Bass      - red
+    0xFB60,   // Low Mids  - orange
+    0xFFE0,   // Midrange  - yellow
+    0x07E0,   // High Mids - green
+    0x07FF,   // Presence  - cyan
+    0x051F,   // Air       - light blue
+};
+
+// =============================================================================
+// Property schema. Only sensitivity remains - band_focus was dropped
+// when the vis moved from 32 raw bars to 7 fixed perceptual bands, each
+// with its own permanent colour. Manual fire on Confirm uses white
+// (operator's sound-check tool; tinting it per-band added complexity
+// without earning anything once the bars are labelled).
+// =============================================================================
+
 const PropertyDef kProps[] = {
-    PropertyDef{
-        /*key=*/"band_focus",
-        /*type=*/PropertyType::Enum,
-        /*default_value=*/PropertyValue::from_enum(0),  // All
-        /*min_value=*/    PropertyValue::from_enum(0),
-        /*max_value=*/    PropertyValue::from_enum(3),
-        /*display_name=*/"Band Focus",
-        /*unit=*/nullptr,
-        /*enum_names=*/kBandFocusNames,
-    },
     PropertyDef{
         /*key=*/"sensitivity",
         /*type=*/PropertyType::U8,
@@ -69,47 +134,38 @@ const PropertyDef kProps[] = {
 
 constexpr size_t kPropCount = sizeof(kProps) / sizeof(kProps[0]);
 
-// LCD geometry. Bars draw from y=14 down to y=134 (120 px tall) on the
-// StickC Plus2's 240x135 panel. 32 bars * (6 px wide + 1 px gap) = 224
-// px, centred with an 8 px margin each side. The previous 7+1 sizing
-// produced 32*8 = 256 px which overflowed the panel by 16 px and clipped
-// the two highest-frequency bands off the right edge.
-constexpr int kBarsTopY      = 14;
-constexpr int kBarsBottomY   = 134;
-constexpr int kBarsMaxHeight = kBarsBottomY - kBarsTopY;
-constexpr int kBarWidth      = 6;
-constexpr int kBarGap        = 1;
-constexpr int kBarsLeftX     = 8;
+// LCD geometry. 7 bars at 30 px wide + 4 px gap = 7*30 + 6*4 = 234 px,
+// centred on the 240 px panel with 3 px margin each side. Labels render
+// in a 14 px strip below the bars (y=120..134) at size 1.
+constexpr int kBarsTopY        = 14;
+constexpr int kBarsBottomY     = 120;    // labels live below this line
+constexpr int kBarsMaxHeight   = kBarsBottomY - kBarsTopY;
+constexpr int kLabelY          = 124;
+constexpr int kBarWidth        = 30;
+constexpr int kBarGap          = 4;
+constexpr int kBarsLeftX       = 3;
 
-// Magnitude-to-bar-height calibration. compute_spectrum_frame() in
-// audio_analyser.cpp accumulates RAW linear FFT magnitudes per band -
-// observed range on Plus2 hardware spans nearly five orders of
-// magnitude: silence median ~1500 / max ~12000, normal music median
-// ~5000-10000 / max ~50000-150000, peak drops max ~400000+. Linear
-// scaling can't represent that span; we log-compress first, then
-// subtract a floor in log space and scale by sensitivity.
+// Magnitude-to-bar-height calibration. compute_spectrum_frame() ships
+// RAW linear FFT magnitudes per band; perceptual aggregates sum 2-8 of
+// those raw bands together, so values are ~2-8x larger than individual
+// spectrum bands. Observed perceptual-band ranges (derived from the
+// 1 Hz [SPEC] dump at the per-band level):
+//   silence:     ~5k..15k    (log2 ~12.3..13.9)
+//   quiet music: ~20k..80k   (log2 ~14.3..16.3)
+//   loud music:  ~100k..500k (log2 ~16.6..18.9)
+//   peak drop:   up to 2M    (log2 ~21.0)
 //
-// Numbers below are tuned against captured serial output (1 Hz
-// [SPEC] dump in draw_spectrum's diagnostic block):
-//   log2(1500)   ≈ 10.5  (silence floor)
-//   log2(10000)  ≈ 13.3  (quiet music median)
-//   log2(150000) ≈ 17.2  (loud music max)
-//   log2(400000) ≈ 18.6  (peak drop)
-//
-// kMagFloorLog2 sits at 10.0 so silence shows no bars and quiet music
-// shows small bars; kSensScale = 0.025 maps a log2 span of 8 at
-// sens=5 to full bar height (so anything above log2 ~18 / mag ~262k
-// clamps to full).
-constexpr float kMagFloorLog2 = 10.0f;
+// Log-compress, subtract floor at log2=13.0 (silence cutoff), scale by
+// sens * 0.025 so default sens=5 maps a log2 span of 8 to full bar
+// (anything above log2 ~21 / mag ~2M clamps full).
+constexpr float kMagFloorLog2 = 13.0f;
 constexpr float kSensScale    = 0.025f;
 
-// Band-focus group bounds (inclusive). Bass = bands 0..9 (lowest 10 of
-// 32 log-spaced bins, sub-200-ish-Hz on the StickC analyser), Mid =
-// 10..21, Treble = 22..31. These are visual focus regions, not the
-// analyser's own boundary definitions.
-constexpr size_t kBassEnd   = 10;        // exclusive
-constexpr size_t kMidEnd    = 22;        // exclusive
-// Treble is [kMidEnd .. kBands).
+// White RGB for the Confirm manual fire. CHANCE_100 in fire_manual_beat
+// keeps it a guaranteed sound-check pulse (no probability gating).
+constexpr uint8_t kFireR = 0xFF;
+constexpr uint8_t kFireG = 0xFF;
+constexpr uint8_t kFireB = 0xFF;
 
 }  // namespace
 
@@ -188,120 +244,94 @@ void SpectrumBarsVisualisation::draw_spectrum(VisualisationContext& ctx,
     if (last_draw_ms_ != 0 && (now - last_draw_ms_) < 33u) return;
     last_draw_ms_ = now;
 
+    // Roll up 32 log-spaced spectrum bands into 7 perceptual bands per
+    // kBandMap. Sums match what compute_band_summaries in
+    // audio_analyser.cpp would produce for these frequency ranges,
+    // approximated against the already-summed spectrum data (the vis
+    // doesn't have access to the raw FFT magnitudes).
+    float band_sums[kPerceptualCount] = {0, 0, 0, 0, 0, 0, 0};
+    for (size_t i = 0; i < SpectrumFrameEvent::kBands; ++i) {
+        band_sums[static_cast<size_t>(kBandMap[i])] += ev.magnitudes[i];
+    }
+
 #ifdef ARDUINO
-    // Diagnostic: dump min/max/median band magnitude once per second so
-    // the calibration constants can be set against observed hardware
-    // values rather than guessed. Drop this block once kMagFloor /
-    // kSensScale are dialled in.
+    // Diagnostic: dump the 7 perceptual-band aggregates once per second
+    // so the floor / scale can be re-tuned against observed hardware
+    // values. Drop this block once the calibration is dialled in.
     {
         static uint32_t last_log_ms = 0;
         if (now - last_log_ms >= 1000u) {
             last_log_ms = now;
-            float mn = ev.magnitudes[0], mx = ev.magnitudes[0];
-            float sorted[SpectrumFrameEvent::kBands];
-            for (size_t i = 0; i < SpectrumFrameEvent::kBands; ++i) {
-                const float m = ev.magnitudes[i];
-                if (m < mn) mn = m;
-                if (m > mx) mx = m;
-                sorted[i] = m;
-            }
-            for (size_t i = 1; i < SpectrumFrameEvent::kBands; ++i) {
-                float k = sorted[i]; size_t j = i;
-                while (j > 0 && sorted[j-1] > k) { sorted[j] = sorted[j-1]; --j; }
-                sorted[j] = k;
-            }
-            const float med = sorted[SpectrumFrameEvent::kBands / 2];
-            Serial.printf("[SPEC] min=%.1f med=%.1f max=%.1f\n", mn, med, mx);
+            Serial.printf("[SPEC7] Sub=%.0f Bass=%.0f Low=%.0f Mid=%.0f "
+                          "Hi=%.0f Pres=%.0f Air=%.0f\n",
+                          band_sums[0], band_sums[1], band_sums[2], band_sums[3],
+                          band_sums[4], band_sums[5], band_sums[6]);
         }
     }
 #endif
 
-    const uint8_t  band_focus  = ctx.get_property("band_focus").as_enum();
-    const uint8_t  sensitivity = ctx.get_property("sensitivity").as_u8();
-    const uint16_t focus_tint  = focused_tint(band_focus);
-    const float    sens_scale  = static_cast<float>(sensitivity);
+    const uint8_t sensitivity = ctx.get_property("sensitivity").as_u8();
+    const float   sens_scale  = static_cast<float>(sensitivity);
 
-    // Clear bars region only (preserve status strip above).
+    // Clear the bars + labels region (preserve any status strip above).
     DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
-        0, kBarsTopY, 240, kBarsMaxHeight, BLACK});
+        0, kBarsTopY, 240, 135 - kBarsTopY, BLACK});
 
-    for (size_t i = 0; i < SpectrumFrameEvent::kBands; ++i) {
-        // Log-compress first (the analyser ships raw linear magnitudes
-        // spanning ~5 orders of magnitude), then subtract the silence
-        // floor in log space and scale by sensitivity. See
-        // kMagFloorLog2 / kSensScale notes above for the calibration.
-        // log2(1+m) handles m=0 cleanly (yields 0).
-        const float log_mag = std::log2(1.0f + ev.magnitudes[i]);
+    for (size_t b = 0; b < kPerceptualCount; ++b) {
+        // Log-compress the perceptual aggregate (raw linear values
+        // span ~5 orders of magnitude). log2(1+m) handles m=0 cleanly.
+        const float log_mag = std::log2(1.0f + band_sums[b]);
         float v = (log_mag - kMagFloorLog2) * sens_scale * kSensScale;
         if (v < 0.0f) v = 0.0f;
         if (v > 1.0f) v = 1.0f;
 
+        const int x = kBarsLeftX + static_cast<int>(b) * (kBarWidth + kBarGap);
         const int h = static_cast<int>(v * static_cast<float>(kBarsMaxHeight));
-        if (h <= 0) continue;
 
-        const int x = kBarsLeftX + static_cast<int>(i) * (kBarWidth + kBarGap);
-        const int y = kBarsBottomY - h;
-
-        const uint16_t tint = band_is_focused(band_focus, i) ? focus_tint
-                                                              : WHITE;
+        // Always draw a 2 px floor under each bar so the colour bands
+        // are visible even on silence - acts as a legend / sanity check
+        // that the vis is alive.
+        const int floor_h  = 2;
+        const int floor_y  = kBarsBottomY - floor_h;
         DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
-            x, y, kBarWidth, h, tint});
+            x, floor_y, kBarWidth, floor_h, kPerceptualColours[b]});
+
+        if (h > floor_h) {
+            const int y = kBarsBottomY - h;
+            DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
+                x, y, kBarWidth, h - floor_h, kPerceptualColours[b]});
+        }
+
+        // Label under each bar. Centre approximately by eyeballing -
+        // 30 px wide bar / ~6 px per size-1 char gives room for ~4
+        // chars; kPerceptualLabels are all 3-4 chars so they fit.
+        const int label_x = x + 4;
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            label_x, kLabelY, kPerceptualLabels[b],
+            kPerceptualColours[b], BLACK, 1});
     }
 }
 
-void SpectrumBarsVisualisation::fire_manual_beat(VisualisationContext& ctx) {
-    const uint8_t band_focus = ctx.get_property("band_focus").as_enum();
-    uint8_t r = 0, g = 0, b = 0;
-    focused_rgb(band_focus, r, g, b);
-
-    // Punchy default envelope; CHANCE_100 because the operator wants a
-    // guaranteed fire for IR validation - no probability gating.
+void SpectrumBarsVisualisation::fire_manual_beat(VisualisationContext& /*ctx*/) {
+    // Sound-check tool: a guaranteed white pulse across the three
+    // render targets at CHANCE_100. White was chosen over per-band
+    // tinting because the labelled bars already communicate band
+    // identity; tinting the fire colour to match a non-existent
+    // "selected band" added complexity without earning anything.
     RgbPulseEvent pulse{};
-    pulse.r       = r;
-    pulse.g       = g;
-    pulse.b       = b;
+    pulse.r       = kFireR;
+    pulse.g       = kFireG;
+    pulse.b       = kFireB;
     pulse.attack  = pixmob::T_32_MS;
     pulse.sustain = pixmob::T_96_MS;
     pulse.release = pixmob::T_96_MS;
     pulse.chance  = pixmob::CHANCE_100;
 
-    // Three-target fan-out mirroring BeatPulse's per-beat shape, in the
-    // same order: wire -> screen flash -> IR via render_fx.
+    // Three-target fan-out: wire -> screen flash -> IR. Same order as
+    // BeatPulse's per-beat shape so the failure modes are symmetric.
     DAL::render_fx("esp-now-broadcast", pulse);
-    DAL::fire_display_clear("local",
-        DisplayClearEvent{focused_tint(band_focus)});
+    DAL::fire_display_clear("local", DisplayClearEvent{WHITE});
     DAL::render_fx("all-pixmobs", pulse);
-}
-
-bool SpectrumBarsVisualisation::band_is_focused(uint8_t band_focus, size_t i) {
-    switch (band_focus) {
-        case 0: return true;                                     // All
-        case 1: return i < kBassEnd;                              // Bass
-        case 2: return i >= kBassEnd && i < kMidEnd;              // Mid
-        case 3: return i >= kMidEnd;                              // Treble
-    }
-    return true;
-}
-
-uint16_t SpectrumBarsVisualisation::focused_tint(uint8_t band_focus) {
-    switch (band_focus) {
-        case 0: return WHITE;       // All - no highlight, neutral bars
-        case 1: return RED;         // Bass
-        case 2: return GREEN;       // Mid
-        case 3: return BLUE;        // Treble
-    }
-    return WHITE;
-}
-
-void SpectrumBarsVisualisation::focused_rgb(uint8_t band_focus,
-                                             uint8_t& r, uint8_t& g, uint8_t& b) {
-    switch (band_focus) {
-        case 1: r = 0xFF; g = 0x00; b = 0x00; return;   // Bass red
-        case 2: r = 0x00; g = 0xFF; b = 0x00; return;   // Mid green
-        case 3: r = 0x00; g = 0x00; b = 0xFF; return;   // Treble blue
-        case 0:
-        default: r = 0xFF; g = 0xFF; b = 0xFF; return;  // All white
-    }
 }
 
 // =============================================================================

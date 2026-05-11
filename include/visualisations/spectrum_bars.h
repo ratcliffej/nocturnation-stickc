@@ -23,14 +23,19 @@
 // id() is "spec-bars" (9 chars). The brief warned that "spectrum-bars"
 // would push the NVS namespace prefix "nv_<id>" past the 15-char limit.
 //
+// Visual: 7 perceptual bars (Sub Bass, Bass, Low Mids, Midrange, High
+// Mids, Presence, Air) mapping the analyser's Audible-Genius perceptual
+// boundaries. Each band has a permanent rainbow colour (purple -> red ->
+// orange -> yellow -> green -> cyan -> light blue, warm-to-cool by
+// frequency) and a 3-4 char label under the bar. The 32 log-spaced
+// spectrum bands are rolled up into the 7 perceptual buckets per a
+// hard-coded mapping table that matches the canonical 16 kHz operating
+// point; the Mud band (<20 Hz) is folded into Sub Bass.
+//
 // Properties:
-//   "band_focus" Enum [0..3], {"All","Bass","Mid","Treble"}, default 0.
-//      Tints the focused band(s) for visual emphasis. Bass = bands 0-9,
-//      Mid = bands 10-21, Treble = bands 22-31 (rough log-spaced split
-//      mirroring the analyser's 3-band roll-up boundaries).
 //   "sensitivity" U8 [1..10], default 5.
-//      Multiplies band magnitudes when computing bar height. Higher =
-//      more visible at low volumes. No unit string.
+//      Multiplies the log-compressed band magnitude when computing
+//      bar height. Higher = more visible at low volumes.
 
 #pragma once
 
@@ -77,20 +82,6 @@ private:
     void draw_spectrum(VisualisationContext& ctx,
                        const dal::SpectrumFrameEvent& ev);
     void fire_manual_beat(VisualisationContext& ctx);
-
-    // Returns true when band `i` is part of the currently focused band
-    // group ("All" -> always true; Bass/Mid/Treble -> contiguous range).
-    static bool band_is_focused(uint8_t band_focus, size_t i);
-
-    // Returns the RGB565 tint for the focused band's fill colour. For
-    // "All" the tint is white (no highlight); for Bass/Mid/Treble it's
-    // a recognisable hue.
-    static uint16_t focused_tint(uint8_t band_focus);
-
-    // Returns 0x00RRGGBB packed bytes matching focused_tint, used for
-    // the manual-beat PixMob pulse on Confirm.
-    static void focused_rgb(uint8_t band_focus,
-                            uint8_t& r, uint8_t& g, uint8_t& b);
 };
 
 // Singletons. main.cpp registers via:

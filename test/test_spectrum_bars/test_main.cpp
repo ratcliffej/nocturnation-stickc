@@ -204,35 +204,22 @@ static void test_identity(void) {
 }
 
 // =============================================================================
-// Property schema: band_focus + sensitivity.
+// Property schema: sensitivity only. band_focus was dropped when the vis
+// moved to 7 fixed-colour perceptual bands.
 // =============================================================================
 
 static void test_properties_schema(void) {
     SpectrumBarsVisualisation* v = spectrum_bars_instance();
     auto props = v->properties();
-    TEST_ASSERT_EQUAL_size_t(2, props.size);
+    TEST_ASSERT_EQUAL_size_t(1, props.size);
 
-    // band_focus
     const auto& def0 = props[0];
-    TEST_ASSERT_EQUAL_STRING("band_focus", def0.key);
-    TEST_ASSERT_EQUAL_INT((int)PropertyType::Enum, (int)def0.type);
-    TEST_ASSERT_EQUAL_UINT8(0, def0.min_value.as_enum());
-    TEST_ASSERT_EQUAL_UINT8(3, def0.max_value.as_enum());
-    TEST_ASSERT_EQUAL_UINT8(0, def0.default_value.as_enum());
-    TEST_ASSERT_NOT_NULL(def0.enum_names);
-    TEST_ASSERT_EQUAL_STRING("All",    def0.enum_names[0]);
-    TEST_ASSERT_EQUAL_STRING("Bass",   def0.enum_names[1]);
-    TEST_ASSERT_EQUAL_STRING("Mid",    def0.enum_names[2]);
-    TEST_ASSERT_EQUAL_STRING("Treble", def0.enum_names[3]);
-
-    // sensitivity
-    const auto& def1 = props[1];
-    TEST_ASSERT_EQUAL_STRING("sensitivity", def1.key);
-    TEST_ASSERT_EQUAL_INT((int)PropertyType::U8, (int)def1.type);
-    TEST_ASSERT_EQUAL_UINT8(1,  def1.min_value.as_u8());
-    TEST_ASSERT_EQUAL_UINT8(10, def1.max_value.as_u8());
-    TEST_ASSERT_EQUAL_UINT8(5,  def1.default_value.as_u8());
-    TEST_ASSERT_NULL(def1.unit);
+    TEST_ASSERT_EQUAL_STRING("sensitivity", def0.key);
+    TEST_ASSERT_EQUAL_INT((int)PropertyType::U8, (int)def0.type);
+    TEST_ASSERT_EQUAL_UINT8(1,  def0.min_value.as_u8());
+    TEST_ASSERT_EQUAL_UINT8(10, def0.max_value.as_u8());
+    TEST_ASSERT_EQUAL_UINT8(5,  def0.default_value.as_u8());
+    TEST_ASSERT_NULL(def0.unit);
 }
 
 // =============================================================================
@@ -363,11 +350,12 @@ static void test_on_spectrum_frame_throttles_to_30hz(void) {
 }
 
 // =============================================================================
-// Confirm fires the three-target manual beat at CHANCE_100. Default
-// band_focus is "All" -> white pulse.
+// Confirm fires the three-target manual beat at CHANCE_100 in white -
+// no per-band tinting any more (band_focus was dropped with the
+// perceptual-band rewrite).
 // =============================================================================
 
-static void test_confirm_fires_manual_beat_all_focus(void) {
+static void test_confirm_fires_manual_beat_white(void) {
     SpectrumBarsVisualisation* v = spectrum_bars_instance();
     VisualisationContext& ctx    = spectrum_bars_context();
     v->enter(ctx);
@@ -391,26 +379,6 @@ static void test_confirm_fires_manual_beat_all_focus(void) {
     TEST_ASSERT_EQUAL_UINT8(0xFF, ir.r);
     TEST_ASSERT_EQUAL_UINT8(0xFF, ir.g);
     TEST_ASSERT_EQUAL_UINT8(0xFF, ir.b);
-
-    v->exit(ctx);
-}
-
-static void test_confirm_fires_bass_red_when_band_focus_bass(void) {
-    SpectrumBarsVisualisation* v = spectrum_bars_instance();
-    PropertyBag& bag             = spectrum_bars_property_bag();
-    VisualisationContext& ctx    = spectrum_bars_context();
-    v->enter(ctx);
-
-    bag.set("band_focus", PropertyValue::from_enum(1));   // Bass
-    g_ir_driver.reset();
-    g_espnow_driver.reset();
-
-    v->on_input_action(ctx, InputEvent{InputAction::Confirm, 0});
-
-    auto ir = g_ir_driver.last_rgb_pulse();
-    TEST_ASSERT_EQUAL_UINT8(0xFF, ir.r);
-    TEST_ASSERT_EQUAL_UINT8(0x00, ir.g);
-    TEST_ASSERT_EQUAL_UINT8(0x00, ir.b);
 
     v->exit(ctx);
 }
@@ -477,8 +445,7 @@ int main(int, char**) {
     RUN_TEST(test_on_spectrum_frame_draws_bars);
     RUN_TEST(test_on_spectrum_frame_paused_suppresses_render);
     RUN_TEST(test_on_spectrum_frame_throttles_to_30hz);
-    RUN_TEST(test_confirm_fires_manual_beat_all_focus);
-    RUN_TEST(test_confirm_fires_bass_red_when_band_focus_bass);
+    RUN_TEST(test_confirm_fires_manual_beat_white);
     RUN_TEST(test_confirm_paused_does_not_fire);
     RUN_TEST(test_non_confirm_actions_do_not_fire);
     RUN_TEST(test_registry_registration);
