@@ -157,4 +157,4 @@ Pickup from Epic 4.6's architecture stream. Epic 4.6's `OutputBinding` contract 
 
 The design discussion landed three operator-friendly choices over more architecturally pure alternatives: device class as an explicit byte rather than a `CapabilityMask` (operators think in classes, not capability sets); `u8` group rather than `u16` (256 groups is enough for any realistic deployment); PixMob bracelets folded into the `Light` class rather than kept as a parallel target namespace (unified addressing model wins over taxonomic separation). The `"<hex>:<hex>"` target string is the API surface; the structured wire fields are the implementation.
 
-Total estimated effort: ~2-3 days. Smaller than 4.6 - it's a focused refinement of one surface, not an architecture stream.
+Total estimated effort: **~5-6 hours of coding plus hardware verification**. Each block is mechanical (one enum, one virtual method, one payload byte, one target-string parser, one slave filter, a numeric range bump, two call-site migrations, one cleanup pass). Comfortably half a day heads-down, a day with the H lane.
