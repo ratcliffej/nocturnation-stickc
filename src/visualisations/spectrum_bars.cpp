@@ -254,22 +254,6 @@ void SpectrumBarsVisualisation::draw_spectrum(VisualisationContext& ctx,
         band_sums[static_cast<size_t>(kBandMap[i])] += ev.magnitudes[i];
     }
 
-#ifdef ARDUINO
-    // Diagnostic: dump the 7 perceptual-band aggregates once per second
-    // so the floor / scale can be re-tuned against observed hardware
-    // values. Drop this block once the calibration is dialled in.
-    {
-        static uint32_t last_log_ms = 0;
-        if (now - last_log_ms >= 1000u) {
-            last_log_ms = now;
-            Serial.printf("[SPEC7] Sub=%.0f Bass=%.0f Low=%.0f Mid=%.0f "
-                          "Hi=%.0f Pres=%.0f Air=%.0f\n",
-                          band_sums[0], band_sums[1], band_sums[2], band_sums[3],
-                          band_sums[4], band_sums[5], band_sums[6]);
-        }
-    }
-#endif
-
     const uint8_t sensitivity = ctx.get_property("sensitivity").as_u8();
     const float   sens_scale  = static_cast<float>(sensitivity);
 
