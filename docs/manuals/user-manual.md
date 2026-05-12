@@ -2,8 +2,10 @@
 title: "NocturNation user manual"
 status: Draft
 firmware_version: "v0.5"
+notion_url: https://www.notion.so/35ebd067740580369c67c6738fe3f6d0
+notion_id: 35ebd067740580369c67c6738fe3f6d0
 last_synced: 2026-05-12
-sync_direction: local-only
+sync_direction: bidirectional
 ---
 
 # NocturNation user manual

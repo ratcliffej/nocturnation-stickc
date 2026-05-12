@@ -188,4 +188,11 @@ Deliverables landed so far:
 - Top-level `README.md` re-flowed to v0.5 reality (Plus2 + S3, six-layer architecture, manuals linked, Roadmap reflects closed Epics 1-4.7 + active 4.8 + next 5).
 - `docs/developing-shows.md` - added "What dispatch does for you (Epic 4.7 onward)" subsection covering the master loopback (ESP-NOW + IR + screen fan-out from one `render_fx` call) and the automatic IR reset primer.
 
-Notion sync remains deferred per Epic-opening decision - manuals stay local-only until the bench-verification reader pass surfaces or rules out doc issues.
+Notion sync wired up 2026-05-12 (afternoon): all four manual documents now have `notion_id` / `notion_url` / `sync_direction: bidirectional` in their frontmatter and live as subpages of the NocturNation project root in Notion. The manuals can now be edited in either VS Code or Notion and synced across.
+
+| Document | Notion page |
+|---|---|
+| [docs/manuals/README.md](../manuals/README.md) | [35ebd067740580369084dc6f9b2145e8](https://www.notion.so/35ebd067740580369084dc6f9b2145e8) |
+| [docs/manuals/user-manual.md](../manuals/user-manual.md) | [35ebd067740580369c67c6738fe3f6d0](https://www.notion.so/35ebd067740580369c67c6738fe3f6d0) |
+| [docs/manuals/protocol-manual.md](../manuals/protocol-manual.md) | [35ebd067740580378400ec3e0e8a0ca0](https://www.notion.so/35ebd067740580378400ec3e0e8a0ca0) |
+| [docs/manuals/flow-diagrams.md](../manuals/flow-diagrams.md) | [35ebd0677405807cb34cccefa936d4d9](https://www.notion.so/35ebd0677405807cb34cccefa936d4d9) |

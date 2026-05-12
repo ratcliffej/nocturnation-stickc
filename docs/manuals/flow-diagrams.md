@@ -1,8 +1,10 @@
 ---
 title: "NocturNation flow diagrams"
 status: Draft
+notion_url: https://www.notion.so/35ebd0677405807cb34cccefa936d4d9
+notion_id: 35ebd0677405807cb34cccefa936d4d9
 last_synced: 2026-05-12
-sync_direction: local-only
+sync_direction: bidirectional
 ---
 
 # NocturNation flow diagrams
