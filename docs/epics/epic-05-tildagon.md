@@ -1,9 +1,9 @@
 ---
 title: "Epic 5: Tildagon receiver app"
-status: Proposed
+status: In Progress
 notion_url: https://www.notion.so/358bd067740581b19551d158d658df76
 notion_id: 358bd067740581b19551d158d658df76
-notion_status: Proposed
+notion_status: In Progress
 last_synced: 2026-05-12
 sync_direction: bidirectional
 ---
@@ -316,3 +316,51 @@ Second pass on 2026-05-12 (afternoon) addressing user-supplied direction:
 17. **Protected show channel surfaced** as open design question Q5. For EMF 2026 the protection is operator-enforced (only the official master transmits on channel 11); cryptographic channel protection tracked as a separate Tier 1 security Epic.
 
 The original "intentionally under-refined" framing still applies to Block 1 and subsequent: the Tildagon platform may surface surprises that change the downstream block plan, and the plan should adapt rather than press on with a stale design.
+
+## Implementation status (2026-05-12)
+
+The Tildagon app is at [ratcliffej/nocturnation-tildagon](https://github.com/ratcliffej/nocturnation-tildagon) (private). Blocks 1-7 shipped at the protocol layer with 120 host-side pytest tests passing.
+
+### Shipped
+
+- **Block 1** (platform familiarisation): minimal App-framework app, `deploy.sh` wraps the `mpremote exec` recursive wipe + `cp -r` + `reset` cycle so the per-deploy gotchas (`cp -r` nesting, `rm -r` not honouring `__pycache__/`) don't recur.
+- **Block 2** (ESP-NOW receive): frame parser, 16-deep dedup ring on `(source_id, sequence_number)`, hop-count > 3 drop, channel auto-scan state machine. Bench-verified channel 11 receive on real hardware.
+- **Block 3** (perimeter LEDs): 12-LED ring renderer with per-LED ASR envelopes, chance gate, Calm Mode caps. `PatternDisable` emitted at start so the badge's patterndisplay service doesn't fight the renderer.
+- **Block 4** (LCD pulse): single full-screen ASR wash, Calm Mode disables entirely, Full mode caps at 60 % peak.
+- **Block 5** (settings + menu): persistent `Settings` (Calm Mode, group, channel) at `/nocturnation_settings.json`; in-app `Menu` opens on button C; class+group routing on inbound LIGHT_COMMAND per protocol manual §4.2.
+- **Block 6** (NO SIGNAL + backgrounded + MUSIC_EVENT): 3 s gap detection per protocol manual §6.2; perimeter LED tick moved into background_task so the ring keeps animating when backgrounded (§7.3); DROP/BREAKDOWN MUSIC_EVENTs synthesise local fires.
+- **Block 7 prep**: `tildagon.toml` manifest written per EMF app-store schema; `CHANGELOG.md` written; README documents the public-repo + topic + tag submission workflow.
+
+### Outstanding hardware verification (deferred to operator-at-bench)
+
+- **M5↔Tildagon interop session**: master Stick + Tildagon + bracelets running DynamicShow against real music. Confirm Tildagon visibly reacts in coordination with the bracelets.
+- **Battery drain measurement**: idle Tildagon vs receiver-app Tildagon, 2-hour window.
+- **MUSIC_EVENT (DROP/BREAKDOWN) hardware verification**: find a track that fires the M5's DropDetector reliably and confirm Tildagon synthesises the local whiteout / blue fade.
+- **NO SIGNAL hardware verification**: power off master mid-show; confirm Tildagon shows NO SIGNAL within 3 s; power master back on, confirm it clears.
+- **Backgrounded behaviour hardware verification**: minimise NocturNation, switch to another badge app, confirm the perimeter ring keeps animating; return to NocturNation, confirm clean resumption.
+
+### Outstanding submission steps (operator-driven)
+
+- **Repo visibility flip**: `nocturnation-tildagon` is currently private (Jason's choice for the iteration phase). EMF app-store crawler at <https://apps.badge.emfcamp.org/> only sees public repos. Submission requires going public.
+- **GitHub topic**: add `tildagon-app` to the repo's topic list so the crawler picks it up.
+- **Release tag**: create a `v1` tag and a GitHub release; the crawler reads the tagged release.
+- **Submission tracking**: 15 minutes after release, the app appears at <https://apps.badge.emfcamp.org/>. EMF community-driven review; budget for one revision round.
+
+### Known follow-ups not gating EMF 2026 ship
+
+- **Q6 channel-steering**: `wlan.config(channel=N)` on STA_IF rejects a second channel-change call with `RuntimeError 0xffffffff`. Current behaviour falls back to first-successful-channel; operator aligns master manually. Three avenues remain (`wlan.disconnect()` dance, `AP_IF`, or drop auto-scan entirely) - tackle when post-EMF.
+- **Q5 protected show channel**: manual-master mode firmware-constrained to channel 1 if implemented; channel 11 is operator-enforced-exclusive for EMF 2026. Cryptographic protection deferred to a separate Tier 1 security Epic.
+
+### Test counts
+
+120/120 host-side pytest tests passing on CPython 3.10+. Breakdown:
+- 8 frame parser (protocol manual annex C reference vectors).
+- 26 dedup ring.
+- 13 channel scan state machine.
+- 10 receive pipeline (parse + dedup + hop check).
+- 19 perimeter renderer (envelope, chance gate, freq cap, brightness cap).
+- 17 LCD renderer (Calm/Full toggle, envelope, caps).
+- 19 settings (coercion, JSON round-trip, corrupt-file fallback).
+- 8 signal tracker.
+- 13 MUSIC_EVENT synthesis (DROP / BREAKDOWN routing fields).
+- 7 (other / misc).
