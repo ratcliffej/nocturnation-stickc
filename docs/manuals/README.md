@@ -21,6 +21,7 @@ This directory holds the public-facing manuals for the NocturNation crowd-lighti
 |---|---|---|
 | [user-manual.md](user-manual.md) | Draft | Operators |
 | [protocol-manual.md](protocol-manual.md) | Draft | Implementers |
+| [flow-diagrams.md](flow-diagrams.md) | Draft | Both - 8 Mermaid diagrams covering topology, boot, modes, analyser, dispatch, receive, routing, configuration |
 
 ## Conventions
 

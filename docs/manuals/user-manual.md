@@ -42,6 +42,8 @@ For anything beyond this - including why some bracelets do not respond to a part
 
 ## 1. Theory of operation
 
+For a visual reference alongside this chapter, see [flow-diagrams.md](flow-diagrams.md) - Mermaid diagrams covering system topology, the master analyser pipeline, dispatch fan-out, and the slave receive flow.
+
 ### 1.1 What NocturNation is
 
 NocturNation is a distributed crowd-lighting system. One device (the **master**) listens to music through its microphone, detects beats and structural events (drops, breakdowns), and decides moment by moment what lights should do. It broadcasts those decisions over a short-range radio link to one or more **slaves**, which act as range-extending repeaters and infra-red transmitters. Each slave fires those decisions at the crowd as infra-red light commands, which are picked up by **bracelets** worn by the audience.

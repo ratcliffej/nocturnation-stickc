@@ -158,7 +158,12 @@ These need settling before block-level planning, but are not blockers for Epic 5
 
 **Q4: Channel scan order.** Protocol manual §5.3 specifies channel 11 first, then channel 1. Confirm the Tildagon implements the same order (it should, but worth verifying that the MicroPython `espnow` module's channel-switch timing supports the 2-second-per-channel cadence cleanly).
 
-**Q5: Protected show channel.** Channel 11 is the show channel; channel 1 is the open hobby channel. EMF attendees with Tildagons will tinker, including with the manual-master button-fire mode listed in scope. The show MUST be insulated from this. Hard rule: the Tildagon manual-master mode MUST transmit on channel 1 only. Channel 11 stays reserved for the official master, and any "lock channel 11 to a known master id" mechanism is out of scope for this Epic (a separate security Epic - Tier 1 - tracks authentication and channel protection). For EMF 2026, the protection is operator-enforced: only the official master transmits on channel 11; manual-master Tildagons are constrained at the firmware level to channel 1; the show benefits from frequency isolation without needing cryptographic protection yet.
+**Q5: Protected show channel.** Channel 11 is the show channel; channel 1 is the open hobby channel. EMF attendees with Tildagons will tinker, including with the manual-master button-fire mode listed in scope. The show MUST be insulated from this. Asymmetric channel handling on the Tildagon:
+
+- **Receive (slave mode)**: the Tildagon auto-scans both channels with channel 11 checked first per [protocol manual §5.3](../manuals/protocol-manual.md#53-slave-auto-scan-mode). The Tildagon listens on whichever channel the master is broadcasting on, so an attendee whose badge is on auto-scan participates in the show on channel 11 without configuration.
+- **Transmit (manual-master mode, if implemented)**: hard rule - MUST transmit on channel 1 only. The firmware physically cannot configure manual-master to use channel 11, even if the operator tries. Channel 11 stays reserved for the official master.
+
+Channel 11 is **not encrypted** at protocol version `0x01`. Any "lock channel 11 to a known master id" or cryptographic-authentication mechanism is out of scope for this Epic and tracked as a separate Tier 1 security Epic. For EMF 2026, the protection is two-layered: (a) firmware-enforced transmit constraint on the Tildagon (no badge can transmit on channel 11), and (b) operator-enforced master uniqueness (only the official master Stick is configured for channel 11 at the venue). The show benefits from frequency isolation without needing cryptographic protection yet.
 
 ## Acceptance criteria
 

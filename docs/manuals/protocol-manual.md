@@ -11,7 +11,7 @@ sync_direction: local-only
 
 > Normative specification of the NocturNation protocol: ESP-NOW transport, frame formats, class-and-group addressing, the PixMob infra-red encoding annex, channel discovery, the firmware non-volatile-storage schema, conformance requirements, and reference test vectors.
 
-This is the implementer-facing document. If you are an operator setting up a venue, read the [user manual](user-manual.md) instead. If you are designing show plug-ins for the NocturNation firmware, read [developing-shows.md](../developing-shows.md).
+This is the implementer-facing document. If you are an operator setting up a venue, read the [user manual](user-manual.md) instead. If you are designing show plug-ins for the NocturNation firmware, read [developing-shows.md](../developing-shows.md). For visual reference alongside this spec, the [flow-diagrams document](flow-diagrams.md) has Mermaid renderings of the receive pipeline and class-and-group routing.
 
 **Protocol version specified by this document**: `0x01`.
 **Reference firmware version**: v0.5 (`include/firmware_version.h`).
