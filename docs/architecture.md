@@ -110,7 +110,7 @@ The system is a single conceptual pipeline: events flow in, light commands flow 
 <tr>
 <td>**EMF Tildagon badge**</td>
 <td>Lightweight node, **slave-only**</td>
-<td>ESP32-C3 with WiFi/BLE, round colour LCD, six perimeter buttons, six addressable RGB LEDs, six hexpansion connectors. MicroPython runtime. Already deployed to thousands of attendees. **No microphone**, so cannot run autonomous audio analysis - therefore architecturally slave-only. Not a limitation; a clean fit for the receiver-only role and a prototype for the future mic-less companion-app device pattern (see §4.5 forward direction).</td>
+<td>ESP32-C3 with WiFi/BLE, round colour LCD, six perimeter buttons, twelve addressable RGB perimeter LEDs (indexed 1..12), six hexpansion connectors. MicroPython runtime. Already deployed to thousands of attendees. **No microphone**, so cannot run autonomous audio analysis - therefore architecturally slave-only. Not a limitation; a clean fit for the receiver-only role and a prototype for the future mic-less companion-app device pattern (see §4.5 forward direction).</td>
 </tr>
 <tr>
 <td>**Mac/PC laptop**</td>
@@ -460,7 +460,7 @@ Band-layout boundaries are specified in Hz, not bin numbers. Bin assignments are
   None of these are committed; flagged so the architecture remains compatible with the direction (BLE transport already declared, message-type space has room for stem-specific events, the orchestration layer's event consumption already runs off DAL events that could come from any analyser source).
 ---
 ## 6. Effects catalogue
-The **effect** is the unit of artistic intent that orchestration produces and that drivers translate to hardware. Each effect describes *what* the lights should do, abstracted from *how* a particular device implements it. A single effect renders differently on a PixMob bracelet (RGB+envelope IR command), a Tildagon badge (animation on six addressable LEDs plus optional screen overlay), and a future RGB-strip device (per-pixel state across many LEDs).
+The **effect** is the unit of artistic intent that orchestration produces and that drivers translate to hardware. Each effect describes *what* the lights should do, abstracted from *how* a particular device implements it. A single effect renders differently on a PixMob bracelet (RGB+envelope IR command), a Tildagon badge (animation on twelve addressable perimeter LEDs plus optional screen overlay), and a future RGB-strip device (per-pixel state across many LEDs).
 The set below is the v1 catalogue. Each is a primitive that orchestration can compose: a "show" is a sequence of effect invocations driven by events.
 ### 6.1 Effect primitives
 <table header-row="true">
@@ -610,7 +610,7 @@ Nocturnation runs on a heterogeneous mix of devices, several of which have a scr
 <td>**EMF Tildagon badge**</td>
 <td>Round colour LCD</td>
 <td>240 × 240 px (circular)</td>
-<td>Full colour, MicroPython framebuffer, SDK font and icon helpers. Plus six perimeter RGB LEDs as a separate "ring" surface.</td>
+<td>Full colour, MicroPython framebuffer, SDK font and icon helpers. Plus twelve perimeter RGB LEDs as a separate "ring" surface.</td>
 </tr>
 <tr>
 <td>**M5Stack Atom Lite**</td>
@@ -634,13 +634,13 @@ Nocturnation runs on a heterogeneous mix of devices, several of which have a scr
 ### 7.2 Display roles
 Nocturnation treats the display as a separately-addressable resource within a node, not coupled to the lighting effect. A node can simultaneously be running a Pulse effect on its lighting output *and* showing a BPM readout on its screen. Roles include:
 - **Operator UI**: status (current mode, BPM, battery, network state), parameter readouts (FFT level meter, beat indicator), error messages, configuration screens. The current StickC Plus2 firmware uses the display almost exclusively for this.
-- **Show element**: the screen becomes part of the visual output. Pulses on the lighting output can be accompanied by full-screen colour washes that match. Tildagon badges in the audience can show animations beyond what their six LEDs support: pulsing concentric circles, scrolling text ("NULLSECTOR", song titles), iconography (band logos, EMF logo, lunar phase glyphs).
+- **Show element**: the screen becomes part of the visual output. Pulses on the lighting output can be accompanied by full-screen colour washes that match. Tildagon badges in the audience can show animations beyond what their twelve LEDs support: pulsing concentric circles, scrolling text ("NULLSECTOR", song titles), iconography (band logos, EMF logo, lunar phase glyphs).
 - **Diagnostic**: live FFT spectrum, IBI history, ESP-NOW frame counters, last-received-from indicator. Useful for development and tuning, can be toggled off for performance.
 - **Idle / ambient**: when no music is playing or the device is paused, the screen shows something pleasant - a subtle hue cycle, a clock, the Nocturnation logo. Avoids the "dead device" appearance.
 ### 7.3 Tildagon-specific considerations
 The Tildagon badge is unusual because it's both a *receiver* (in the audience, animating with the show) and a *personal device* (its owner's badge for the festival, with their own apps and identity). The display treatment must respect that:
 - The Nocturnation receiver app runs as one of many apps on the badge. It only "owns" the display while it's the foreground app.
-- When in the foreground, the show animation runs full-screen on the round LCD plus the six perimeter LEDs.
+- When in the foreground, the show animation runs full-screen on the round LCD plus the twelve perimeter LEDs.
 - When backgrounded, the perimeter LEDs continue to react (ESP-NOW listening continues), but the screen shows whatever foreground app the user has chosen.
 - An opt-in "intense mode" gives the show full-screen treatment even when in another app, for users who want the full effect during a known show window.
 ### 7.4 Display-as-light + render_fx() canonical entry point
@@ -707,7 +707,7 @@ Widgets are a library, not a plug-in surface — Shows instantiate them directly
 
 Two bindings ship today: `LocalDisplayBinding` (paints the slave's LCD full-bleed with the broadcast colour and ASR envelope — the "display-as-light" behaviour from Epic 4) and `PixMobIrBinding` (IR + PixMob protocol relay; the legacy per-binding `group` property was retired post-Epic-4.65 when the binding became a pure relay that passes the inbound target_group straight through to the PixMob protocol's group byte). Both can run simultaneously; either can be disabled in Config to limit the slave to one output.
 
-Future hosts add their own bindings without touching slave code: Tildagon (Epic 5) will ship a `TildagonLedRingBinding` for its six perimeter RGB LEDs; a DMX deployment (Epic 7) lands a `DmxOutputBinding`; a BLE-controlled bracelet line lands a `BleBinding`. None of those require a recompile of `SlaveMode`.
+Future hosts add their own bindings without touching slave code: Tildagon (Epic 5) will ship a `TildagonLedRingBinding` for its twelve perimeter RGB LEDs (indexed 1..12 per the Tildagon hardware API); a DMX deployment (Epic 7) lands a `DmxOutputBinding`; a BLE-controlled bracelet line lands a `BleBinding`. None of those require a recompile of `SlaveMode`.
 
 **Device-class taxonomy (Epic 4.65).** Each `OutputBinding` declares a `DeviceClass` via `OutputBinding::device_class()` so a Show can address render targets by *what they are* rather than by transport-specific name strings. The taxonomy is operator-facing (lighting designers think in classes, not capability sets):
 

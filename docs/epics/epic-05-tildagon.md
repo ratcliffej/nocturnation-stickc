@@ -19,7 +19,7 @@ sync_direction: bidirectional
 
 ## Goal
 
-Build the Tildagon receiver app: a MicroPython app that runs on the EMF Tildagon badge, listens for NocturNation ESP-NOW frames, and animates the badge's six perimeter LEDs and 240×240 round LCD in time with the music produced by a master Stick. Calm Mode default-on per [architecture spec §15](../architecture.md). **Fresh codebase; not a port of the M5 Stick firmware.**
+Build the Tildagon receiver app: a MicroPython app that runs on the EMF Tildagon badge, listens for NocturNation ESP-NOW frames, and animates the badge's twelve perimeter LEDs (indexed 1..12 per the Tildagon hardware API) and 240×240 round LCD in time with the music produced by a master Stick. Calm Mode default-on per [architecture spec §15](../architecture.md). **Fresh codebase; not a port of the M5 Stick firmware.**
 
 ## Architectural constraint: Tildagon is slave-only
 
@@ -42,7 +42,7 @@ What the Tildagon *cannot* do compared to an M5 Stick:
 
 What the Tildagon *can* do that an M5 Stick cannot, easily:
 
-- Six addressable RGB perimeter LEDs around a 240×240 round LCD - a richer rendering surface than the StickC's narrow rectangular screen.
+- Twelve addressable RGB perimeter LEDs (indexed 1..12) around a 240×240 round LCD - a richer rendering surface than the StickC's narrow rectangular screen.
 - Sit in thousands of attendees' hands at EMF - the distribution problem is solved.
 - Use the established EMF app-store submission path with community goodwill.
 
@@ -165,6 +165,14 @@ These need settling before block-level planning, but are not blockers for Epic 5
 
 Channel 11 is **not encrypted** at protocol version `0x01`. Any "lock channel 11 to a known master id" or cryptographic-authentication mechanism is out of scope for this Epic and tracked as a separate Tier 1 security Epic. For EMF 2026, the protection is two-layered: (a) firmware-enforced transmit constraint on the Tildagon (no badge can transmit on channel 11), and (b) operator-enforced master uniqueness (only the official master Stick is configured for channel 11 at the venue). The show benefits from frequency isolation without needing cryptographic protection yet.
 
+**Q6: ESP-NOW receive-channel steering on Tildagon hardware** (added 2026-05-12 after Block 2 bench verification). The naïve `wlan.config(channel=N)` on `network.WLAN(STA_IF)` works for *the first* channel change after `wlan.active(True)`, but a subsequent change raises `RuntimeError: Wifi Unknown Error 0xffffffff`. Confirmed on real Tildagon hardware: first call (`channel=11`) succeeded, second call (`channel=1`) failed. The badge's networking layer appears to lock STA on a channel once it has been set, so the auto-scan-across-channels design from protocol manual §5.3 cannot be implemented as written. Block 2 currently falls back to receiving on whichever channel succeeded first (channel 11 in practice, since that is the scan-order head); the operator aligns the master Stick to that channel manually.
+
+Three avenues to investigate at Block 5 (configuration UI is the natural place to surface "current channel" + "scan / fixed" toggle to the operator, so the question wants answering then):
+
+1. Add `wlan.disconnect()` (and/or `wlan.active(False)` + `wlan.active(True)`) before each `wlan.config(channel=...)` call so the driver releases its state-lock.
+2. Use `AP_IF` instead of `STA_IF` - AP mode doesn't have STA's "associating, do not disturb" semantics, and channel changes should work freely. Trade-off: the badge would broadcast a Wi-Fi access point, which we'd need to keep hidden / unnamed to avoid confusing users.
+3. Drop auto-scan from scope. Operator picks a channel manually in Config and holds it for the deployment. Matches the bench-verified Block 2 fallback. Simplest, but loses the "badge just works, no configuration needed" UX.
+
 ## Acceptance criteria
 
 - [ ] App installs on a real Tildagon via `mpremote`.
@@ -207,7 +215,7 @@ Verification ownership: **(L)** = laptop / native Python tests, **(B)** = Tildag
 
 ### Block 3: Perimeter-LED rendering
 
-- Implement an envelope renderer for the six perimeter LEDs (attack/sustain/release with chance gate per LED).
+- Implement an envelope renderer for the twelve perimeter LEDs (attack/sustain/release with chance gate per LED).
 - Map a `LIGHT_COMMAND` envelope onto the six-LED ring: the [open design questions](#open-design-questions) Q1 choice of class behaviour determines whether kick/snare/hi-hat fires hit different LED subsets or all six.
 - Implement the frequency cap (Calm Mode 2 Hz / full 4 Hz).
 - **(L)** Python tests cover envelope timing on a stub LED layer.
