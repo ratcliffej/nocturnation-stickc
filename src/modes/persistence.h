@@ -63,13 +63,19 @@ void             save_slave_channel(uint8_t c);
 bool             load_slave_repeat_enabled();
 void             save_slave_repeat_enabled(bool e);
 
-// Slave NocturNation group ID (Epic 4.65 Block 5). Device-wide value
-// used by SlaveMode's receive filter: a binding is local (not a relay)
-// only fires when LIGHT_COMMAND.target_group is 0 OR matches this
-// value. Default 0 ("respond to everything"). Range 0-255; operator
-// sets via Config > Slave > Group. Distinct from PixMobIrBinding's
-// own "group" property which is the PixMob protocol's IR group code
-// (output concern), not the NocturNation receive-filter group.
+// Slave NocturNation group ID. Device-wide value used by SlaveMode's
+// receive filter: a non-relay binding fires when LIGHT_COMMAND
+// target_group is 0 (the broadcast group; everyone responds) OR
+// matches this value exactly. A device with slv_group == 0 has no
+// group and only responds to broadcasts; it does not act as a
+// receive-wildcard. Range 0-255; operator sets via Config > Group.
+//
+// First-boot default is a random value in {1, 2, 3} assigned by
+// ensure_slv_group_assigned() and persisted on first migrate call.
+// This puts fresh devices into one of the three "drum" groups that
+// DynamicShow routes kick / snare / hi-hat to, so a small fleet of
+// freshly-flashed Sticks naturally distributes across per-drum
+// addressing without the operator touching anything.
 uint8_t          load_slv_group();
 void             save_slv_group(uint8_t g);
 
@@ -135,6 +141,10 @@ void seed_legacy_slv_ir_grp(uint8_t g);
 // exercised on native. Sets the in-process active_vis buffer to `id`
 // and arms the migration flag; the next migrate call consumes it.
 void seed_legacy_active_vis(const char* id);
+// Set the deterministic stand-in for esp_random() % 3 + 1 used by
+// the native migrate_legacy_nvs_keys() first-boot slv_group path.
+// Must be in {1, 2, 3} to mirror what esp_random() would emit.
+void set_first_boot_rng(uint8_t g_in_1_3);
 void clear_native_persistence();
 }  // namespace test_seam
 #endif

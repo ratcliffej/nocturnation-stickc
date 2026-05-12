@@ -8,6 +8,7 @@
 #ifdef ARDUINO
 #include <Arduino.h>
 #include <Preferences.h>
+#include <esp_random.h>
 #endif
 
 #include <cstring>
@@ -251,6 +252,20 @@ void migrate_legacy_nvs_keys() {
         prefs.remove("active_vis");
     }
 
+    // First-boot slv_group assignment. If slv_group has never been
+    // written (fresh flash or post-factory-reset), pick a random value
+    // in {1, 2, 3} and persist it. Three groups are the canonical drum
+    // split DynamicShow routes kick / snare / hi-hat to, so a fleet of
+    // freshly-flashed Sticks naturally distributes across per-drum
+    // addressing on the operator's first power-on. Once persisted, the
+    // value is stable across reboots and only changes when the operator
+    // edits it via Config > Group. An operator deliberately setting
+    // slv_group = 0 is honoured and not retro-randomised.
+    if (!prefs.isKey("slv_group")) {
+        const uint8_t g = (esp_random() % 3) + 1;
+        prefs.putUChar("slv_group", g);
+    }
+
     prefs.end();
 }
 
@@ -282,6 +297,8 @@ namespace {
 uint8_t s_native_slave_channel    = 0;
 bool    s_native_slave_repeat_en  = false;
 uint8_t s_native_slv_group        = 0;
+bool    s_native_slv_group_set    = false;   // tracks "has slv_group been written" (the isKey() analogue)
+uint8_t s_native_first_boot_rng   = 2;       // deterministic stand-in for esp_random() % 3 + 1
 bool    s_native_legacy_slv_ir_grp_present = false;
 uint8_t s_native_legacy_slv_ir_grp_value   = 0;
 constexpr size_t kActiveVisBufSize = 16;
@@ -307,7 +324,10 @@ void             save_slave_channel(uint8_t c)  {
 bool             load_slave_repeat_enabled()           { return s_native_slave_repeat_en; }
 void             save_slave_repeat_enabled(bool e)     { s_native_slave_repeat_en = e; }
 uint8_t          load_slv_group()                       { return s_native_slv_group; }
-void             save_slv_group(uint8_t g)              { s_native_slv_group = g; }
+void             save_slv_group(uint8_t g)              {
+    s_native_slv_group     = g;
+    s_native_slv_group_set = true;
+}
 
 const char* load_active_vis_id() {
     return s_native_active_vis;
@@ -348,6 +368,16 @@ void migrate_legacy_nvs_keys() {
         s_native_active_show[kActiveShowBufSize - 1] = '\0';
         s_native_legacy_active_vis_present = false;
     }
+
+    // First-boot slv_group assignment. Mirrors the Arduino path: if the
+    // slv_group key has never been written, pick a value in {1, 2, 3}
+    // and persist it. Native uses the seam-controlled
+    // s_native_first_boot_rng instead of esp_random() so tests can
+    // assert a deterministic outcome.
+    if (!s_native_slv_group_set) {
+        s_native_slv_group     = s_native_first_boot_rng;
+        s_native_slv_group_set = true;
+    }
 }
 
 namespace test_seam {
@@ -361,10 +391,15 @@ void seed_legacy_active_vis(const char* id) {
     s_native_active_vis[kActiveVisBufSize - 1] = '\0';
     s_native_legacy_active_vis_present = true;
 }
+void set_first_boot_rng(uint8_t g_in_1_3) {
+    s_native_first_boot_rng = g_in_1_3;
+}
 void clear_native_persistence() {
     s_native_slave_channel             = 0;
     s_native_slave_repeat_en           = false;
     s_native_slv_group                 = 0;
+    s_native_slv_group_set             = false;
+    s_native_first_boot_rng            = 2;
     s_native_legacy_slv_ir_grp_present = false;
     s_native_legacy_slv_ir_grp_value   = 0;
     std::strncpy(s_native_active_vis, "beat-pulse", kActiveVisBufSize);

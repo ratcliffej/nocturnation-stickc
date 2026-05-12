@@ -477,6 +477,57 @@ static void test_migration_no_op_when_legacy_absent(void) {
     TEST_PASS();
 }
 
+// Epic 5 prep: first-boot slv_group assignment. A fresh device (no
+// prior save_slv_group call) gets a random value in {1, 2, 3} written
+// by migrate_legacy_nvs_keys. The native test seam pins the random
+// stand-in so the outcome is deterministic; we exercise all three
+// values to prove the path is wired correctly end-to-end.
+static void test_first_boot_assigns_random_group(void) {
+    for (uint8_t expected : {uint8_t{1}, uint8_t{2}, uint8_t{3}}) {
+        modes::persistence::test_seam::clear_native_persistence();
+        modes::persistence::test_seam::set_first_boot_rng(expected);
+
+        modes::persistence::migrate_legacy_nvs_keys();
+
+        TEST_ASSERT_EQUAL_UINT8(expected,
+                                modes::persistence::load_slv_group());
+    }
+}
+
+// Operator-set slv_group survives the migrate call. Once save_slv_group
+// has been called the key is "written" and migrate must not retro-
+// randomise it. In particular slv_group = 0 (operator explicitly opts
+// into "broadcast only") is honoured.
+static void test_migration_preserves_operator_set_group(void) {
+    modes::persistence::test_seam::clear_native_persistence();
+    modes::persistence::test_seam::set_first_boot_rng(2);
+
+    modes::persistence::save_slv_group(7);
+    modes::persistence::migrate_legacy_nvs_keys();
+    TEST_ASSERT_EQUAL_UINT8(7, modes::persistence::load_slv_group());
+
+    modes::persistence::test_seam::clear_native_persistence();
+    modes::persistence::save_slv_group(0);
+    modes::persistence::migrate_legacy_nvs_keys();
+    TEST_ASSERT_EQUAL_UINT8(0, modes::persistence::load_slv_group());
+}
+
+// Second migrate call is a no-op (post-first-boot the key is written;
+// migrate should leave it alone).
+static void test_migration_is_idempotent_for_first_boot(void) {
+    modes::persistence::test_seam::clear_native_persistence();
+    modes::persistence::test_seam::set_first_boot_rng(3);
+
+    modes::persistence::migrate_legacy_nvs_keys();
+    TEST_ASSERT_EQUAL_UINT8(3, modes::persistence::load_slv_group());
+
+    // Re-arm with a different RNG value; second migrate must not
+    // overwrite (mirroring the Arduino isKey() guard).
+    modes::persistence::test_seam::set_first_boot_rng(1);
+    modes::persistence::migrate_legacy_nvs_keys();
+    TEST_ASSERT_EQUAL_UINT8(3, modes::persistence::load_slv_group());
+}
+
 // =============================================================================
 // Slave persistence helpers (channel + repeat) - sanity round-trip via the
 // shared persistence module helpers added in Block 9.
@@ -529,6 +580,9 @@ int main(int, char**) {
     RUN_TEST(test_only_local_registered_skips_pixmob);
     RUN_TEST(test_migration_consumes_legacy_key);
     RUN_TEST(test_migration_no_op_when_legacy_absent);
+    RUN_TEST(test_first_boot_assigns_random_group);
+    RUN_TEST(test_migration_preserves_operator_set_group);
+    RUN_TEST(test_migration_is_idempotent_for_first_boot);
     RUN_TEST(test_slave_channel_round_trip);
     RUN_TEST(test_slave_repeat_round_trip);
     return UNITY_END();

@@ -95,7 +95,9 @@ Every render command on NocturNation is addressed by a pair of bytes: **target c
 
 Values 0x04 to 0xFF are reserved for future device classes (accelerometer sticks, smoke machines, large-format LED panels).
 
-The group is a one-byte filter from `0x00` to `0xFF`. Zero means broadcast; any other value means only devices whose configured group matches will render the command. For PixMob bracelets the group range is constrained to 0..31 by the IR protocol; for slaves on the radio link the range is the full byte. A slave's group is set by the [Group menu item](#41-top-level) at the top of the configuration tree.
+The group is a one-byte filter from `0x00` to `0xFF`. Zero is the **broadcast group**: every device renders a command addressed to group zero, regardless of which group the device is itself configured for. Any other group number addresses only devices whose own group matches exactly. For PixMob bracelets the group range is constrained to 0..31 by the IR protocol; for slaves on the radio link the range is the full byte. A slave's group is set by the [Group menu item](#41-top-level) at the top of the configuration tree.
+
+A slave whose own group is set to zero is in no specific group and only renders broadcasts; it does not act as a receive-side wildcard. Fresh devices are assigned a random group from 1, 2, or 3 at first boot (see [section 4.1](#41-top-level) below) so that a fleet of newly-flashed Sticks naturally distributes across the three drum groups that the Dynamic show routes kick / snare / hi-hat to.
 
 The combined `class:group` form is shown in the developer documentation as a four-hex-digit string (`"00:00"` for global broadcast, `"01:07"` for light-class group 7, `"02:00"` for every screen). Operators rarely interact with the syntax directly; it appears in serial diagnostics and in show authoring.
 
@@ -247,14 +249,20 @@ The top of the tree has six items:
 
 | Item | Type | NVS key | Default |
 |---|---|---|---|
-| `Group: N` | Direct action: cycles the slave receive-filter group | `slv_group` | 0 (broadcast) |
+| `Group: N` | Direct action: cycles the slave receive-filter group | `slv_group` | Random 1, 2, or 3 (assigned on first boot) |
 | `Show` | Picker over registered shows | `active_show` | "simple-beat" |
 | `Display` | Sub-menu | - | - |
 | `Connectivity` | Picker over transports | - | - |
 | `Utilities` | Picker over auxiliary tools | - | - |
 | `System` | Sub-menu | - | - |
 
-The `Group: N` item is the most-used setting. It is the device-wide receive filter for the slave (or for the master when the master is itself rendering as a slave under loopback). Setting it to a value from 1 to 31 means the device only accepts light commands targeted at that group; setting it to 0 accepts everything.
+The `Group: N` item is the most-used setting. It is the device-wide receive filter for the slave (or for the master when the master is itself rendering as a slave under loopback). It interacts with the master's target group as follows:
+
+- A master broadcast (`target_group = 0`) renders on every device regardless of the device's own group setting.
+- A targeted master fire (`target_group = N`, with N from 1 to 255) renders only on devices whose `Group: N` setting matches.
+- A device whose own `Group` is 0 only renders broadcasts; it does not act as a receive-side wildcard.
+
+First-boot devices are assigned a random group from 1, 2, or 3 so a fleet of newly-flashed Sticks distributes naturally across the three drum groups used by the Dynamic show (kick → group 1, snare → group 2, hi-hat → group 3). The operator can override this from the menu - cycle through 0 to 255, or factory-reset to re-roll.
 
 ### 4.2 Display
 

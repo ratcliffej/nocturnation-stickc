@@ -240,7 +240,11 @@ A receiver MUST accept a `LIGHT_COMMAND` if and only if:
 - `target_class == 0x00` OR `target_class == receiver.class`, AND
 - `target_group == 0x00` OR `target_group == receiver.group`.
 
-A receiver whose group is `0x00` MUST accept any `target_group` value (i.e. a receiver-side configured group of zero means "match anything", symmetrically with the `target_group == 0x00` rule).
+`target_group == 0x00` is the **broadcast group**: every receiver MUST accept it regardless of its own configured group, including a receiver whose configured group is itself `0x00`. The broadcast group is the canonical "address everyone in this class" form and is the default routing for `render_fx` calls on the reference master.
+
+A receiver whose configured group is `0x00` is treated as "in no specific group". It MUST accept the broadcast group (`target_group == 0x00`) but MUST NOT accept any non-zero `target_group`. This mirrors the way a PixMob bracelet whose factory-programmed group is 0 only responds to the broadcast group on its infra-red link.
+
+A receiver SHOULD therefore advertise a non-zero group in deployment. A receiver whose group is intentionally `0x00` is opting out of all per-group fan-out routing and only sees broadcasts.
 
 ### 4.3 Worked routing examples
 
