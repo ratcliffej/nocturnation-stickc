@@ -36,8 +36,8 @@ A useful first deployment is one master plus one slave, in a small room with a h
 ## Quick start
 
 ```bash
-git clone https://github.com/ratcliffej/nocturnation-stickc.git
-cd nocturnation-stickc
+git clone https://github.com/ratcliffej/nocturnation-m5.git
+cd nocturnation-m5
 pio run -e m5stack-stickcs3 -t upload
 ```
 

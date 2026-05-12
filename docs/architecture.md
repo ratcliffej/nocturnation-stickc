@@ -410,7 +410,7 @@ The analyser is a HAL+DAL capability cluster. Each host's HAL provides FFT magni
     - **3-band B/M/T roll-up**: Bass <250 Hz, Mid 250-2000 Hz, Treble 2 kHz - Nyquist. Cheap surface for kick onset and the audio meter.
     - **8-band perceptual summary** per Audible Genius music-production reference: Mud (0-20 Hz), Sub Bass (20-60), Bass (60-250), Low Mids (250-500), Midrange (500-2k), High Mids (2k-4k), Presence (4k-6k), Air (6k-20k, truncated at Nyquist below 40 kHz sample rates). Internally consistent: 3-band is a strict aggregation of 8-band.
 4. **Spectrum frame**: 32 log-spaced bands covering [30 Hz, Nyquist). Master-local; not broadcast over ESP-NOW (too heavy at FFT rate).
-5. **Beat detection** (sub-band adaptive threshold): per-band rolling history (40 frames ~= 1 s), mean and variance computed continuously, a watched bass-region band's magnitude exceeding (mean + k × std_dev) fires a kick beat. Self-calibrating per band so hosts with different mic SNR produce equivalent behavioural output. Tuning history captured in [`include/dal/analyser/beat_detector.h`](https://github.com/ratcliffej/nocturnation-stickc/blob/main/include/dal/analyser/beat_detector.h).
+5. **Beat detection** (sub-band adaptive threshold): per-band rolling history (40 frames ~= 1 s), mean and variance computed continuously, a watched bass-region band's magnitude exceeding (mean + k × std_dev) fires a kick beat. Self-calibrating per band so hosts with different mic SNR produce equivalent behavioural output. Tuning history captured in [`include/dal/analyser/beat_detector.h`](https://github.com/ratcliffej/nocturnation-m5/blob/main/include/dal/analyser/beat_detector.h).
 6. **Multi-band onset detection** (Epic 4.7 Block 3): the same `BeatDetector` class is instantiated twice more with different watched sub-band ranges and tuning. Snare watches bands 11-23 (~200 Hz - 2 kHz) with `k=2.0` and 150 ms refractory; hi-hat watches bands 27-31 (~4-8 kHz) with `k=1.8` and 80 ms refractory (shorter so 16th-note hi-hat patterns fire cleanly). Each detector exposes `last_strength()`, a 0..255 quantisation of magnitude-vs-threshold ratio; AudioFrameEvent stamps `beat_strength`, `snare_strength`, `hihat_strength`.
 7. **Drop detection** (long-window energy ratio): short window (~2 s) and long window (~10 s) of bass-roll-up energy. `ratio = short_mean / long_mean > 1.8` fires DROP; `< 0.4` fires BREAKDOWN. Arm/disarm gate prevents sustained energy re-firing across cooldown cycles - DROP is a transition event, not a persistent-state event.
 8. **Music descriptors** (Epic 4.7 Block 3): three continuous per-frame surfaces stamped on every AudioFrameEvent.
@@ -424,7 +424,7 @@ The analyser is a HAL+DAL capability cluster. Each host's HAL provides FFT magni
 
 The underlying FFT roll-up that produces `frame.spectrum` still runs unconditionally inside the mic backend because `BeatDetector` consumes the 32-band magnitudes in-pipeline; gating the FFT itself would silently break beat detection. The larger Plus2 CPU savings observed in Epic 4.6 come from Block 12's analyser micro-optimisations (constant hoisting in the spectrum-frame compositor, precomputed bin→Hz LUT, single-pass Welford variance in BeatDetector), not from this gate.
 ### 5.2 Capability surface
-A host's analyser declares a flat set of feature flags from the `Capability` enum (see [`include/hal/hal.h`](https://github.com/ratcliffej/nocturnation-stickc/blob/main/include/hal/hal.h)). Lit by Epic 4.5:
+A host's analyser declares a flat set of feature flags from the `Capability` enum (see [`include/hal/hal.h`](https://github.com/ratcliffej/nocturnation-m5/blob/main/include/hal/hal.h)). Lit by Epic 4.5:
 - `AnalyserBeatDetection` - produces BEAT_DETECTED events
 - `AnalyserDropDetection` - produces MUSIC_EVENT (DROP/BREAKDOWN) events
 - `AnalyserSpectrumFrame` - emits 32-band log-spaced SpectrumFrameEvent (master-local)
@@ -676,9 +676,9 @@ This abstraction is not yet implemented and is on the medium-term roadmap. For v
 ### 7.6 Plug-in surfaces (Epic 4.6 / 4.7)
 Epics 4.6 / 4.7 made the rendering pipeline pluggable on both sides of the wire. The host code never bakes in *which* show runs on the master or *which* render destinations a slave drives - those are plug-ins discovered from registries at boot. Epic 4.7 split the master-side surface into a Show plug-in (the performance) and a small widget library (level-tuning helpers a show or sub-mode composes); Epic 4.6's original `Visualisation` plug-in had conflated the two and is retired.
 
-For step-by-step developer guidance on adding a new Show — Show base class API, registration, analyser hooks, widget composition, persistence, testing — see [docs/developing-shows.md](https://github.com/ratcliffej/nocturnation-stickc/blob/main/docs/developing-shows.md).
+For step-by-step developer guidance on adding a new Show — Show base class API, registration, analyser hooks, widget composition, persistence, testing — see [docs/developing-shows.md](https://github.com/ratcliffej/nocturnation-m5/blob/main/docs/developing-shows.md).
 
-**Master-side: `Show` plug-ins (Epic 4.7).** A Show is the master-side performance unit. It consumes analyser events (kick / snare / hi-hat onsets, continuous music descriptors, section transitions), decides what to send on the wire via `DAL::render_fx("<class>:<group>", ev)`, owns the master LCD via `on_render(ctx)`, and handles operator input beyond the reserved back-gesture. The contract lives in [`include/shows/show.h`](https://github.com/ratcliffej/nocturnation-stickc/blob/main/include/shows/show.h): every hook has a no-op default so a Show overrides only what it cares about. At runtime each Show receives a `ShowContext` exposing `render_fx`, property-bag accessors, capability query, paused state, and time helpers - the same shape as the retired `VisualisationContext` with a clean rename.
+**Master-side: `Show` plug-ins (Epic 4.7).** A Show is the master-side performance unit. It consumes analyser events (kick / snare / hi-hat onsets, continuous music descriptors, section transitions), decides what to send on the wire via `DAL::render_fx("<class>:<group>", ev)`, owns the master LCD via `on_render(ctx)`, and handles operator input beyond the reserved back-gesture. The contract lives in [`include/shows/show.h`](https://github.com/ratcliffej/nocturnation-m5/blob/main/include/shows/show.h): every hook has a no-op default so a Show overrides only what it cares about. At runtime each Show receives a `ShowContext` exposing `render_fx`, property-bag accessors, capability query, paused state, and time helpers - the same shape as the retired `VisualisationContext` with a clean rename.
 
 Hook surface:
 
@@ -694,7 +694,7 @@ Two Shows ship today: `SimpleBeatShow` (preserves the pre-Epic-4.7 BeatPulse fan
 
 Shows own the master LCD: there's no Mode-level chrome anymore. `AutonomousMasterMode` is a thin host - lifecycle (audio input + ESP-NOW broadcast), pause flag, music_event broadcast (transport concern), picker / settings overlays. The retired `Visualisation::wants_full_screen()` virtual is gone; Shows always own the screen during normal operation, and the host's picker/settings overlays take over the LCD entirely when open.
 
-**Widget library** (Epic 4.7 Block 2). [`include/widgets/`](https://github.com/ratcliffej/nocturnation-stickc/tree/main/include/widgets) ships two reusable level-tuning helpers a Show or sub-mode composes inside its `on_render()`:
+**Widget library** (Epic 4.7 Block 2). [`include/widgets/`](https://github.com/ratcliffej/nocturnation-m5/tree/main/include/widgets) ships two reusable level-tuning helpers a Show or sub-mode composes inside its `on_render()`:
 
 - `BeatBarWidget` — horizontal level bar with optional threshold marker. `update(bar_fraction, marker_fraction)` clamps to [0, 1]; `draw(x, y, w, h)` paints frame + fill + marker. `SimpleBeatShow` composes it for the flux meter; `ConfigMode > Utilities > Level Tuning` hosts it standalone.
 - `SpectrumBarsWidget` — 7-band perceptual spectrum (Sub Bass / Bass / Lows / Mid / Hi / Pres / Air) with permanent warm-to-cool colour coding. `update(values_7band)` takes pre-aggregated fractions; a static `roll_up_spectrum_to_perceptual(magnitudes_32, sensitivity, out)` helper converts raw 32-band log-spectrum data. `DynamicShow` composes it in its on-screen status region; `ConfigMode > Utilities > Level Tuning` hosts it standalone.
@@ -703,7 +703,7 @@ Widgets are a library, not a plug-in surface — Shows instantiate them directly
 
 **ConfigMode > Utilities > Level Tuning** (Epic 4.7 Block 2) hosts both widgets in a live-audio bench-work sub-mode. Audio capture starts when the operator drills into the sub and stops on B-hold back. Btn2 cycles a display mode: **Live** (widgets render incoming flux + 7-band perceptual roll-up from `AudioFrameEvent`) and four fixed overrides (25 / 50 / 75 / 100 %). Btn1 fires a `render_fx("00:00")` test pulse at the displayed level for IR + ESP-NOW path verification independent of audio. The live mode is for venue sound-check ("is my mic level high enough that beats cross the threshold marker?"); the fixed modes are for bench rigs verifying transport without a sound source.
 
-**Slave-side: `OutputBinding` plug-ins** (Epic 4.6). An output binding consumes inbound `LIGHT_COMMAND` events and turns them into hardware action. Contract: [`include/output_bindings/output_binding.h`](https://github.com/ratcliffej/nocturnation-stickc/blob/main/include/output_bindings/output_binding.h). Same Plugin base as Show, same property-bag and capability machinery. Bindings have no `render_fx` accessor (they *are* the render destination); hook surface is `on_light_command`. `SlaveMode` fans inbound LIGHT_COMMAND out to every registered binding, filtering on `(binding.class(), binding.configured_group())` against the frame's target_class + target_group (Epic 4.65).
+**Slave-side: `OutputBinding` plug-ins** (Epic 4.6). An output binding consumes inbound `LIGHT_COMMAND` events and turns them into hardware action. Contract: [`include/output_bindings/output_binding.h`](https://github.com/ratcliffej/nocturnation-m5/blob/main/include/output_bindings/output_binding.h). Same Plugin base as Show, same property-bag and capability machinery. Bindings have no `render_fx` accessor (they *are* the render destination); hook surface is `on_light_command`. `SlaveMode` fans inbound LIGHT_COMMAND out to every registered binding, filtering on `(binding.class(), binding.configured_group())` against the frame's target_class + target_group (Epic 4.65).
 
 Two bindings ship today: `LocalDisplayBinding` (paints the slave's LCD full-bleed with the broadcast colour and ASR envelope — the "display-as-light" behaviour from Epic 4) and `PixMobIrBinding` (IR + PixMob protocol relay; the legacy per-binding `group` property was retired post-Epic-4.65 when the binding became a pure relay that passes the inbound target_group straight through to the PixMob protocol's group byte). Both can run simultaneously; either can be disabled in Config to limit the slave to one output.
 
@@ -835,7 +835,7 @@ For hardware validation and bracelet setup verification. Each test fires a known
 ### 8.7 InputAction abstraction (Epic 4.6 Block 4)
 The UI surface differs across hosts (StickC Plus2 + S3 = 2 buttons in practice once the power button is excluded; Tildagon = 6 buttons; Atom Lite = 1 button), so Epic 4.6 introduced a semantic input layer that Shows and the framework UI consume regardless of host. Physical button-to-action mapping is the HAL's concern; everything above the HAL deals in `InputAction` events.
 
-The canonical action set lives in [`include/hal/input_action.h`](https://github.com/ratcliffej/nocturnation-stickc/blob/main/include/hal/input_action.h):
+The canonical action set lives in [`include/hal/input_action.h`](https://github.com/ratcliffej/nocturnation-m5/blob/main/include/hal/input_action.h):
 
 ```c++
 enum class InputAction : uint8_t {
@@ -851,7 +851,7 @@ enum class InputAction : uint8_t {
 };
 ```
 
-For 2-button hosts (Plus2 + S3), the mapping lives in [`src/hal/input_action_mapper_2btn.cpp`](https://github.com/ratcliffej/nocturnation-stickc/blob/main/src/hal/input_action_mapper_2btn.cpp):
+For 2-button hosts (Plus2 + S3), the mapping lives in [`src/hal/input_action_mapper_2btn.cpp`](https://github.com/ratcliffej/nocturnation-m5/blob/main/src/hal/input_action_mapper_2btn.cpp):
 
 | Physical event | Action |
 |---|---|

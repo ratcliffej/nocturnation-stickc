@@ -158,7 +158,7 @@ The Plus2 is end-of-life from M5Stack but remains fully supported. Buy the S3 fo
 
 ### 2.2 PixMob bracelets
 
-NocturNation targets PixMob X4 Gen 3.1 bracelets. These are widely available second-hand from concert merchandise channels, typically in batches of dozens to hundreds. Earlier PixMob generations use the same infra-red encoding and should work but have not been bench-verified by the project; report any compatibility issues against [the repository](https://github.com/ratcliffej/nocturnation-stickc).
+NocturNation targets PixMob X4 Gen 3.1 bracelets. These are widely available second-hand from concert merchandise channels, typically in batches of dozens to hundreds. Earlier PixMob generations use the same infra-red encoding and should work but have not been bench-verified by the project; report any compatibility issues against [the repository](https://github.com/ratcliffej/nocturnation-m5).
 
 Each bracelet has a CR1632 coin cell, a single RGB LED behind a diffuser, and an infra-red photodiode on the visible face. They wake on an infra-red command, render the command, and return to deep sleep within a few seconds. Battery life on fresh cells is approximately one large event (eight hours of intermittent activity).
 
@@ -190,7 +190,7 @@ A slave with the slave-as-repeater toggle enabled retransmits every accepted fra
 ### 3.1 Prerequisites
 
 - A USB-C cable that supports data (cheap charging-only cables will not work).
-- A clone of the repository: `git clone https://github.com/ratcliffej/nocturnation-stickc`.
+- A clone of the repository: `git clone https://github.com/ratcliffej/nocturnation-m5`.
 - [PlatformIO](https://platformio.org/) installed. The project assumes the CLI tool is reachable; on macOS the executable is typically at `~/.platformio/penv/bin/pio`.
 - An M5StickC Plus2 or M5StickS3.
 
@@ -486,7 +486,7 @@ If AutonomousMaster is running but no `[espnow TX LIGHT]` lines appear on the se
 
 **M5StickS3** - the second-generation reference Stick. ESP32-S3-PICO-1-N8R8, I2S codec microphone, focused IR. Current recommended hardware.
 
-**NocturNation** - this project. An open-source distributed crowd-lighting system. Repository: [github.com/ratcliffej/nocturnation-stickc](https://github.com/ratcliffej/nocturnation-stickc).
+**NocturNation** - this project. An open-source distributed crowd-lighting system. Repository: [github.com/ratcliffej/nocturnation-m5](https://github.com/ratcliffej/nocturnation-m5).
 
 **NO SIGNAL** - the slave-screen indication that no master traffic has arrived for three seconds. See [section 6.2](#62-no-signal-on-the-slave).
 
