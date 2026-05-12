@@ -328,6 +328,41 @@ coverage. Density-driven shows typically scale chance from sparse
 (CHANCE_10) when music is quiet to dense (CHANCE_100) at a busy
 chorus.
 
+### What dispatch does for you (Epic 4.7 onward)
+
+One `render_fx` call fans out through `dispatch_output_class_group`
+in [src/dal/dal.cpp](../src/dal/dal.cpp) to three sinks. You do not
+need to hand-roll a separate transmission to the master's own IR
+LED or screen; the master is treated as one of its own slaves for
+output purposes.
+
+1. **ESP-NOW broadcast**. Always fires, regardless of target_class.
+   Every slave on the channel sees the frame and applies its own
+   class+group routing.
+2. **Master IR loopback**. Fires when `target_class` is `0x00`
+   (All) or `0x01` (Light). Drives the master's own PixMob infra-red
+   transmitter so bracelets near the operator's Stick also light up.
+3. **Master screen loopback**. Fires when `target_class` is `0x00`
+   (All) or `0x02` (Screen). Drives the master's LCD pulse animation
+   so the operator sees the fire on-screen.
+
+**The IR reset primer**. Before path 2 fires a non-trivial command,
+the dispatch checks whether the IR transmitter has been idle for
+more than three hundred milliseconds. If it has, it sends an
+additional `(0, 0, 0)` broadcast frame to clear residual envelope
+state on bracelets, then fires the main command. The primer is
+suppressed when (a) the main fire is itself `(0, 0, 0)`, or (b) the
+last IR fire was within three hundred milliseconds (high-cadence
+streams like Rainbow at 25 ms cadence skip the primer naturally).
+You do not need to think about the primer when writing a Show -
+just call `render_fx` and the dispatch handles it.
+
+**The single canonical call**. Pre-Epic-4.7 shows had to fire to
+`"all-pixmobs"` for the slaves *and* `"local"` for the master's own
+LCD - three or more separate calls per beat. From Epic 4.7 onwards
+the single `render_fx("00:00", ev)` call covers everything. The
+master is no longer special.
+
 ## Drawing to the screen
 
 Your Show owns the master's LCD canvas during normal operation. The

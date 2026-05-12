@@ -1,173 +1,146 @@
-# NocturNation M5StickC Plus2 firmware
+# NocturNation
 
 > Open-source crowd lighting, conjured from cheap silicon.
 
-A reference implementation of the [NocturNation](https://github.com/ratcliffej/nocturnation-stickc) crowd-lighting system, built on a £25 M5StickC Plus2. Clap, kick, or aim it at a PixMob bracelet and watch the bracelet flash in time with the music.
+NocturNation is a modular open-source crowd-lighting system: one master Stick listens to music, detects beats and structural events, and broadcasts light commands to a swarm of slave Sticks that fire infra-red at PixMob bracelets worn by the audience. A full deployment costs roughly the price of a meal out, and gives smaller bands and art installations the same kind of platform that proprietary stadium fan-lighting systems sell to touring acts at five-figure prices.
 
-NocturNation as a whole aspires to be a modular open-source alternative to the proprietary stadium fan based lighting systems sold to touring bands, giving smaller bands and art installations a similar platform. A NocturNation transmitter costs roughly the price of a takeaway. This repository is the starting point: one transmitter, one wearer. Mesh networking, badge receivers and DMX/Art-Net bridges are on the longer-term roadmap; see the [Roadmap](#roadmap) section below.
+This repository is the reference firmware. It runs on the M5StickC Plus2 and the M5StickS3 (the "Sticks"). Both Sticks share a single firmware codebase with hardware-specific abstraction underneath.
 
 ---
 
-## What's in the box
+## Documentation
 
-The firmware does three things:
-
-1. **Direct-fire mode (idle).** Pick a colour with the side button, hit the front button, the bracelet flashes that colour. Use it as a remote control.
-2. **Beat-detection mode.** Press the power button and the StickC Plus2 starts listening through its built-in PDM mic. An FFT picks out kick-drum energy in the 62-187 Hz bass band, and every detected beat fires a synchronised colour pulse at the bracelet. The envelope (attack / sustain / release) adapts to the detected BPM so fast and slow tracks both feel right.
-3. **Group setup helper.** A function in the source that assigns a PixMob bracelet to a specific group ID, so multi-wearer shows can address subsets independently. Not exposed in the UI yet.
+| Document | Audience |
+|---|---|
+| [User manual](docs/manuals/user-manual.md) | Operators setting up a venue. Theory of operation, hardware, firmware install, configuration walk-through, modes and shows, troubleshooting, glossary. |
+| [Protocol manual](docs/manuals/protocol-manual.md) | Implementers building a third-party transmitter or receiver. Wireless layer, frame formats, class-and-group addressing, PixMob IR annex, conformance, test vectors. |
+| [Developer guide](docs/developing-shows.md) | Contributors writing new `Show` plug-ins for the firmware. The `Show` base class, analyser hooks, `render_fx` API, widget composition, persistence, testing. |
+| [Architecture spec](docs/architecture.md) | Internal design notes. Bidirectionally synced with the Notion source-of-truth page. |
+| [Active Epics](docs/epics/) | Per-Epic plans and close-outs. |
 
 ---
 
 ## Hardware
 
 | Item | Notes |
-| --- | --- |
-| M5StickC Plus2 | ESP32-PICO-V3-02, 1.14" 240 × 135 TFT, PDM mic, IR LED on GPIO 19, ~2 hr battery. |
-| PixMob X4 Gen3.1 bracelet | The ones distributed at Coldplay's *Music of the Spheres* tour, 2022-2024. Earlier hardware revisions are partially compatible; later revisions are not yet tested. |
-| USB-C cable | For flashing. |
-| A speaker playing music | Anything with a strong kick on the downbeat. The reference test track is Vengaboys, *We Like to Party* (138 BPM). |
+|---|---|
+| **M5StickC Plus2** or **M5StickS3** | The Stick. Either can run as master, slave, or both. The S3 is the current first-class reference; the Plus2 (now end-of-life from M5Stack) remains fully supported. See the [hardware section of the user manual](docs/manuals/user-manual.md#2-hardware) for the comparison. |
+| **PixMob X4 Gen 3.1 bracelets** | The reference target. Distributed at Coldplay's *Music of the Spheres* tour (2022-2024) and widely available second-hand. Earlier generations are partially compatible; later generations have not been bench-tested. |
+| **USB-C cable** | For flashing the Sticks. |
+| **A speaker playing music** | Anything with a clear kick drum. The reference test track is Vengaboys, *We Like to Party* (138 BPM). |
+
+A useful first deployment is one master plus one slave, in a small room with a handful of bracelets. For larger venues see [hardware deployment guidance in the user manual](docs/manuals/user-manual.md#23-ir-radiation-patterns).
 
 ---
 
 ## Quick start
 
-### Prerequisites
-
-- macOS, Linux, or Windows.
-- [Visual Studio Code](https://code.visualstudio.com/) with the [PlatformIO IDE extension](https://marketplace.visualstudio.com/items?itemName=platformio.platformio-ide).
-- The PlatformIO extension brings its own bundled CLI; you do not need a system-wide `pio` install.
-
-### Clone, build, flash
-
 ```bash
 git clone https://github.com/ratcliffej/nocturnation-stickc.git
 cd nocturnation-stickc
+pio run -e m5stack-stickcs3 -t upload
 ```
 
-Open the folder in VS Code. PlatformIO will index libraries on first open (~30 seconds).
+Substitute `m5stack-stickcplus2` for a Plus2. Open the folder in VS Code with the [PlatformIO IDE extension](https://marketplace.visualstudio.com/items?itemName=platformio.platformio-ide) for the integrated build/upload flow. The PlatformIO extension ships its own CLI, so a system-wide `pio` install is not required; on macOS it lives at `~/.platformio/penv/bin/pio`.
 
-To build:
-
-```bash
-pio run -e m5stack-stickcplus2
-```
-
-To flash a connected StickC Plus2:
-
-```bash
-pio run -e m5stack-stickcplus2 -t upload
-```
-
-Or use the PlatformIO sidebar: **Build** then **Upload** under the `m5stack-stickcplus2` env.
-
-If `pio` isn't on your `PATH`, the PlatformIO extension installs it at `~/.platformio/penv/bin/pio` on macOS and Linux, and `%USERPROFILE%\.platformio\penv\Scripts\pio.exe` on Windows.
-
-### Optional: serial monitor
-
-```bash
-pio device monitor -e m5stack-stickcplus2
-```
-
-The current build is mostly silent on the serial port; it's useful when developing.
+For a more thorough quickstart - including button layout, mode flow, and how to add a second slave - read the [user manual quickstart](docs/manuals/user-manual.md#quickstart).
 
 ---
 
-## Using it
+## Architecture at a glance
 
-Once flashed, the StickC Plus2 boots into idle mode.
+The firmware has a six-layer plug-in architecture:
 
-| Button | Idle | Beat mode |
-| --- | --- | --- |
-| **A** (front) | Send a single IR pulse to any bracelet in front of the device, in the current colour. | Toggle "muted": keep detecting beats and updating the BPM, but don't transmit. |
-| **B** (side) | Cycle through the colour palette: RED → GREEN → BLUE → YELLOW → WHITE → RED ... | Same. |
-| **PWR** (top, short click) | Enter beat mode. | Exit beat mode. |
+1. **HAL** - hardware abstraction (mic, IR, display, buttons, BLE, ESP-NOW). Plus2 and S3 backends.
+2. **DAL** - device-abstraction layer. Holds the audio analyser core (BeatDetector, DropDetector, music descriptors), event bus, and the canonical `render_fx` dispatch.
+3. **Plug-ins** - `Plugin` base class with property bags and per-plug-in NVS namespaces.
+4. **Analyser** - sits on the DAL's mic pipeline; produces beat, drop, and music-descriptor events that the master's Show consumes.
+5. **Shows** (Epic 4.7) - operator-selectable performances. Currently `SimpleBeatShow` (faithful pre-4.7 BeatPulse behaviour) and `DynamicShow` (FFT-driven HSV with per-drum group routing).
+6. **OutputBindings** - slave-side render targets. Currently `LocalDisplayBinding` (LCD pulse) and `PixMobIrBinding` (infra-red wire encoder, a pure relay).
 
-In beat mode the screen shows the current colour, detected BPM, battery percentage, and a live spectral-flux meter with the beat-detection threshold marked in red. Aim the StickC Plus2 at a PixMob bracelet from anywhere up to about three metres in a dark room, play a track with a clear kick drum, and the bracelet should pulse on each detected beat.
+Every render call flows through `render_fx("<class>:<group>", ev)` with structured class+group targets. The master's dispatch fans every call out to ESP-NOW broadcast, the master's own infra-red transmitter, and the master's screen pulse - so the master is treated as one of its own slaves for output purposes. An automatic IR reset primer is inserted before non-trivial fires when the IR transmitter has been idle for more than three hundred milliseconds, clearing residual envelope state on bracelets. Both of these are dispatch-side behaviours and described in detail in the [user manual's theory of operation](docs/manuals/user-manual.md#1-theory-of-operation) and the [protocol manual's class-and-group addressing](docs/manuals/protocol-manual.md#4-class-and-group-addressing).
 
-A few seconds of music are needed before the BPM estimate stabilises (the firmware needs three valid inter-beat intervals before it commits to a number).
+The architecture has settled enough that protocol-level documentation is now public-facing rather than internal design notes - hence the [protocol manual](docs/manuals/protocol-manual.md). Third-party implementations are welcome.
 
 ---
 
 ## Testing
 
-Two layers of automated verification, plus a third manual one.
+Three layers.
 
-### Native unit tests
-
-Pure-logic tests run on the host - no hardware needed. The current suite covers:
-
-- Sanity check that the test toolchain is alive.
-- Bit-for-bit IR encoder parity against [jamesw343/PixMob_IR](https://github.com/jamesw343/PixMob_IR)'s Python reference for a representative set of inputs.
-- HAL capability declaration / query mechanics.
-- DAL registry, capability supports, fail-silent dispatch, and event delivery to subscribers.
-
-Tests live in two native environments: `native` (header-only tests) and `native_dal` (tests that exercise `src/dal/dal.cpp`). Run both with:
+**Native unit tests** run on the host - no hardware needed. The current suite has 348 tests across 17 native environments and covers the analyser, the transport, the plug-in surfaces, the show framework, and bit-for-bit IR encoder parity against [jamesw343/PixMob_IR](https://github.com/jamesw343/PixMob_IR)'s Python reference. Run all native suites with:
 
 ```bash
-pio test -e native -e native_dal
+pio test -e native -e native_dal -e native_modes -e native_effects -e native_espnow -e native_audio -e native_analyser -e native_plugin -e native_input_action -e native_visualisation -e native_output_binding -e native_beat_pulse -e native_output_binding_concrete -e native_master_overlay -e native_spectrum_bars -e native_pixmob_parity -e native_widgets
 ```
 
-You should see 23 passing tests across the four test suites.
+(Or build a wrapper script; the explicit `-e` list is awkward but is what PlatformIO requires.)
 
-`pio run` (no `-e`) builds the firmware only. `pio test` without `-e` will not pick up the native envs because the firmware env is the only `default_env`; passing both `-e` flags above is the explicit invocation.
-
-### Build verification
-
-Compiler warnings are treated as signal:
+**Build verification** ensures both firmware environments compile clean:
 
 ```bash
-pio run -e m5stack-stickcplus2
+pio run -e m5stack-stickcs3 -e m5stack-stickcplus2
 ```
 
-The build flags include `-Wformat -Wformat-security`. The current source compiles clean.
+Warnings are treated as signal; the current source compiles clean.
 
-### Hardware verification
-
-There is no automated test for the audio side, the display, or the bracelet response - the only "is the audio pipeline correct" test is a human watching a bracelet flash to a kick drum. Recommended ritual:
-
-1. Flash the StickC Plus2.
-2. Place a PixMob bracelet in front of it.
-3. Play *We Like to Party* by Vengaboys at moderate volume on a speaker in the room.
-4. Press **PWR** to enter beat mode.
-5. Within ten seconds the BPM display should converge on something near 138, and the bracelet should be flashing in time with the kick.
+**Hardware verification** is the only way to verify the audio pipeline, the IR-side rendering, and bracelet response. The recommended ritual is in the [user manual](docs/manuals/user-manual.md#5-modes-and-shows).
 
 ---
 
 ## Project layout
 
 ```
-include/pixmob_protocol.h    PixMob IR encoder (header-only port from jamesw343/PixMob_IR).
-src/main.cpp                 Firmware entry point, FFT + UI + IR transmission.
-test/test_sanity/            Native sanity check that the test toolchain is alive.
-test/test_pixmob_parity/     Bit-for-bit parity tests against the Python reference encoder.
-test/support/Arduino.h       Minimal host-side shim so the encoder header compiles natively.
-boards/m5stickc_plus2.json   PlatformIO board definition for the Plus2 (8 MB flash variant).
-platformio.ini               Build, library, and test configuration.
+include/                  HAL/DAL/plug-in/transport public interfaces.
+src/hal/                  HAL backends (m5stickc-plus2, m5stickc-s3).
+src/dal/                  DAL implementation, analyser, render dispatch.
+src/transport/espnow/     ESP-NOW frame encode/decode.
+src/modes/                Runtime mode finite-state-machine.
+src/shows/                Show plug-ins (simple_beat, dynamic).
+src/output_bindings/      Slave-side render targets (local_display, pixmob_ir).
+src/visualisations/       Legacy visualisations (pre-Epic-4.7; kept for migration).
+include/pixmob_protocol.h PixMob IR encoder (header-only port from jamesw343/PixMob_IR).
+test/                     Native unit tests, one folder per native env.
+boards/                   PlatformIO board definitions.
+platformio.ini            Build, library, and test configuration.
+docs/                     Architecture spec, manuals, Epic plans, developer guide.
 ```
-
-The `[env:native]` section of `platformio.ini` excludes firmware sources from the host build; only the test files compile against the native toolchain.
 
 ---
 
 ## Roadmap
 
-- **Epic 1 (this milestone, complete).** Establish a clean PlatformIO baseline of the existing prototype, with parity tests against the upstream PixMob protocol reference, published as a public repo with this README.
-- **Epic 2 (next).** Architecture refactor: introduce a hardware abstraction layer (HAL) to decouple the firmware from the M5StickC Plus2 and the M5Unified library, then extract the FX engine, the IR transport, and the mode state machine behind clean abstractions. The goal is enabling alternate host boards (vendor-independent), additional transports (ESP-NOW mesh, BLE), and additional receivers (Tildagon badges, DMX/Art-Net bridges) without touching beat detection.
-- **Beyond.** Multi-node mesh, group-addressed effects, audience-app integrations.
+Closed Epics:
 
-The full architecture specification lives in [docs/architecture.md](docs/architecture.md), with active Epic plans in [docs/epics/](docs/epics/). The Notion mirror is private; the Markdown copies in this repo are the source of truth.
+- **Epic 1** - PlatformIO baseline + byte-identical IR encoder parity vs jamesw343's reference.
+- **Epic 2** - Hardware abstraction layer + Device abstraction layer + Effect classes + Mode FSM + TestDevice extensibility.
+- **Epic 3** - Boot countdown, mode menu, Test Mode, Config tree, status display.
+- **Epic 4** - ESP-NOW transport on Plus2 + S3, redundant TX, dedup ring, signal-quality bars, slave-as-repeater, two-channel architecture.
+- **Epic 4.5** - Capability-aware audio analyser. Sub-band adaptive BeatDetector, DropDetector with arm/disarm gate, `MUSIC_EVENT` wire format.
+- **Epic 4.6** - Clean plug-in architecture. `Visualisation` and `OutputBinding` plug-in surfaces, semantic `InputAction` layer, per-plug-in NVS namespaces.
+- **Epic 4.65** - Class+group device addressing. `render_fx("<class>:<group>")` structured targets; `LightCommandPayload` carries both bytes on the wire.
+- **Epic 4.7** - Show plug-in framework + DynamicShow. `Show` base class atop `Plugin`; widget library (BeatBarWidget, SpectrumBarsWidget); analyser primitives (snare/hi-hat onset, music descriptors, section detection); IR reset primer + master-IR loopback in dispatch.
+
+In progress:
+
+- **Epic 4.8** - User manual and NocturNation protocol manual (this Epic). Doc-only; the manuals link from this README and live under [docs/manuals/](docs/manuals/).
+
+Next on the roadmap:
+
+- **Epic 5** - Tildagon receiver. Second host backend; pressure-tests the HAL contract on a non-M5Unified host (ESP32-C3 + MicroPython). The protocol manual is the implementation specification.
+- **Epic 7** - DMX / QLC+ integration. Show-composer bridge via a `DmxOutputBinding`.
 
 ---
 
 ## Known issues
 
-- [`pixmob::buildCycleProfiles`](include/pixmob_protocol.h#L132-L146) interprets its `profileMask` argument as an 8-bit profile mask, but the upstream Python reference treats the same bits as a `profile_id_lo`/`profile_id_hi` range. The function is unused in the current firmware, so runtime behaviour is unaffected. Reconciliation is deferred to Epic 2.
+- [`pixmob::buildCycleProfiles`](include/pixmob_protocol.h) interprets its `profileMask` argument as an 8-bit profile mask, but the upstream Python reference treats the same bits as a `profile_id_lo`/`profile_id_hi` range. The function is unused in the current firmware, so runtime behaviour is unaffected. Reconciliation tracked as a long-standing carry-forward.
 
 ---
 
 ## Acknowledgements
 
-This project would not exist without the prior reverse-engineering work of Daniel Weidman and James W. - both are credited in [REFERENCES.md](REFERENCES.md) in Harvard format, alongside the canonical PixMob protocol documentation in jamesw343's repository.
+This project would not exist without the prior reverse-engineering work of Daniel Weidman and James Wilson - both are credited in [REFERENCES.md](REFERENCES.md) in Harvard format, alongside the canonical PixMob protocol documentation in [jamesw343/PixMob_IR](https://github.com/jamesw343/PixMob_IR).
 
 ---
 
@@ -181,10 +154,10 @@ This project would not exist without the prior reverse-engineering work of Danie
 
 ## Contributing
 
-Issues and pull requests welcome. Major changes - particularly to the IR encoder or the beat-detection thresholds - should reference the architecture specification to confirm the change is in scope for the current Epic before any code lands.
+Issues and pull requests welcome. Major changes - particularly to the IR encoder, the beat-detection thresholds, or the protocol surface - should reference the architecture specification or the [protocol manual](docs/manuals/protocol-manual.md) to confirm the change is in scope before any code lands.
 
 For protocol changes, please regenerate the parity-test reference vectors against jamesw343's Python encoder rather than against the local C++ output, to preserve the upstream-as-truth invariant.
 
 ### Adding a new Show
 
-The master's performance is implemented by a Show plug-in (Epic 4.7). To add your own performance, see [docs/developing-shows.md](docs/developing-shows.md) for the developer guide - it covers the `Show` base class API, the analyser hook surface, class+group routing via `render_fx`, screen rendering, widget composition, NVS persistence, and the testing pattern, with `DynamicShow` as the worked example.
+The master's performance is implemented by a Show plug-in. To add your own performance see [docs/developing-shows.md](docs/developing-shows.md) for the developer guide - it covers the `Show` base class API, the analyser hook surface, class+group routing via `render_fx`, screen rendering, widget composition, NVS persistence, and the testing pattern, with `DynamicShow` as the worked example.

@@ -1,9 +1,9 @@
 ---
 title: "Epic 4.8: User manual and NocturNation protocol manual"
-status: Proposed
+status: In Progress
 notion_url:
 notion_id:
-notion_status: Proposed
+notion_status: In Progress
 last_synced: 2026-05-12
 sync_direction: local-only
 ---
@@ -171,3 +171,21 @@ Verification ownership: **(L)** = laptop / native build, **(R)** = reader walk-t
 - A future "translated editions" Epic stands up a translation framework; this Epic stays UK English single-language to keep editorial scope tight.
 
 Processing Type: **Documentation-only**. No firmware change, no test change. Every block is editorial; reader-testing is the verification mechanism that matters.
+
+## Status update (2026-05-12)
+
+Blocks 1-7 drafted in a single pass and committed to main. Outstanding work for Epic 4.8 close-out:
+
+- **Block 8 multi-slave bench verification** (folded-in 4.65 Block 8) - awaiting Jason at the bench with two slaves in different IR-coverage zones. Hardware-only verification path; documentation work has surfaced no remaining doc issues that block this verification.
+- **Final cold-read** - Jason reads both manuals end-to-end. Expected to surface minor editorial corrections (typos, missing cross-links, occasional clarification). Folds back as a doc patch.
+- **Architecture spec §1 cross-link** - point at the manuals as the canonical operator/implementer entry points. Will land as part of the next architecture spec sync.
+
+Deliverables landed so far:
+
+- `docs/manuals/README.md` - index pointing at both manuals.
+- `docs/manuals/user-manual.md` - 8 chapters + glossary + index. Quickstart, theory of operation, hardware, install, configuration walk-through, modes and shows, troubleshooting.
+- `docs/manuals/protocol-manual.md` - 7 sections + 4 annexes (PixMob IR, NVS schema, reference test vectors, protocol version history). Normative MUST/SHOULD/MAY language throughout.
+- Top-level `README.md` re-flowed to v0.5 reality (Plus2 + S3, six-layer architecture, manuals linked, Roadmap reflects closed Epics 1-4.7 + active 4.8 + next 5).
+- `docs/developing-shows.md` - added "What dispatch does for you (Epic 4.7 onward)" subsection covering the master loopback (ESP-NOW + IR + screen fan-out from one `render_fx` call) and the automatic IR reset primer.
+
+Notion sync remains deferred per Epic-opening decision - manuals stay local-only until the bench-verification reader pass surfaces or rules out doc issues.
