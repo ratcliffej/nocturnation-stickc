@@ -1,10 +1,10 @@
 ---
 title: "Epic 5: Tildagon receiver app"
-status: In Progress
+status: In progress
 notion_url: https://www.notion.so/358bd067740581b19551d158d658df76
 notion_id: 358bd067740581b19551d158d658df76
-notion_status: In Progress
-last_synced: 2026-05-12
+notion_status: In progress
+last_synced: 2026-05-13
 sync_direction: bidirectional
 ---
 
