@@ -51,10 +51,10 @@ constexpr uint32_t kFadeStepMs        = 1000;
 constexpr uint32_t kRainbowDurationMs = 6000;
 constexpr uint32_t kSparkleDurationMs = 10000;
 // Step interval gives the 1 s fade room to complete before the next
-// step's primer cuts it short. Fade total = T_0 + T_480 + T_480 = 960
-// ms after the main pulse arrives (+ ~100 ms for primer transmission).
-// 1100 ms step leaves a ~40 ms safety gap; cadence is ~0.9 Hz which
-// reads as "lingering twinkles" against the random-chance fire.
+// step cuts it short. Fade total = T_0 + T_480 + T_480 = 960 ms after
+// the main pulse arrives. 1100 ms step leaves ~140 ms safety gap;
+// cadence is ~0.9 Hz which reads as "lingering twinkles" against the
+// random-chance fire.
 constexpr uint32_t kSparkleStepMs     = 1100;
 
 }  // namespace
@@ -367,21 +367,16 @@ void TestMode::tick_sparkle(uint32_t now) {
     }
     if (now - last_step_ms_ < kSparkleStepMs) return;
 
-    // No explicit primer here - dispatch_output_class_group's
-    // idle-gated reset frame handles it automatically (the 1100 ms
-    // step interval is well past the 300 ms idle threshold).
-    //
     // Operator spec: white, ~1 s fade envelope (T_0 + T_480 + T_480
     // = 960 ms total), ~0.9 Hz fire cadence (kSparkleStepMs above -
     // slowed from 2 Hz so the 1 s fade completes before the next
-    // step's primer cuts it short), ~20 % per-bracelet chance.
-    // PixMob protocol's 3-bit chance ladder has no exact 20 %;
-    // CHANCE_16 is the closest below.
+    // step cuts it short), ~32 % per-bracelet chance (CHANCE_32,
+    // one step up the chance ladder from CHANCE_16).
     const auto& c = kSparkleColour;
     const RgbPulseEvent ev{
         c.r, c.g, c.b,
         pixmob::T_0_MS, pixmob::T_480_MS, pixmob::T_480_MS,
-        pixmob::CHANCE_16};
+        pixmob::CHANCE_32};
     DAL::render_fx("00:00", ev);
     last_step_ms_ = now;
     // Status text redraws via the post-pulse hook in loop_tick.
@@ -408,9 +403,6 @@ void TestMode::draw_sparkle_screen() {
 
 void TestMode::fire_whiteout() {
     // Main white pulse: instant attack, ~2.4 s sustain, ~0.96 s release.
-    // The dispatch_output_class_group helper sends a reset primer
-    // automatically before this fire (idle-gated, > 300 ms since
-    // last IR), so no explicit primer needed here.
     const RgbPulseEvent ev{
         0xFF, 0xFF, 0xFF,
         pixmob::T_0_MS, pixmob::T_2400_MS, pixmob::T_960_MS,

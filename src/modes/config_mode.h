@@ -12,7 +12,7 @@
 //   Top                       -> mode menu (exits Config)
 //
 // Top-level shape (5 items):
-//   Group: N       direct action - A-click increments wrapping 0..255
+//   Group: N       direct action - A-click increments wrapping 0..6
 //   Display        existing submenu (drill straight in)
 //   Connectivity   picker -> IR / ESP-NOW / WiFi / DMX
 //   Utilities      picker -> PixMob
@@ -83,7 +83,7 @@ private:
     //   (c) a leaf submenu: target is the leaf, drill straight in.
     enum class TopAction : uint8_t {
         Drill,      // descend into target (picker or leaf)
-        GroupId,    // direct action: increment slv_group 0..255
+        GroupId,    // direct action: increment slv_group 0..6 (UI cap; wire allows 0..255)
     };
     struct TopEntry {
         SubMenu     target;
@@ -206,6 +206,7 @@ private:
     float     level_tuning_level_rms_     = 0.0f;
     float     level_tuning_spectrum_[7]   = {0, 0, 0, 0, 0, 0, 0};
     uint32_t  last_level_tuning_draw_ms_  = 0;
+    uint32_t  last_system_redraw_ms_      = 0;
 
     void handle_level_tuning(const dal::ButtonPressEvent& ev);
     void draw_level_tuning();

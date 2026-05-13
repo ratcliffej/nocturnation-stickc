@@ -98,9 +98,11 @@ void ConfigMode::exit() {
 }
 
 void ConfigMode::loop_tick() {
-    // System submenu has live read-outs (battery percent); refresh
-    // every ~500 ms when shown. Confirmation flash for factory reset
-    // also clears here.
+    // System submenu has live read-outs (battery percent); poll at
+    // ~3 Hz when shown - the battery ADC jitters by an integer
+    // percent between adjacent ticks, and an unthrottled redraw
+    // pulled the whole screen on every loop, causing visible flicker.
+    // Confirmation flash for factory reset also clears here.
     const uint32_t now = millis();
     if (confirm_until_ms_ != 0 && now >= confirm_until_ms_) {
         confirm_until_ms_ = 0;
@@ -121,6 +123,8 @@ void ConfigMode::loop_tick() {
         }
     }
     if (level_ == Level::Sub && active_sub_ == SubMenu::System) {
+        if (now - last_system_redraw_ms_ < 333) return;
+        last_system_redraw_ms_ = now;
         const int batt = DAL::battery_level("local");
         if (batt != last_drawn_battery_) {
             last_drawn_battery_ = batt;
@@ -189,10 +193,15 @@ void ConfigMode::handle_top(const ButtonPressEvent& ev) {
     const TopEntry& entry = kTop[top_selected_];
     switch (entry.action) {
         case TopAction::GroupId:
-            // Increment 0..255 wrapping. A long-press fast-cycle would be
-            // a future polish if 256 presses to wrap proves tiresome.
+            // Increment 0..6 wrapping. The wire protocol carries an
+            // 8-bit group, but in practice the show only needs a
+            // handful for now (DynamicShow routes kick/snare/hi-hat
+            // across 3, with headroom for a few more); a tight cycle
+            // is far faster to navigate from the front buttons than
+            // 256 presses. Operators can persist a wider value via
+            // tooling if needed - this is a UI cap, not a wire cap.
             persistence::save_slv_group(
-                static_cast<uint8_t>(persistence::load_slv_group() + 1));
+                static_cast<uint8_t>((persistence::load_slv_group() + 1) % 7));
             draw();
             return;
         case TopAction::Drill:
