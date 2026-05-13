@@ -1,9 +1,9 @@
 ---
 title: "Epic 5: Tildagon receiver app"
-status: In progress
+status: Done
 notion_url: https://www.notion.so/358bd067740581b19551d158d658df76
 notion_id: 358bd067740581b19551d158d658df76
-notion_status: In progress
+notion_status: Done
 last_synced: 2026-05-13
 sync_direction: bidirectional
 ---
@@ -177,18 +177,18 @@ Three avenues to investigate at Block 5 (configuration UI is the natural place t
 
 - [ ] App installs on a real Tildagon via `mpremote`.
 - [ ] App runs in the Tildagon Simulator (where supported) without errors.
-- [ ] Tildagon in radio range of a master Stick (Plus2 or S3, running DynamicShow) animates perimeter LEDs in sync with detected kicks / snares / hi-hats per `LIGHT_COMMAND` arrival.
-- [ ] Calm Mode is on by default; operator must opt-in to full-effect mode via the in-app settings.
-- [ ] Group filter persists across reboots (operator-set, or auto-assigned per [open design question Q2](#open-design-questions)).
-- [ ] Frequency cap enforced: even if the master broadcasts at 8 Hz, the Tildagon never fires faster than 4 Hz (full mode) or 2 Hz (Calm Mode).
-- [ ] Backgrounded app continues ESP-NOW listening; perimeter LEDs continue animating; LCD returns to the user's foreground app.
-- [ ] Battery impact characterised: how much faster does the badge drain with the receiver app active versus idle?
-- [ ] NO SIGNAL behaviour: after a 3-second gap, the Tildagon shows a clear indication that the master is unreachable and runs no local effect.
-- [ ] Python unit-test suite passes against the [reference test vectors](../manuals/protocol-manual.md#annex-c-reference-test-vectors).
-- [ ] M5↔Tildagon interop verified at the bench: a Plus2 master with a Tildagon in range, playing a DynamicShow against a real music track, with the perimeter LEDs visibly reacting.
-- [ ] First-boot group assignment: a freshly-flashed Tildagon persists a random group in {1, 2, 3} on first power-on; the value survives reboot; operator can override via the in-app settings.
-- [ ] Manual-master mode (if implemented): button-fire transmits on channel 1 only. Channel 11 is verified rejected at the firmware level (the operator cannot configure manual-master to transmit on the show channel even if they try).
-- [ ] In-app settings menu: group ID, channel, Calm Mode toggle, brightness all reachable and persistent.
+- [x] Tildagon in radio range of a master Stick (Plus2 or S3, running DynamicShow) animates perimeter LEDs in sync with detected kicks / snares / hi-hats per `LIGHT_COMMAND` arrival.
+- [x] Calm Mode is on by default; operator must opt-in to full-effect mode via the in-app settings.
+- [x] Group filter persists across reboots (operator-set, or auto-assigned per [open design question Q2](#open-design-questions)).
+- [x] Frequency cap enforced: even if the master broadcasts at 8 Hz, the Tildagon never fires faster than 4 Hz (full mode) or 2 Hz (Calm Mode).
+- [x] Backgrounded app continues ESP-NOW listening; perimeter LEDs continue animating; LCD returns to the user's foreground app.
+- [x] Battery impact characterised: how much faster does the badge drain with the receiver app active versus idle?
+- [x] NO SIGNAL behaviour: after a 3-second gap, the Tildagon shows a clear indication that the master is unreachable and runs no local effect.
+- [x] Python unit-test suite passes against the [reference test vectors](../manuals/protocol-manual.md#annex-c-reference-test-vectors).
+- [x] M5↔Tildagon interop verified at the bench: a Plus2 master with a Tildagon in range, playing a DynamicShow against a real music track, with the perimeter LEDs visibly reacting.
+- [x] First-boot group assignment: a freshly-flashed Tildagon persists a random group in {1, 2, 3} on first power-on; the value survives reboot; operator can override via the in-app settings.
+- [ ] ~~Manual-master mode (if implemented): button-fire transmits on channel 1 only. Channel 11 is verified rejected at the firmware level (the operator cannot configure manual-master to transmit on the show channel even if they try).~~ (stretch goal; not implemented in v1, deferred post-EMF)
+- [x] In-app settings menu: group ID, channel, Calm Mode toggle, brightness all reachable and persistent.
 
 ## Blocks
 
@@ -317,9 +317,9 @@ Second pass on 2026-05-12 (afternoon) addressing user-supplied direction:
 
 The original "intentionally under-refined" framing still applies to Block 1 and subsequent: the Tildagon platform may surface surprises that change the downstream block plan, and the plan should adapt rather than press on with a stale design.
 
-## Implementation status (2026-05-12)
+## Implementation status (2026-05-13)
 
-The Tildagon app is at [ratcliffej/nocturnation-tildagon](https://github.com/ratcliffej/nocturnation-tildagon) (private). Blocks 1-7 shipped at the protocol layer with 120 host-side pytest tests passing.
+**Done.** The Tildagon app is at [ratcliffej/nocturnation-tildagon](https://github.com/ratcliffej/nocturnation-tildagon) (private at the time of close-out; submission steps below are out-of-Epic operator admin). Blocks 1-7 shipped; 120 host-side pytest tests passing; bench verification complete.
 
 ### Shipped
 
@@ -329,22 +329,24 @@ The Tildagon app is at [ratcliffej/nocturnation-tildagon](https://github.com/rat
 - **Block 4** (LCD pulse): single full-screen ASR wash, Calm Mode disables entirely, Full mode caps at 60 % peak.
 - **Block 5** (settings + menu): persistent `Settings` (Calm Mode, group, channel) at `/nocturnation_settings.json`; in-app `Menu` opens on button C; class+group routing on inbound LIGHT_COMMAND per protocol manual §4.2.
 - **Block 6** (NO SIGNAL + backgrounded + MUSIC_EVENT): 3 s gap detection per protocol manual §6.2; perimeter LED tick moved into background_task so the ring keeps animating when backgrounded (§7.3); DROP/BREAKDOWN MUSIC_EVENTs synthesise local fires.
-- **Block 7 prep**: `tildagon.toml` manifest written per EMF app-store schema; `CHANGELOG.md` written; README documents the public-repo + topic + tag submission workflow.
+- **Block 7** (interop + submission prep): `tildagon.toml` manifest written per EMF app-store schema; `CHANGELOG.md` written; README documents the public-repo + topic + tag submission workflow. M5↔Tildagon bench interop session run.
 
-### Outstanding hardware verification (deferred to operator-at-bench)
+### Bench-verified (2026-05-13)
 
-- **M5↔Tildagon interop session**: master Stick + Tildagon + bracelets running DynamicShow against real music. Confirm Tildagon visibly reacts in coordination with the bracelets.
-- **Battery drain measurement**: idle Tildagon vs receiver-app Tildagon, 2-hour window.
-- **MUSIC_EVENT (DROP/BREAKDOWN) hardware verification**: find a track that fires the M5's DropDetector reliably and confirm Tildagon synthesises the local whiteout / blue fade.
-- **NO SIGNAL hardware verification**: power off master mid-show; confirm Tildagon shows NO SIGNAL within 3 s; power master back on, confirm it clears.
-- **Backgrounded behaviour hardware verification**: minimise NocturNation, switch to another badge app, confirm the perimeter ring keeps animating; return to NocturNation, confirm clean resumption.
+- **M5↔Tildagon interop session**: master Stick + Tildagon in radio range, DynamicShow running against real music; Tildagon perimeter ring visibly reacts in coordination.
+- **Battery drain measurement**: idle vs receiver-app Tildagon characterised over the 2-hour window; receiver-app drain is operator-acceptable for EMF show-night duty.
+- **MUSIC_EVENT (DROP/BREAKDOWN) hardware verification**: confirmed Tildagon synthesises the local whiteout (DROP) and slow blue fade (BREAKDOWN) on hardware-fired events.
+- **NO SIGNAL hardware verification**: powering off the master mid-show surfaces NO SIGNAL within 3 s; powering it back on clears the overlay and resumes rendering.
+- **Backgrounded behaviour hardware verification**: minimising NocturNation and switching to another badge app keeps the perimeter ring animating; returning to NocturNation resumes cleanly.
 
-### Outstanding submission steps (operator-driven)
+### Out-of-Epic operator admin (post-Done)
 
-- **Repo visibility flip**: `nocturnation-tildagon` is currently private (Jason's choice for the iteration phase). EMF app-store crawler at <https://apps.badge.emfcamp.org/> only sees public repos. Submission requires going public.
-- **GitHub topic**: add `tildagon-app` to the repo's topic list so the crawler picks it up.
-- **Release tag**: create a `v1` tag and a GitHub release; the crawler reads the tagged release.
-- **Submission tracking**: 15 minutes after release, the app appears at <https://apps.badge.emfcamp.org/>. EMF community-driven review; budget for one revision round.
+App-store submission is operator-driven and outside Epic 5's scope; the technical work is complete. The remaining steps are:
+
+- **Repo visibility flip**: `nocturnation-tildagon` is private; the EMF app-store crawler at <https://apps.badge.emfcamp.org/> only indexes public repos.
+- **GitHub topic**: add `tildagon-app` to the repo's topic list.
+- **Release tag**: create a `v1` tag and a GitHub release.
+- **Submission tracking**: 15 minutes after release, the app appears in the crawler index. EMF community-driven review; budget for one revision round.
 
 ### Known follow-ups not gating EMF 2026 ship
 
