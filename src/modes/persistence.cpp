@@ -77,7 +77,7 @@ void save_screen_pulse_enabled(bool e) {
 // scan with show priority). Per architecture spec §4.5: channel 1 = hobby /
 // open community traffic, channel 11 = show / commercial; channel 6 is an
 // advanced operator override only.
-uint8_t load_master_channel() {
+uint8_t load_director_channel() {
     Preferences prefs;
     prefs.begin("noct", /*readOnly=*/true);
     uint8_t c = prefs.getUChar("mst_chan", 1);
@@ -86,7 +86,7 @@ uint8_t load_master_channel() {
     return c;
 }
 
-void save_master_channel(uint8_t c) {
+void save_director_channel(uint8_t c) {
     if (c != 1 && c != 6 && c != 11) c = 1;
     Preferences prefs;
     prefs.begin("noct", /*readOnly=*/false);
@@ -97,7 +97,7 @@ void save_master_channel(uint8_t c) {
 // Lume channel: 0 = auto (dual-channel scan with show priority); 1 / 6 /
 // 11 = locked. Validated on read so an out-of-range value persisted by an
 // older build can't push LumeMode into an invalid state.
-uint8_t load_slave_channel() {
+uint8_t load_lume_channel() {
     Preferences prefs;
     prefs.begin("noct", /*readOnly=*/true);
     uint8_t c = prefs.getUChar("slv_chan", 0);
@@ -106,7 +106,7 @@ uint8_t load_slave_channel() {
     return c;
 }
 
-void save_slave_channel(uint8_t c) {
+void save_lume_channel(uint8_t c) {
     if (c != 0 && c != 1 && c != 6 && c != 11) c = 0;
     Preferences prefs;
     prefs.begin("noct", /*readOnly=*/false);
@@ -114,7 +114,7 @@ void save_slave_channel(uint8_t c) {
     prefs.end();
 }
 
-bool load_slave_repeat_enabled() {
+bool load_lume_repeat_enabled() {
     Preferences prefs;
     prefs.begin("noct", /*readOnly=*/true);
     bool e = prefs.getBool("slv_repeat", false);   // default OFF
@@ -122,7 +122,7 @@ bool load_slave_repeat_enabled() {
     return e;
 }
 
-void save_slave_repeat_enabled(bool e) {
+void save_lume_repeat_enabled(bool e) {
     Preferences prefs;
     prefs.begin("noct", /*readOnly=*/false);
     prefs.putBool("slv_repeat", e);
@@ -131,7 +131,7 @@ void save_slave_repeat_enabled(bool e) {
 
 // Lume NocturNation group ID. Device-wide value used by LumeMode's
 // receive filter. Range 0-255; default 0 means "respond to everything".
-uint8_t load_slv_group() {
+uint8_t load_lume_group() {
     Preferences prefs;
     prefs.begin("noct", /*readOnly=*/true);
     uint8_t g = prefs.getUChar("slv_group", 0);
@@ -139,7 +139,7 @@ uint8_t load_slv_group() {
     return g;
 }
 
-void save_slv_group(uint8_t g) {
+void save_lume_group(uint8_t g) {
     Preferences prefs;
     prefs.begin("noct", /*readOnly=*/false);
     prefs.putUChar("slv_group", g);
@@ -294,10 +294,10 @@ void save_calibration(const AudioCalibration& c) {
 // a process-static "noct/slv_ir_grp" stand-in that tests seed via
 // the helper at the bottom of this block.
 namespace {
-uint8_t s_native_slave_channel    = 0;
-bool    s_native_slave_repeat_en  = false;
-uint8_t s_native_slv_group        = 0;
-bool    s_native_slv_group_set    = false;   // tracks "has slv_group been written" (the isKey() analogue)
+uint8_t s_native_lume_channel    = 0;
+bool    s_native_lume_repeat_en  = false;
+uint8_t s_native_lume_group        = 0;
+bool    s_native_lume_group_set    = false;   // tracks "has slv_group been written" (the isKey() analogue)
 uint8_t s_native_first_boot_rng   = 2;       // deterministic stand-in for esp_random() % 3 + 1
 bool    s_native_legacy_slv_ir_grp_present = false;
 uint8_t s_native_legacy_slv_ir_grp_value   = 0;
@@ -314,19 +314,19 @@ bool             load_ir_enabled()             { return true; }
 void             save_ir_enabled(bool)         {}
 bool             load_screen_pulse_enabled()    { return true; }
 void             save_screen_pulse_enabled(bool) {}
-uint8_t          load_master_channel()          { return 1; }
-void             save_master_channel(uint8_t) {}
-uint8_t          load_slave_channel()           { return s_native_slave_channel; }
-void             save_slave_channel(uint8_t c)  {
+uint8_t          load_director_channel()          { return 1; }
+void             save_director_channel(uint8_t) {}
+uint8_t          load_lume_channel()           { return s_native_lume_channel; }
+void             save_lume_channel(uint8_t c)  {
     if (c != 0 && c != 1 && c != 6 && c != 11) c = 0;
-    s_native_slave_channel = c;
+    s_native_lume_channel = c;
 }
-bool             load_slave_repeat_enabled()           { return s_native_slave_repeat_en; }
-void             save_slave_repeat_enabled(bool e)     { s_native_slave_repeat_en = e; }
-uint8_t          load_slv_group()                       { return s_native_slv_group; }
-void             save_slv_group(uint8_t g)              {
-    s_native_slv_group     = g;
-    s_native_slv_group_set = true;
+bool             load_lume_repeat_enabled()           { return s_native_lume_repeat_en; }
+void             save_lume_repeat_enabled(bool e)     { s_native_lume_repeat_en = e; }
+uint8_t          load_lume_group()                       { return s_native_lume_group; }
+void             save_lume_group(uint8_t g)              {
+    s_native_lume_group     = g;
+    s_native_lume_group_set = true;
 }
 
 const char* load_active_vis_id() {
@@ -374,9 +374,9 @@ void migrate_legacy_nvs_keys() {
     // and persist it. Native uses the seam-controlled
     // s_native_first_boot_rng instead of esp_random() so tests can
     // assert a deterministic outcome.
-    if (!s_native_slv_group_set) {
-        s_native_slv_group     = s_native_first_boot_rng;
-        s_native_slv_group_set = true;
+    if (!s_native_lume_group_set) {
+        s_native_lume_group     = s_native_first_boot_rng;
+        s_native_lume_group_set = true;
     }
 }
 
@@ -395,10 +395,10 @@ void set_first_boot_rng(uint8_t g_in_1_3) {
     s_native_first_boot_rng = g_in_1_3;
 }
 void clear_native_persistence() {
-    s_native_slave_channel             = 0;
-    s_native_slave_repeat_en           = false;
-    s_native_slv_group                 = 0;
-    s_native_slv_group_set             = false;
+    s_native_lume_channel             = 0;
+    s_native_lume_repeat_en           = false;
+    s_native_lume_group                 = 0;
+    s_native_lume_group_set             = false;
     s_native_first_boot_rng            = 2;
     s_native_legacy_slv_ir_grp_present = false;
     s_native_legacy_slv_ir_grp_value   = 0;

@@ -92,7 +92,7 @@ void DirectorMode::enter() {
     // Channel from NVS. DAL's EspNowBroadcastDriver owns the radio
     // lifecycle; this mode just toggles it on enter / off on exit.
     esp_now_broadcast_driver_instance()->start_broadcast(
-        persistence::load_master_channel());
+        persistence::load_director_channel());
     draw();
 }
 

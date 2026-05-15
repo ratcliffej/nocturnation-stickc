@@ -7,7 +7,7 @@
 //
 // main.cpp / setup() calls visualisation_registry().register_plugin(...)
 // for each vis instance at boot. The active mode (Block 8's
-// autonomous_master) walks the registry to populate the vis picker and
+// director) walks the registry to populate the vis picker and
 // resolve the user's last-used vis on entry.
 
 #pragma once

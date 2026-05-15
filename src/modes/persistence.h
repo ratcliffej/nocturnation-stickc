@@ -47,21 +47,21 @@ void             save_ir_enabled(bool e);
 bool             load_screen_pulse_enabled();
 void             save_screen_pulse_enabled(bool e);
 
-uint8_t          load_master_channel();
-void             save_master_channel(uint8_t c);
+uint8_t          load_director_channel();
+void             save_director_channel(uint8_t c);
 
 // Lume ESP-NOW channel preference. 0 = auto (dual-channel scan with
 // show priority), 1 / 6 / 11 = locked to that channel. Defaults to 0.
 // LumeMode reads on enter(); ConfigMode mutates from the operator menu.
-uint8_t          load_slave_channel();
-void             save_slave_channel(uint8_t c);
+uint8_t          load_lume_channel();
+void             save_lume_channel(uint8_t c);
 
 // Lume repeater mode. When enabled, Lume rebroadcasts each unique
 // frame with hop_count + 1 (capped at spec §4.3's 3-hop limit). Off
 // by default. Receive-rebroadcast is an ESP-NOW transport concern, not
 // an output-binding concern, so it stays a Lume-mode setting.
-bool             load_slave_repeat_enabled();
-void             save_slave_repeat_enabled(bool e);
+bool             load_lume_repeat_enabled();
+void             save_lume_repeat_enabled(bool e);
 
 // Lume NocturNation group ID. Device-wide value used by LumeMode's
 // receive filter: a non-relay binding fires when LIGHT_COMMAND
@@ -76,8 +76,8 @@ void             save_slave_repeat_enabled(bool e);
 // DynamicShow routes kick / snare / hi-hat to, so a small fleet of
 // freshly-flashed Sticks naturally distributes across per-drum
 // addressing without the operator touching anything.
-uint8_t          load_slv_group();
-void             save_slv_group(uint8_t g);
+uint8_t          load_lume_group();
+void             save_lume_group(uint8_t g);
 
 // Active Director-side visualisation id. Pre-Epic-4.7 selection key;
 // retained for read-side back-compat during migration. Block 1 of

@@ -200,8 +200,8 @@ void ConfigMode::handle_top(const ButtonPressEvent& ev) {
             // is far faster to navigate from the front buttons than
             // 256 presses. Operators can persist a wider value via
             // tooling if needed - this is a UI cap, not a wire cap.
-            persistence::save_slv_group(
-                static_cast<uint8_t>((persistence::load_slv_group() + 1) % 7));
+            persistence::save_lume_group(
+                static_cast<uint8_t>((persistence::load_lume_group() + 1) % 7));
             draw();
             return;
         case TopAction::Drill:
@@ -258,7 +258,7 @@ void ConfigMode::draw_top() {
         if (kTop[i].action == TopAction::GroupId) {
             std::snprintf(buf, sizeof(buf), "%s %s: %u",
                           sel ? ">" : " ", kTop[i].label,
-                          (unsigned)persistence::load_slv_group());
+                          (unsigned)persistence::load_lume_group());
         } else {
             std::snprintf(buf, sizeof(buf), "%s %s",
                           sel ? ">" : " ", kTop[i].label);
@@ -827,7 +827,7 @@ void ConfigMode::draw_ir() {
 // the post-Epic-4.65 menu restructure.
 // -------------------------------------------------------------------------
 
-const char* ConfigMode::master_channel_label(uint8_t c) {
+const char* ConfigMode::director_channel_label(uint8_t c) {
     switch (c) {
         case 1:  return "1 hobby";
         case 6:  return "6 custom";
@@ -836,7 +836,7 @@ const char* ConfigMode::master_channel_label(uint8_t c) {
     }
 }
 
-const char* ConfigMode::slave_channel_label(uint8_t c) {
+const char* ConfigMode::lume_channel_label(uint8_t c) {
     switch (c) {
         case 0:  return "auto scan";
         case 1:  return "1 hobby";
@@ -846,7 +846,7 @@ const char* ConfigMode::slave_channel_label(uint8_t c) {
     }
 }
 
-uint8_t ConfigMode::cycle_master_channel(uint8_t c) {
+uint8_t ConfigMode::cycle_director_channel(uint8_t c) {
     // 1 -> 6 -> 11 -> 1
     switch (c) {
         case 1:  return 6;
@@ -856,7 +856,7 @@ uint8_t ConfigMode::cycle_master_channel(uint8_t c) {
     }
 }
 
-uint8_t ConfigMode::cycle_slave_channel(uint8_t c) {
+uint8_t ConfigMode::cycle_lume_channel(uint8_t c) {
     // 0 (auto) -> 1 -> 6 -> 11 -> 0
     switch (c) {
         case 0:  return 1;
@@ -876,16 +876,16 @@ void ConfigMode::handle_espnow(const ButtonPressEvent& ev) {
     if (ev.id == ButtonId::Btn1) {
         switch ((EspNowItem)sub_selected_) {
             case EspNowItem::MasterChannel:
-                persistence::save_master_channel(
-                    cycle_master_channel(persistence::load_master_channel()));
+                persistence::save_director_channel(
+                    cycle_director_channel(persistence::load_director_channel()));
                 break;
             case EspNowItem::SlaveChannel:
-                persistence::save_slave_channel(
-                    cycle_slave_channel(persistence::load_slave_channel()));
+                persistence::save_lume_channel(
+                    cycle_lume_channel(persistence::load_lume_channel()));
                 break;
             case EspNowItem::SlaveRepeat:
-                persistence::save_slave_repeat_enabled(
-                    !persistence::load_slave_repeat_enabled());
+                persistence::save_lume_repeat_enabled(
+                    !persistence::load_lume_repeat_enabled());
                 break;
         }
         // New value applies on next Director / LumeMode enter().
@@ -903,11 +903,11 @@ void ConfigMode::draw_espnow() {
     char s_line[28];
     char r_line[28];
     std::snprintf(m_line, sizeof(m_line), "Master: %s",
-                  master_channel_label(persistence::load_master_channel()));
+                  director_channel_label(persistence::load_director_channel()));
     std::snprintf(s_line, sizeof(s_line), "Slave:  %s",
-                  slave_channel_label(persistence::load_slave_channel()));
+                  lume_channel_label(persistence::load_lume_channel()));
     std::snprintf(r_line, sizeof(r_line), "Repeat: %s",
-                  persistence::load_slave_repeat_enabled() ? "ON" : "OFF");
+                  persistence::load_lume_repeat_enabled() ? "ON" : "OFF");
     const char* lines[kEspNowFunctionalItemCount] = { m_line, s_line, r_line };
 
     constexpr int  kRowY0      = 30;
