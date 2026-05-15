@@ -18,8 +18,8 @@ namespace modes {
 namespace persistence {
 
 bool is_persisted_runtime_mode(ModeId m) {
-    return m == ModeId::AutonomousMaster
-        || m == ModeId::Slave
+    return m == ModeId::Director
+        || m == ModeId::Lume
         || m == ModeId::Config
         || m == ModeId::Test;
 }

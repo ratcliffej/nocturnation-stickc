@@ -41,8 +41,8 @@ namespace modes {
 enum class ModeId : uint8_t {
     Boot              = 0,
     Menu              = 1,
-    AutonomousMaster  = 2,
-    Slave             = 3,
+    Director          = 2,
+    Lume              = 3,
     Config            = 4,
     Test              = 5,
 };

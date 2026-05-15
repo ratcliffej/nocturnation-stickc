@@ -1125,8 +1125,8 @@ void ConfigMode::draw_system() {
 
 const char* ConfigMode::mode_label_short(ModeId m) {
     switch (m) {
-        case ModeId::AutonomousMaster: return "Master";
-        case ModeId::Slave:            return "Slave";
+        case ModeId::Director: return "Master";
+        case ModeId::Lume:            return "Slave";
         case ModeId::Config:           return "Config";
         case ModeId::Test:             return "Test";
         default:                       return "?";
