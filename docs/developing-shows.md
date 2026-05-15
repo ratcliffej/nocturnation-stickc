@@ -346,16 +346,16 @@ output purposes.
    (All) or `0x02` (Screen). Drives the master's LCD pulse animation
    so the operator sees the fire on-screen.
 
-**The IR reset primer**. Before path 2 fires a non-trivial command,
-the dispatch checks whether the IR transmitter has been idle for
-more than three hundred milliseconds. If it has, it sends an
-additional `(0, 0, 0)` broadcast frame to clear residual envelope
-state on bracelets, then fires the main command. The primer is
-suppressed when (a) the main fire is itself `(0, 0, 0)`, or (b) the
-last IR fire was within three hundred milliseconds (high-cadence
-streams like Rainbow at 25 ms cadence skip the primer naturally).
-You do not need to think about the primer when writing a Show -
-just call `render_fx` and the dispatch handles it.
+**Bracelet residue: pick cadence > envelope**. Bracelets carry brief
+residual envelope state between fires. If a new command lands while
+the previous fade is still rendering, the bracelet stitches the two
+envelopes together (colour artefacts in fades, truncated twinkle
+tails). The dispatch does *not* try to scrub residue with an extra
+reset frame - an Epic 4.7 experiment that did so overloaded the IR
+receivers and was rolled back in Epic 4.8. Instead, the show is
+responsible for choosing an envelope duration that fits inside its
+fire cadence. SparkleVis (T_0 + T_480 + T_480 = 960 ms envelope on
+an 1100 ms cadence) is the canonical example.
 
 **The single canonical call**. Pre-Epic-4.7 shows had to fire to
 `"all-pixmobs"` for the slaves *and* `"local"` for the master's own

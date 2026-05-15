@@ -482,13 +482,6 @@ public:
     static void deliver_input_action     (const char* source, const hal::InputEvent&);
     static void deliver_esp_now_inbound  (const char* source, const EspNowInboundEvent&);
     static void deliver_dmx_inbound      (const char* source, const DmxInboundEvent&);
-
-    // Test seam: reset the IR-primer idle-timestamp so the next
-    // render_fx call through dispatch_output_class_group treats the
-    // IR transmitter as freshly idle and (if the main fire isn't a
-    // reset itself) sends a primer. Tests use this in setUp() to
-    // make per-test IR fire counts deterministic. No-op in firmware.
-    static void reset_ir_primer_state_for_tests();
 };
 
 // =============================================================================

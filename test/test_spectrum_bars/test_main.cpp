@@ -183,7 +183,6 @@ void setUp(void) {
     // transports the firmware drivers refused for lack of IRTx / ESPNow.
     dal::DAL::register_driver(&g_ir_driver);
     dal::DAL::register_driver(&g_espnow_driver);
-    dal::DAL::reset_ir_primer_state_for_tests();
 }
 
 void tearDown(void) {}
@@ -374,13 +373,10 @@ static void test_confirm_fires_manual_beat_white(void) {
     TEST_ASSERT_EQUAL_UINT8(0xFF, wire.b);
     TEST_ASSERT_EQUAL_INT((int)pixmob::CHANCE_100, (int)wire.chance);
 
-    // 2. ir-pixmob fires three times this beat:
-    //    (a) dispatch_output_class_group primer (rgb=0, idle-gated)
-    //    (b) dispatch_output_class_group main loopback (WHITE)
-    //    (c) SpectrumBarsVis's explicit all-pixmobs call (WHITE)
-    //    Last fire is the all-pixmobs WHITE; primer is the rgb=0
-    //    frame in between.
-    TEST_ASSERT_EQUAL_INT(3, g_ir_driver.rgb_pulse_count());
+    // 2. ir-pixmob fires twice this beat:
+    //    (a) dispatch_output_class_group main loopback (WHITE)
+    //    (b) SpectrumBarsVis's explicit all-pixmobs call (WHITE)
+    TEST_ASSERT_EQUAL_INT(2, g_ir_driver.rgb_pulse_count());
     auto ir = g_ir_driver.last_rgb_pulse();
     TEST_ASSERT_EQUAL_UINT8(0xFF, ir.r);
     TEST_ASSERT_EQUAL_UINT8(0xFF, ir.g);

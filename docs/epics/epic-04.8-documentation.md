@@ -12,7 +12,7 @@ sync_direction: local-only
 
 - [Epic 4.6: Clean architecture and UI polish](epic-04.6-ui-cleanup.md) - established the plug-in surfaces (`Visualisation`, `OutputBinding`) and `render_fx` canonical send that the protocol manual documents.
 - [Epic 4.65: Class+group device addressing](epic-04.65-device-addressing.md) - defined the on-wire `target_class` / `target_group` taxonomy; reproduced verbatim in the protocol manual.
-- [Epic 4.7: Show plug-in framework and dynamic FFT-driven show](epic-04.7-dynamic-show.md) - added the `Show` plug-in surface, IR primer dispatch behaviour, and DynamicShow per-drum routing; user manual covers operator-facing show selection + tuning, protocol manual covers the primer frame.
+- [Epic 4.7: Show plug-in framework and dynamic FFT-driven show](epic-04.7-dynamic-show.md) - added the `Show` plug-in surface, dispatch loopback behaviour, and DynamicShow per-drum routing; user manual covers operator-facing show selection + tuning. (The Epic-4.7 IR reset primer was rolled back during this Epic - see "IR reset primer rollback" below.)
 - [NocturNation Architecture Specification](https://www.notion.so/357bd0677405800b891beab0f4e0a976) - the design document. The protocol manual is the externally-publishable distillation of §4 (transport), §5 (analyser), §6 (rendering), §7 (plug-in surfaces).
 - [`jamesw343/PixMob_IR`](https://github.com/jamesw343/PixMob_IR) - upstream-of-truth reference for the PixMob IR encoding section.
 - [Epic 5: Tildagon receiver app](https://www.notion.so/358bd067740581b19551d158d658df76) - downstream Epic; the protocol manual is its implementation specification.
@@ -62,7 +62,7 @@ Verification ownership: **(L)** = laptop / native (build doc, link-check, spell-
 - **Wireless layer**: ESP-NOW vendor-neutral specification (802.11 vendor action frames, channels 1 / 6 / 11, broadcast MAC `ff:ff:ff:ff:ff:ff`), why no encryption (Tier 0; security RFC referenced for Tier 1 path), redundancy (3× TX), dedup ring (16-deep on sequence number).
 - **Frame format**: `LIGHT_COMMAND` (9 bytes: target_class, target_group, r, g, b, attack, sustain, release, chance); `HEARTBEAT` (master-pulse, 1 Hz with skip-if-recent); `MUSIC_EVENT` (drop=1, breakdown=2, build=3 reserved). Byte-by-byte tables; example dumps for each frame.
 - **Class+group addressing**: the `DeviceClass` enum (`All=0x00`, `Light=0x01`, `Screen=0x02`, `MultiLedScreen=0x03`, reserved 0x04..0xFF); routing semantics (`(class, group) == (0, 0)` = everything; `(class, 0)` = all of that class; `(0, group)` = all classes in that group; exact match otherwise).
-- **PixMob IR encoding** (informative annex): 9-byte frame, attribution to `jamesw343/PixMob_IR`, byte layout, `restrictGroupId & 0x1F`, parity reference vectors. Note the IR primer (rgb=0 broadcast preceding the main fire after > 300 ms idle) is a *dispatch-side* behaviour at the master, not a wire-format change.
+- **PixMob IR encoding** (informative annex): 9-byte frame, attribution to `jamesw343/PixMob_IR`, byte layout, `restrictGroupId & 0x1F`, parity reference vectors.
 - **Channel discovery**: master picks channel 1 / 6 / 11 (default 11 = show); slave auto-scans by default with show priority. Sequence of probes documented.
 - **NVS schema** (informative annex, M5Stick reference implementation): `last_mode`, `ir_en`, `cal`, `scr_puls_en`, `slv_ir_grp`, `mst_chan`, `slv_chan`, `slv_repeat`, plus per-plug-in namespaces `nv_<id>` / `nb_<id>` / `ns_<id>`.
 - **Conformance**: what a receiver MUST honour (dedup, target_class / target_group routing, attack/sustain/release/chance interpretation), what it SHOULD honour (NO SIGNAL display after 3 s heartbeat gap, channel auto-scan), what it MAY support (slave-as-repeater, screen pulse).
@@ -81,8 +81,8 @@ Verification ownership: **(L)** = laptop / native (build doc, link-check, spell-
 1. **`docs/manuals/user-manual.md`** - top-to-bottom user manual, target ~30-40 pages of rendered Markdown.
 2. **`docs/manuals/protocol-manual.md`** - normative protocol specification, target ~20-30 pages.
 3. **`docs/manuals/README.md`** - one-pager index pointing at both manuals + the architecture spec.
-4. **Repo README update** - link the two manuals from the top-level `README.md` "Documentation" section. Re-flow the README to absorb the architecture-additions carry-forward from Epic 4.7 (IR primer / screen loopback / dispatch fan-out).
-5. **`docs/developing-shows.md` re-flow** - bring in the dispatch behaviour additions from Epic 4.7 (master loopback, primer behaviour); cross-link from the user manual ("for developers") and the protocol manual ("Show plug-in surface").
+4. **Repo README update** - link the two manuals from the top-level `README.md` "Documentation" section. Re-flow the README to absorb the architecture-additions carry-forward from Epic 4.7 (screen loopback / dispatch fan-out).
+5. **`docs/developing-shows.md` re-flow** - bring in the dispatch behaviour additions from Epic 4.7 (master loopback); cross-link from the user manual ("for developers") and the protocol manual ("Show plug-in surface").
 6. **Notion pages**: one Notion page per manual under the existing NocturNation workspace; status synced via the bidirectional doc-sync mechanism.
 
 ## Blocks
@@ -116,7 +116,7 @@ Verification ownership: **(L)** = laptop / native build, **(R)** = reader walk-t
 ### Block 4: User manual - troubleshooting, glossary, index
 
 - Troubleshooting chapter organised by symptom: bracelets not flashing, NO SIGNAL on slave, ESP-NOW range, IR coverage gaps, channel mismatch, low battery behaviour, audio not detected.
-- Glossary (PixMob, ESP-NOW, M5Unified, BeatDetector, DropDetector, MUSIC_EVENT, target_class, target_group, primer frame, ...).
+- Glossary (PixMob, ESP-NOW, M5Unified, BeatDetector, DropDetector, MUSIC_EVENT, target_class, target_group, ...).
 - Index (Markdown links to every defined term).
 - **(L)** every glossary entry cross-linked in body text; **(R)** Jason reviews troubleshooting against real venue failure modes.
 
@@ -139,8 +139,8 @@ Verification ownership: **(L)** = laptop / native build, **(R)** = reader walk-t
 
 ### Block 7: README + developing-shows re-flow
 
-- Update top-level `README.md` to: link both manuals; describe the Epic 4.7 dispatch additions (primer / loopback) at a high level for visitors; bump version markers.
-- Re-flow `docs/developing-shows.md` to reflect the dispatch fan-out and primer behaviour - show authors no longer hand-roll fan-out, single `render_fx("00:00", ev)` call handles the whole transmission tree.
+- Update top-level `README.md` to: link both manuals; describe the Epic 4.7 dispatch additions (loopback) at a high level for visitors; bump version markers.
+- Re-flow `docs/developing-shows.md` to reflect the dispatch fan-out - show authors no longer hand-roll fan-out, single `render_fx("00:00", ev)` call handles the whole transmission tree.
 - **(R)** Jason confirms README reads cleanly cold; **(L)** developing-shows builds cleanly and cross-references the new manual sections.
 
 ### Block 8: Multi-slave bench verification + close-out
@@ -159,7 +159,7 @@ Verification ownership: **(L)** = laptop / native build, **(R)** = reader walk-t
 
 ## Carry-forwards into this Epic
 
-- README re-flow for IR primer + screen loopback architecture additions (carry-forward from Epic 4.7 close-out).
+- README re-flow for screen loopback architecture additions (carry-forward from Epic 4.7 close-out).
 - `docs/developing-shows.md` re-flow for dispatch behaviour (same).
 - Diane-style cold README walk-through (carry-forward since Epic 1) - the user manual is the home for what this carry-forward needed.
 - **Epic 4.65 Block 8** (multi-slave bench verification of class+group routing) folded into Block 8 of this Epic - documentation walk-through provides the natural deployment scenario to exercise multi-slave routing end-to-end.
@@ -186,9 +186,19 @@ Deliverables landed so far:
 - `docs/manuals/user-manual.md` - 8 chapters + glossary + index. Quickstart, theory of operation, hardware, install, configuration walk-through, modes and shows, troubleshooting.
 - `docs/manuals/protocol-manual.md` - 7 sections + 4 annexes (PixMob IR, NVS schema, reference test vectors, protocol version history). Normative MUST/SHOULD/MAY language throughout.
 - Top-level `README.md` re-flowed to v0.5 reality (Plus2 + S3, six-layer architecture, manuals linked, Roadmap reflects closed Epics 1-4.7 + active 4.8 + next 5).
-- `docs/developing-shows.md` - added "What dispatch does for you (Epic 4.7 onward)" subsection covering the master loopback (ESP-NOW + IR + screen fan-out from one `render_fx` call) and the automatic IR reset primer.
+- `docs/developing-shows.md` - added "What dispatch does for you (Epic 4.7 onward)" subsection covering the master loopback (ESP-NOW + IR + screen fan-out from one `render_fx` call) and the bracelet-residue handling that replaced the rolled-back IR primer.
 
 Notion sync wired up 2026-05-12 (afternoon): all four manual documents now have `notion_id` / `notion_url` / `sync_direction: bidirectional` in their frontmatter and live as subpages of the NocturNation project root in Notion. The manuals can now be edited in either VS Code or Notion and synced across.
+
+### IR reset primer rollback (2026-05-12)
+
+Bench testing during this Epic established that the Epic-4.7 IR reset primer (`dispatch_output_class_group` sending a zero-RGB broadcast frame ahead of the main fire when the IR transmitter has been idle for > 300 ms) was net-harmful: it doubled IR traffic for every sparse-cadence show, and only Rainbow - which already skipped the primer via the idle gate - rendered reliably on the bracelets. Diagnosed as receiver-side overload, not bracelet-side residue (the original premise was that residue dominated; in practice, traffic overload dominates).
+
+Rolled back. The primer block, the `s_last_ir_fire_ms` idle-timestamp state, the `reset_ir_primer_state_for_tests()` test seam, and the now-unused `pixmob_protocol.h` / `<Arduino.h>` includes in [src/dal/dal.cpp](../../src/dal/dal.cpp) are removed. Each `render_fx` call now produces exactly one IR frame on the master loopback path. Residue is handled in the **show**, not the dispatch, by sizing envelope durations to fit inside the show's fire cadence (SparkleVis: 960 ms envelope on 1100 ms cadence is the canonical pattern).
+
+Test impact: assertions in `test_beat_pulse`, `test_dynamic_show`, `test_spectrum_bars`, and `test_show` that expected an extra primer fire per beat dropped by one (3 → 2 or 2 → 1, depending on the test). All 61 affected native tests pass; Plus2 + S3 firmware builds clean. Bench verification on hardware confirmed all non-Rainbow shows now render reliably.
+
+Documentation updates landed in the same change: user manual §1.5 (was "The IR reset primer", now "Bracelet timing and residual state"), protocol manual (§4.4 simplified, §A.4 deleted, §A.5 renumbered to A.4), flow-diagrams §5 (Mermaid simplified), developing-shows (dispatch fan-out subsection updated), this Epic's Scope / Deliverables / Carry-forwards / Status, README dispatch paragraph and Epic 4.7 roadmap entry. The closed Epic 4.7 retrospective ([epic-04.7-dynamic-show.md](epic-04.7-dynamic-show.md)) has a rollback annotation on its primer bullet but is otherwise unchanged - the primer was real history at close-out.
 
 | Document | Notion page |
 |---|---|

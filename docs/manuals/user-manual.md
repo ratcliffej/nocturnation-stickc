@@ -80,13 +80,13 @@ Bracelets ship from the factory pre-assigned to one of thirty-one groups (the gr
 
 The PixMob infra-red encoding is reverse-engineered from upstream work by James Wilson (see [acknowledgements](#acknowledgements)). NocturNation parity-tests every transmitted byte against a Python reference encoder to keep behaviour locked to that upstream.
 
-### 1.5 The IR reset primer
+### 1.5 Bracelet timing and residual state
 
-Bracelets accumulate residual envelope state between commands. When NocturNation fires a sparse sequence - say, one command per second with a one-second fade envelope - the next command can land while the previous fade is still being rendered. In practice this manifests as colour artefacts in the fade (a "Whiteout" command picking up greens and blues in its tail) or as a truncated tail (a Sparkle twinkle ending abruptly).
+Bracelets render the envelope encoded in each infra-red command and then drop back to standby, but there is a brief window during the fade-out where they remain receptive. If a new command lands inside that window, the bracelet stitches the two envelopes together; the operator sees colour artefacts in fades or truncated tails on twinkles. This is why high-cadence shows (Rainbow at ~25 ms cycle) look cleaner than sparse ones (Whiteout, Sparkle): consecutive fires keep bracelets in a fresh, fully-overwritten state.
 
-The fix is the **infra-red reset primer**, applied automatically by the dispatch layer at the master. Before every fire whose RGB triplet is non-zero, if the IR transmitter has been idle for more than three hundred milliseconds, NocturNation sends an additional zero-RGB broadcast command. The primer clears the residual envelope on every bracelet in range; the main command then renders cleanly.
+NocturNation manages residue in the **show**, not the dispatch layer: each show picks an envelope duration that fits inside its fire cadence, so the envelope completes naturally before the next fire arrives. Sparkle, for example, runs a 960 ms envelope on a 1100 ms cadence (a ~140 ms safety gap).
 
-The primer is automatic and invisible to the operator. It skips on high-cadence streams (Rainbow at twenty-five millisecond cadence) because consecutive fires are close enough together that residue never builds up. It also skips when the main fire is itself an RGB-zero command (since that is already a reset). Details are in [src/dal/dal.cpp](../../src/dal/dal.cpp), function `dispatch_output_class_group`.
+An earlier Epic 4.7 build inserted a zero-RGB "reset primer" command in the dispatch layer before every non-trivial fire, on the theory that an extra clear command would scrub residue. Bench testing in Epic 4.8 showed the opposite: the extra IR traffic overloaded the bracelet receivers, and only Rainbow (which already skipped the primer via an idle gate) rendered reliably. The primer was removed; today the dispatch sends exactly one IR command per `render_fx` call.
 
 ### 1.6 Class-and-group addressing
 
@@ -388,10 +388,10 @@ A scrolling list of every mode plus the entries for Test and Config. Used when y
 
 **Symptom**: bracelets are receiving the infra-red command (you can see the bracelet wake briefly) but the colour is wrong or the envelope is truncated.
 
-Most often a transient state-residue problem on the bracelet that the [IR reset primer](#15-the-ir-reset-primer) should already be handling. Verify:
+Most often a transient state-residue problem on the bracelet ([section 1.5](#15-bracelet-timing-and-residual-state)). Verify:
 
-- The firmware is at v0.5 or later (the primer was introduced in Epic 4.7).
-- Test mode's Sparkle pattern looks clean. If Sparkle on a fresh deployment shows colour artefacts or truncated tails, the primer is not working; check the serial console for dispatch errors.
+- Test mode's Rainbow pattern looks clean. Rainbow has the highest fire cadence and is the most forgiving of residue, so if Rainbow is also misbehaving the issue is elsewhere (low batteries, wrong group, master IR transmitter blocked).
+- Whichever show is misbehaving is using an envelope length that fits inside its fire cadence. If you have customised envelope or cadence values, lengthening the fire cadence or shortening the envelope usually clears the artefacts.
 
 If a particular show looks fine on most bracelets but wrong on one or two, those bracelets may have low batteries; swap the coin cells.
 
@@ -472,8 +472,6 @@ If AutonomousMaster is running but no `[espnow TX LIGHT]` lines appear on the se
 
 **HSV** - Hue, Saturation, Value colour model. The Dynamic show works in HSV internally and converts to RGB at the wire.
 
-**IR primer** - the automatic RGB-zero command emitted by the master before a non-trivial light fire when the IR transmitter has been idle for more than three hundred milliseconds. Clears residual envelope state on bracelets. See [section 1.5](#15-the-ir-reset-primer).
-
 **LIGHT_COMMAND** - one of the seven ESP-NOW message types. Nine-byte payload: class, group, RGB, attack/sustain/release/chance. See the [protocol manual](protocol-manual.md).
 
 **Loopback** - the master's habit of treating itself as one of its own slaves. The dispatch path routes every light command back through the master's own infra-red transmitter and screen pulse, so the master can illuminate nearby bracelets and show a pulse on its own LCD.
@@ -517,6 +515,7 @@ This index lists significant defined terms and concepts. For run-time configurat
 | AutonomousMaster | [5.3](#53-autonomousmaster-mode) |
 | BeatDetector | [1.3](#13-how-the-master-decides) |
 | Bracelet (PixMob X4 Gen 3.1) | [1.4](#14-how-the-bracelets-work), [2.2](#22-pixmob-bracelets) |
+| Bracelet residue | [1.5](#15-bracelet-timing-and-residual-state) |
 | Chance gate | [glossary](#7-glossary) |
 | Class+group addressing | [1.6](#16-class-and-group-addressing) |
 | Configuration menu | [4](#4-configuration) |
@@ -526,7 +525,6 @@ This index lists significant defined terms and concepts. For run-time configurat
 | Firmware flashing | [3.3](#33-flashing) |
 | Group filter | [4.1](#41-top-level) |
 | Heartbeat | [1.8](#18-the-heartbeat) |
-| IR primer | [1.5](#15-the-ir-reset-primer) |
 | IR radiation patterns | [2.3](#23-ir-radiation-patterns) |
 | Modes (boot, master, slave, etc.) | [5.2](#52-modes) |
 | NO SIGNAL | [6.2](#62-no-signal-on-the-slave) |

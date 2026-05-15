@@ -10,21 +10,10 @@
 #include "drivers/local_driver.h"
 #include "drivers/pixmob_ir_driver.h"
 #include "drivers/espnow_broadcast_driver.h"
-#include "pixmob_protocol.h"           // Time / Chance enums for IR primer
 
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-
-#ifdef ARDUINO
-#include <Arduino.h>                   // millis()
-#else
-extern "C" uint32_t millis();
-// Weak fallback for native test envs that don't link modes/ (where
-// the strong test-seam definition lives). Returns 0; tests that need
-// real timing for primer-gate logic provide their own strong millis().
-extern "C" __attribute__((weak)) uint32_t millis() { return 0; }
-#endif
 
 namespace nocturnation {
 namespace dal {
@@ -56,12 +45,6 @@ bool DeviceProfile::has(CapabilityId cap) const {
 // =============================================================================
 
 namespace {
-
-// IR primer timestamp. Bumped on every IR fire through
-// dispatch_output_class_group; consulted by the next call to decide
-// whether to send a reset frame. File-scope so test envs can zero
-// it between cases via reset_ir_primer_state_for_tests().
-uint32_t s_last_ir_fire_ms = 0;
 
 // Headroom for: local (1) + all-pixmobs (1) + group-1..group-31 (31) +
 // esp-now-broadcast (1) = 34 today, plus comfortable room for future
@@ -217,44 +200,11 @@ bool dispatch_output_class_group(uint8_t target_class,
     // own slave: target_group is passed through as the PixMob protocol
     // group byte, so the master's IR LED fires with the same per-group
     // filter the slave's relay binding would apply.
-    //
-    // Reset primer: when the IR transmit has been idle for longer than
-    // kIrPrimerIdleMs we send a zero-rgb broadcast frame before the
-    // main fire to clear any residual bracelet envelope state. The
-    // idle gate skips the primer for high-cadence streams (Rainbow's
-    // ~25 ms cycle, etc.) where consecutive fires already keep
-    // bracelets in fresh state and a primer would just thrash. Beat
-    // / button cadences (sparse-ish, > 300 ms gaps) get the primer.
-    // If the main fire is itself a reset (rgb=0) we skip the primer
-    // - the main IS the primer.
-    //
-    // Zero-rgb frames are otherwise NOT gated here - they're useful
-    // as explicit reset frames. Callers that want a true "no fire"
-    // (e.g. SimpleBeatShow's Off colour, when that semantic is
-    // preferred) should skip render_fx upstream.
     if (target_class == 0 || target_class == 1) {
         Driver* ir = find_driver_for_transport("ir-pixmob");
         if (ir && ir->enabled()) {
-            constexpr uint32_t kIrPrimerIdleMs = 300;
-            const uint32_t now = millis();
-            const bool main_is_reset =
-                (ev.r == 0 && ev.g == 0 && ev.b == 0);
-            const bool idle_long_enough =
-                (s_last_ir_fire_ms == 0) ||
-                ((now - s_last_ir_fire_ms) > kIrPrimerIdleMs);
-            if (!main_is_reset && idle_long_enough) {
-                RgbPulseEvent primer{};
-                primer.r = primer.g = primer.b = 0;
-                primer.attack  = pixmob::T_0_MS;
-                primer.sustain = pixmob::T_0_MS;
-                primer.release = pixmob::T_0_MS;
-                primer.chance  = pixmob::CHANCE_100;
-                ir->send(target_group, primer);
-                ir->increment_send_count();
-            }
             ir->send(target_group, ev);
             ir->increment_send_count();
-            s_last_ir_fire_ms = now;
         }
     }
 
@@ -688,10 +638,6 @@ void DAL::deliver_dmx_inbound(const char* source, const DmxInboundEvent& ev) {
             s_dmx_subs[i].cb(source, ev);
         }
     }
-}
-
-void DAL::reset_ir_primer_state_for_tests() {
-    s_last_ir_fire_ms = 0;
 }
 
 // =============================================================================

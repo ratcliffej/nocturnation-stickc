@@ -264,10 +264,10 @@ A receiver SHOULD therefore advertise a non-zero group in deployment. A receiver
 The reference firmware's dispatch function `dispatch_output_class_group` (`src/dal/dal.cpp`) fans every render call out to three sinks:
 
 1. **ESP-NOW broadcast** - always, regardless of `target_class`. Every slave on the channel sees the frame.
-2. **Local infra-red transmitter** - only when `target_class` is `0x00` (All) or `0x01` (Light). This is the master's habit of treating itself as one of its own slaves (the "loopback"). When this path fires, the [infra-red reset primer](#a4-the-ir-reset-primer) MAY be inserted ahead of the main fire.
+2. **Local infra-red transmitter** - only when `target_class` is `0x00` (All) or `0x01` (Light). This is the master's habit of treating itself as one of its own slaves (the "loopback"). Exactly one IR frame is sent per dispatch call.
 3. **Local screen pulse** - only when `target_class` is `0x00` (All) or `0x02` (Screen). Drives the LCD pulse animation.
 
-This is dispatch-side behaviour and is not visible to the wire (other than the additional primer transmission); a third-party master implementation MAY adopt the same loopback or omit it.
+This is dispatch-side behaviour and is not visible to the wire; a third-party master implementation MAY adopt the same loopback or omit it.
 
 ---
 
@@ -433,18 +433,7 @@ The three-bit `chance` field indexes a `Chance` enumeration. Each value is a pro
 
 The envelope semantics on the bracelet are: ramp up to peak brightness over `attack` milliseconds; hold at peak for `sustain` milliseconds; ramp down to zero over `release` milliseconds. Total visible duration is the sum.
 
-### A.4 The IR reset primer
-
-The reference firmware emits an additional zero-RGB infra-red frame **before** a non-trivial single-colour fire when:
-
-- The transmitted RGB triplet is not `(0, 0, 0)` (the main fire is not itself a reset).
-- The IR transmitter has been idle for longer than `kIrPrimerIdleMs = 300` milliseconds.
-
-The primer is a `LIGHT_COMMAND` frame with RGB = `(0, 0, 0)`, attack = sustain = release = `T_0_MS`, chance = `CHANCE_100`, target_group = the target group of the main fire. Its purpose is to clear residual envelope state on bracelets that may have been mid-render at the moment the main fire arrives.
-
-The primer is dispatch-side and not part of the wire-format specification: third-party masters MAY adopt it, omit it, or implement an equivalent mechanism. Bracelets neither know nor care that a primer was sent; they simply render the zero-RGB frame as a brief no-op.
-
-### A.5 Reference encoder
+### A.4 Reference encoder
 
 The authoritative encoder for this annex is [`jamesw343/PixMob_IR`](https://github.com/jamesw343/PixMob_IR). NocturNation's `test_pixmob_parity` test suite (`test/test_pixmob_parity/`) regenerates canonical byte sequences from the Python upstream and compares against the firmware's C++ encoder. Any disagreement is a defect in the C++ encoder, not in the upstream.
 

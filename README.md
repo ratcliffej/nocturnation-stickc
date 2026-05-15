@@ -58,7 +58,7 @@ The firmware has a six-layer plug-in architecture:
 5. **Shows** (Epic 4.7) - operator-selectable performances. Currently `SimpleBeatShow` (faithful pre-4.7 BeatPulse behaviour) and `DynamicShow` (FFT-driven HSV with per-drum group routing).
 6. **OutputBindings** - slave-side render targets. Currently `LocalDisplayBinding` (LCD pulse) and `PixMobIrBinding` (infra-red wire encoder, a pure relay).
 
-Every render call flows through `render_fx("<class>:<group>", ev)` with structured class+group targets. The master's dispatch fans every call out to ESP-NOW broadcast, the master's own infra-red transmitter, and the master's screen pulse - so the master is treated as one of its own slaves for output purposes. An automatic IR reset primer is inserted before non-trivial fires when the IR transmitter has been idle for more than three hundred milliseconds, clearing residual envelope state on bracelets. Both of these are dispatch-side behaviours and described in detail in the [user manual's theory of operation](docs/manuals/user-manual.md#1-theory-of-operation) and the [protocol manual's class-and-group addressing](docs/manuals/protocol-manual.md#4-class-and-group-addressing).
+Every render call flows through `render_fx("<class>:<group>", ev)` with structured class+group targets. The master's dispatch fans every call out to ESP-NOW broadcast, the master's own infra-red transmitter, and the master's screen pulse - so the master is treated as one of its own slaves for output purposes. This loopback is dispatch-side behaviour and is described in detail in the [user manual's theory of operation](docs/manuals/user-manual.md#1-theory-of-operation) and the [protocol manual's class-and-group addressing](docs/manuals/protocol-manual.md#4-class-and-group-addressing).
 
 The architecture has settled enough that protocol-level documentation is now public-facing rather than internal design notes - hence the [protocol manual](docs/manuals/protocol-manual.md). Third-party implementations are welcome.
 
@@ -119,7 +119,7 @@ Closed Epics:
 - **Epic 4.5** - Capability-aware audio analyser. Sub-band adaptive BeatDetector, DropDetector with arm/disarm gate, `MUSIC_EVENT` wire format.
 - **Epic 4.6** - Clean plug-in architecture. `Visualisation` and `OutputBinding` plug-in surfaces, semantic `InputAction` layer, per-plug-in NVS namespaces.
 - **Epic 4.65** - Class+group device addressing. `render_fx("<class>:<group>")` structured targets; `LightCommandPayload` carries both bytes on the wire.
-- **Epic 4.7** - Show plug-in framework + DynamicShow. `Show` base class atop `Plugin`; widget library (BeatBarWidget, SpectrumBarsWidget); analyser primitives (snare/hi-hat onset, music descriptors, section detection); IR reset primer + master-IR loopback in dispatch.
+- **Epic 4.7** - Show plug-in framework + DynamicShow. `Show` base class atop `Plugin`; widget library (BeatBarWidget, SpectrumBarsWidget); analyser primitives (snare/hi-hat onset, music descriptors, section detection); master-IR loopback in dispatch. (The Epic-4.7 IR reset primer was rolled back in Epic 4.8 after bench testing — see [user manual §1.5](docs/manuals/user-manual.md#15-bracelet-timing-and-residual-state).)
 
 In progress:
 

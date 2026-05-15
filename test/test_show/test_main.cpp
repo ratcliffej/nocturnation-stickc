@@ -234,7 +234,6 @@ void setUp(void) {
     dal::DAL::begin();
     dal::DAL::register_driver(&g_ir_driver);
     dal::DAL::register_driver(&g_espnow_driver);
-    dal::DAL::reset_ir_primer_state_for_tests();
 }
 
 void tearDown(void) {}
@@ -388,11 +387,9 @@ static void test_on_beat_fires_three_targets(void) {
     TEST_ASSERT_EQUAL_UINT8(0x00, g_espnow_driver.last_rgb_pulse().g);
     TEST_ASSERT_EQUAL_UINT8(0x00, g_espnow_driver.last_rgb_pulse().b);
 
-    // 2. IR fires twice: dispatch_output_class_group sends a zero-rgb
-    // primer (idle-gated, > 300 ms since last fire) BEFORE the main
-    // colour, so bracelets see "go to black, then red". Last event
-    // is the main; first event is the primer.
-    TEST_ASSERT_EQUAL_INT(2, g_ir_driver.rgb_pulse_count());
+    // 2. IR fires once: dispatch_output_class_group's master-local
+    // loopback for class 0 / 1 targets.
+    TEST_ASSERT_EQUAL_INT(1, g_ir_driver.rgb_pulse_count());
     TEST_ASSERT_EQUAL_UINT8(0xFF, g_ir_driver.last_rgb_pulse().r);
     TEST_ASSERT_EQUAL_UINT8(0x00, g_ir_driver.last_rgb_pulse().g);
     TEST_ASSERT_EQUAL_UINT8(0x00, g_ir_driver.last_rgb_pulse().b);
@@ -472,10 +469,9 @@ static void test_input_cycle_advances_colour(void) {
 // SimpleBeatShow: OFF colour (enum 0) sends an rgb=0 reset frame on
 // each beat. The pre-Epic-4.7 behaviour gated IR on rgb != 0 so Off
 // produced no IR fires; post-fix the dispatch loopback always fires
-// when class matches so a zero-rgb frame can be used as a reset /
-// primer to actively clear bracelet state. Off semantics shift from
-// "no signal" to "actively turn off" - same visible result, cleaner
-// in the face of residual bracelet state.
+// when class matches, so a zero-rgb frame actively clears bracelet
+// state. Off semantics shift from "no signal" to "actively turn off"
+// - same visible result, cleaner in the face of residual state.
 // =============================================================================
 
 static void test_off_colour_fires_reset_pulse(void) {

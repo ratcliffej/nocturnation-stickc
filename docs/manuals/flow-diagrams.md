@@ -19,7 +19,7 @@ Diagrams use [Mermaid](https://mermaid.js.org/) notation. GitHub, Notion, and mo
 2. [Boot flow](#2-boot-flow) - power-on through mode resume
 3. [Mode finite-state-machine](#3-mode-finite-state-machine) - the runtime modes
 4. [Master audio analyser pipeline](#4-master-audio-analyser-pipeline) - mic in, events out
-5. [Master render dispatch](#5-master-render-dispatch) - render_fx fan-out + IR primer
+5. [Master render dispatch](#5-master-render-dispatch) - render_fx fan-out
 6. [Slave receive pipeline](#6-slave-receive-pipeline) - frame arrival through binding fire
 7. [Class-and-group routing](#7-class-and-group-routing) - the addressing decision matrix
 8. [Configuration menu tree](#8-configuration-menu-tree) - operator-reachable settings
@@ -149,7 +149,7 @@ The analyser primitives are master-internal events. They do not appear on the ES
 
 ## 5. Master render dispatch
 
-The most-changed path in Epic 4.7. One `render_fx` call fans out to three sinks; the IR sink may insert an automatic reset primer.
+One `render_fx` call fans out to three sinks: ESP-NOW broadcast, master IR loopback, master LCD pulse. Exactly one IR frame is sent per dispatch call. (An Epic 4.7 build inserted a zero-RGB "primer" frame ahead of the main IR fire on idle gaps; bench testing in Epic 4.8 found the extra traffic overloaded the bracelet receivers, so the primer was removed.)
 
 ```mermaid
 flowchart TD
@@ -160,22 +160,12 @@ flowchart TD
     Dispatch --> IRGate{target_class == 0 All<br/>or 1 Light?}
     Dispatch --> ScrGate{target_class == 0 All<br/>or 2 Screen?}
 
-    IRGate -- "yes" --> RGBCheck{ev.rgb == 0, 0, 0?}
+    IRGate -- "yes" --> SendMain[Send IR frame<br/>via PixMob driver]
     IRGate -- "no" --> IRSkip[Skip IR]
-
-    RGBCheck -- "yes (already a reset)" --> SendMain[Send main IR<br/>no primer needed]
-    RGBCheck -- "no" --> IdleCheck{IR idle > 300 ms?}
-
-    IdleCheck -- "yes" --> Primer[Send rgb=0 primer<br/>T_0_MS envelope<br/>CHANCE_100]
-    IdleCheck -- "no (high cadence)" --> SendMain
-    Primer --> SendMain
-    SendMain --> UpdateLastFire[Update last-fire timestamp]
 
     ScrGate -- "yes" --> LCDPulse[Pulse local LCD]
     ScrGate -- "no" --> ScrSkip[Skip screen]
 ```
-
-The primer is invisible to the operator and to most show plug-ins; bracelets see it as a brief no-op that clears residual envelope state.
 
 ---
 
@@ -288,7 +278,7 @@ Top-level cycle order is `Group → Show → Display → Connectivity → Utilit
 
 These diagrams are hand-derived from the firmware code. When the firmware changes any of these flows, update the corresponding diagram in this file. The diagrams are deliberately schematic - they exist to support a reader's mental model, not to be a substitute for reading the code. Specific anchors:
 
-- [src/dal/dal.cpp](../../src/dal/dal.cpp) - dispatch fan-out and IR primer (section 5).
+- [src/dal/dal.cpp](../../src/dal/dal.cpp) - dispatch fan-out (section 5).
 - [src/modes/slave_mode.cpp](../../src/modes/slave_mode.cpp) - receive pipeline and class-and-group routing (sections 6 and 7).
 - [src/modes/mode_machine.cpp](../../src/modes/mode_machine.cpp) - mode finite-state-machine (section 3).
 - [src/modes/config_mode.cpp](../../src/modes/config_mode.cpp) - configuration tree (section 8).
