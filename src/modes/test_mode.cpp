@@ -69,7 +69,7 @@ void TestMode::enter() {
     // channel renders the colour and forwards IR to its own bracelets,
     // just like during a real show.
     dal::esp_now_broadcast_driver_instance()->start_broadcast(
-        persistence::load_master_channel());
+        persistence::load_director_channel());
     return_to_menu();
 }
 

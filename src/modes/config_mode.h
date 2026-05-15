@@ -253,10 +253,10 @@ private:
     };
     static constexpr size_t kEspNowFunctionalItemCount = 3;
 
-    static const char* master_channel_label(uint8_t c);
-    static const char* slave_channel_label(uint8_t c);
-    static uint8_t cycle_master_channel(uint8_t c);
-    static uint8_t cycle_slave_channel(uint8_t c);
+    static const char* director_channel_label(uint8_t c);
+    static const char* lume_channel_label(uint8_t c);
+    static uint8_t cycle_director_channel(uint8_t c);
+    static uint8_t cycle_lume_channel(uint8_t c);
 
     void handle_espnow(const dal::ButtonPressEvent& ev);
     void draw_espnow();

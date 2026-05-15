@@ -64,16 +64,16 @@ void LumeMode::enter() {
     // spec §4.5. The slv_ir_grp setting moved to PixMobIrBinding's
     // property bag in Block 9; ConfigMode > IR > Lume Group mutates
     // it there and on_light_command reads it inline.
-    slave_channel_pref_  = persistence::load_slave_channel();
-    slave_repeat_en_     = persistence::load_slave_repeat_enabled();
-    slv_group_           = persistence::load_slv_group();
+    lume_channel_pref_  = persistence::load_lume_channel();
+    lume_repeat_en_     = persistence::load_lume_repeat_enabled();
+    lume_group_           = persistence::load_lume_group();
     quality_.reset();
 
     // Auto-scan starts on channel 11 (show priority) per spec §4.5.
     // Locked configs start on the configured channel.
-    current_listen_chan_  = (slave_channel_pref_ == 0)
+    current_listen_chan_  = (lume_channel_pref_ == 0)
                             ? 11
-                            : slave_channel_pref_;
+                            : lume_channel_pref_;
     last_chan_switch_ms_  = millis();
 
     // Block 13: pulse rect runs full-screen. The 38x12 px status pip
@@ -121,9 +121,9 @@ void LumeMode::enter() {
         } else {
             Serial.printf("[espnow] lume up: ch=%u (pref=%s, bindings=%u)\n",
                           (unsigned)current_listen_chan_,
-                          slave_channel_pref_ == 0 ? "auto"
-                          : slave_channel_pref_ == 1 ? "1 hobby"
-                          : slave_channel_pref_ == 11 ? "11 show"
+                          lume_channel_pref_ == 0 ? "auto"
+                          : lume_channel_pref_ == 1 ? "1 hobby"
+                          : lume_channel_pref_ == 11 ? "11 show"
                           : "6 custom",
                           (unsigned)active_binding_count_);
         }
@@ -217,7 +217,7 @@ void LumeMode::loop_tick() {
     // inbound frame in on_recv stops the scan implicitly because
     // it locks us to whichever channel we were on when the frame
     // arrived.
-    const bool scanning = (slave_channel_pref_ == 0)
+    const bool scanning = (lume_channel_pref_ == 0)
                        && (rx_count_ == 0 || no_signal_);
     if (scanning && (now - last_chan_switch_ms_) >= kChannelDwellMs) {
         current_listen_chan_ = (current_listen_chan_ == 11) ? 1 : 11;
@@ -297,7 +297,7 @@ void LumeMode::fan_out_light_command(const transport::espnow::LightCommandPayloa
 
     // Epic 4.65 Block 5: class+group filter per binding.
     //   Class: target_class == 0 (All) OR matches the binding's class().
-    //   Group: target_group == 0 (All) OR matches slv_group_ - but ONLY
+    //   Group: target_group == 0 (All) OR matches lume_group_ - but ONLY
     //          for local bindings. Relay bindings (PixMobIrBinding) bypass
     //          this check because their downstream protocol (PixMob IR)
     //          does its own group filtering at the bracelet level. The
@@ -313,7 +313,7 @@ void LumeMode::fan_out_light_command(const transport::espnow::LightCommandPayloa
 
         // Group filter (skipped for relay bindings).
         if (!slot.binding->is_relay()) {
-            if (p.target_group != 0 && p.target_group != slv_group_) continue;
+            if (p.target_group != 0 && p.target_group != lume_group_) continue;
         }
 
         // Thread the inbound addressing through to the binding via ctx.
@@ -390,7 +390,7 @@ void LumeMode::on_recv(const hal::ESPNowMessage& m) {
     // source_id + sequence_number so dedup works mesh-wide. Defer
     // the actual radio.send_broadcast to loop_tick (same WiFi-task
     // safety reasoning as the IR forward path).
-    if (slave_repeat_en_
+    if (lume_repeat_en_
         && hdr.hop_count < kMaxHopCount
         && m.len <= kRepeatBufSize) {
         std::memcpy(pending_repeat_buf_, m.data, m.len);
@@ -563,7 +563,7 @@ void LumeMode::draw_no_signal_body() {
     std::snprintf(line, sizeof(line), "ch %u %s%s",
                   (unsigned)current_listen_chan_,
                   radio_active_ ? "listening" : "off",
-                  slave_channel_pref_ == 0 ? " (scan)" : "");
+                  lume_channel_pref_ == 0 ? " (scan)" : "");
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         kDiagX, kDiagY, line, WHITE, BLACK, 1});
 

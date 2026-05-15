@@ -389,10 +389,10 @@ static void test_pixmob_ir_uses_current_target_group(void) {
 // stub stores in a process-static, mirroring the Arduino Preferences
 // path for LumeMode + ConfigMode read/write.
 static void test_slv_group_nvs_round_trip(void) {
-    nocturnation::modes::persistence::save_slv_group(7);
-    TEST_ASSERT_EQUAL_UINT8(7, nocturnation::modes::persistence::load_slv_group());
-    nocturnation::modes::persistence::save_slv_group(0);
-    TEST_ASSERT_EQUAL_UINT8(0, nocturnation::modes::persistence::load_slv_group());
+    nocturnation::modes::persistence::save_lume_group(7);
+    TEST_ASSERT_EQUAL_UINT8(7, nocturnation::modes::persistence::load_lume_group());
+    nocturnation::modes::persistence::save_lume_group(0);
+    TEST_ASSERT_EQUAL_UINT8(0, nocturnation::modes::persistence::load_lume_group());
 }
 
 static void test_fan_out_both_bindings_fire_with_same_event(void) {
@@ -478,7 +478,7 @@ static void test_migration_no_op_when_legacy_absent(void) {
 }
 
 // Epic 5 prep: first-boot slv_group assignment. A fresh device (no
-// prior save_slv_group call) gets a random value in {1, 2, 3} written
+// prior save_lume_group call) gets a random value in {1, 2, 3} written
 // by migrate_legacy_nvs_keys. The native test seam pins the random
 // stand-in so the outcome is deterministic; we exercise all three
 // values to prove the path is wired correctly end-to-end.
@@ -490,11 +490,11 @@ static void test_first_boot_assigns_random_group(void) {
         modes::persistence::migrate_legacy_nvs_keys();
 
         TEST_ASSERT_EQUAL_UINT8(expected,
-                                modes::persistence::load_slv_group());
+                                modes::persistence::load_lume_group());
     }
 }
 
-// Operator-set slv_group survives the migrate call. Once save_slv_group
+// Operator-set slv_group survives the migrate call. Once save_lume_group
 // has been called the key is "written" and migrate must not retro-
 // randomise it. In particular slv_group = 0 (operator explicitly opts
 // into "broadcast only") is honoured.
@@ -502,14 +502,14 @@ static void test_migration_preserves_operator_set_group(void) {
     modes::persistence::test_seam::clear_native_persistence();
     modes::persistence::test_seam::set_first_boot_rng(2);
 
-    modes::persistence::save_slv_group(7);
+    modes::persistence::save_lume_group(7);
     modes::persistence::migrate_legacy_nvs_keys();
-    TEST_ASSERT_EQUAL_UINT8(7, modes::persistence::load_slv_group());
+    TEST_ASSERT_EQUAL_UINT8(7, modes::persistence::load_lume_group());
 
     modes::persistence::test_seam::clear_native_persistence();
-    modes::persistence::save_slv_group(0);
+    modes::persistence::save_lume_group(0);
     modes::persistence::migrate_legacy_nvs_keys();
-    TEST_ASSERT_EQUAL_UINT8(0, modes::persistence::load_slv_group());
+    TEST_ASSERT_EQUAL_UINT8(0, modes::persistence::load_lume_group());
 }
 
 // Second migrate call is a no-op (post-first-boot the key is written;
@@ -519,13 +519,13 @@ static void test_migration_is_idempotent_for_first_boot(void) {
     modes::persistence::test_seam::set_first_boot_rng(3);
 
     modes::persistence::migrate_legacy_nvs_keys();
-    TEST_ASSERT_EQUAL_UINT8(3, modes::persistence::load_slv_group());
+    TEST_ASSERT_EQUAL_UINT8(3, modes::persistence::load_lume_group());
 
     // Re-arm with a different RNG value; second migrate must not
     // overwrite (mirroring the Arduino isKey() guard).
     modes::persistence::test_seam::set_first_boot_rng(1);
     modes::persistence::migrate_legacy_nvs_keys();
-    TEST_ASSERT_EQUAL_UINT8(3, modes::persistence::load_slv_group());
+    TEST_ASSERT_EQUAL_UINT8(3, modes::persistence::load_lume_group());
 }
 
 // =============================================================================
@@ -535,25 +535,25 @@ static void test_migration_is_idempotent_for_first_boot(void) {
 
 static void test_slave_channel_round_trip(void) {
     modes::persistence::test_seam::clear_native_persistence();
-    TEST_ASSERT_EQUAL_UINT8(0, modes::persistence::load_slave_channel());
+    TEST_ASSERT_EQUAL_UINT8(0, modes::persistence::load_lume_channel());
 
-    modes::persistence::save_slave_channel(11);
-    TEST_ASSERT_EQUAL_UINT8(11, modes::persistence::load_slave_channel());
+    modes::persistence::save_lume_channel(11);
+    TEST_ASSERT_EQUAL_UINT8(11, modes::persistence::load_lume_channel());
 
     // Invalid value clamps to 0 (auto).
-    modes::persistence::save_slave_channel(7);
-    TEST_ASSERT_EQUAL_UINT8(0, modes::persistence::load_slave_channel());
+    modes::persistence::save_lume_channel(7);
+    TEST_ASSERT_EQUAL_UINT8(0, modes::persistence::load_lume_channel());
 }
 
 static void test_slave_repeat_round_trip(void) {
     modes::persistence::test_seam::clear_native_persistence();
-    TEST_ASSERT_FALSE(modes::persistence::load_slave_repeat_enabled());
+    TEST_ASSERT_FALSE(modes::persistence::load_lume_repeat_enabled());
 
-    modes::persistence::save_slave_repeat_enabled(true);
-    TEST_ASSERT_TRUE(modes::persistence::load_slave_repeat_enabled());
+    modes::persistence::save_lume_repeat_enabled(true);
+    TEST_ASSERT_TRUE(modes::persistence::load_lume_repeat_enabled());
 
-    modes::persistence::save_slave_repeat_enabled(false);
-    TEST_ASSERT_FALSE(modes::persistence::load_slave_repeat_enabled());
+    modes::persistence::save_lume_repeat_enabled(false);
+    TEST_ASSERT_FALSE(modes::persistence::load_lume_repeat_enabled());
 }
 
 // =============================================================================

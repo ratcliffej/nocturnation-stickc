@@ -13,7 +13,7 @@
 // pre-relay artifact whose only remaining use was a broadcast fallback,
 // and "broadcast to all PixMobs" (group 0) is the only sensible default.
 // The Lume's own NocturNation receive-filter group lives at
-// persistence::load_slv_group() (Config > Group) and is applied by
+// persistence::load_lume_group() (Config > Group) and is applied by
 // LumeMode upstream of the binding fan-out.
 //
 // No properties.

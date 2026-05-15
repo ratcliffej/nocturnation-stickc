@@ -92,17 +92,17 @@ private:
 
     // Channel preference: 0 = auto (dual-channel scan with show priority),
     // 1 / 6 / 11 = locked to that channel. Loaded from NVS on enter().
-    uint8_t   slave_channel_pref_   = 0;
+    uint8_t   lume_channel_pref_   = 0;
     uint8_t   current_listen_chan_  = 1;
     uint32_t  last_chan_switch_ms_  = 0;
     static constexpr uint32_t kChannelDwellMs = 2000;
 
     // NocturNation group ID for receive filtering (Epic 4.65 Block 5).
-    // Loaded from NVS on enter() via persistence::load_slv_group();
+    // Loaded from NVS on enter() via persistence::load_lume_group();
     // operator sets via Config > Lume > Group. Default 0 means
     // "respond to everything". Distinct from the per-PixMobIrBinding
     // `group` property which is the PixMob protocol's IR group code.
-    uint8_t   slv_group_            = 0;
+    uint8_t   lume_group_            = 0;
 
     // Sequence-loss-rate signal quality. Transport-agnostic; could feed
     // off any sequenced protocol (future BLE / IR ack channels) the same
@@ -126,7 +126,7 @@ private:
     //
     // Queue same shape as the LIGHT_COMMAND queue: copy in on_recv,
     // drain in loop_tick (off the WiFi callback context).
-    bool          slave_repeat_en_      = false;
+    bool          lume_repeat_en_      = false;
     volatile bool pending_repeat_       = false;
     size_t        pending_repeat_len_   = 0;
     static constexpr size_t kRepeatBufSize  = 32;
