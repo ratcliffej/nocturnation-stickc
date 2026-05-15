@@ -95,7 +95,7 @@ static void test_boot_timeout_enters_default_runtime_mode(void) {
     // BootMode::loop_tick() should switch to it.
     set_millis(5001);
     ModeMachine::loop_tick();
-    TEST_ASSERT_EQUAL_INT((int)ModeId::AutonomousMaster,
+    TEST_ASSERT_EQUAL_INT((int)ModeId::Director,
                           (int)ModeMachine::current());
 }
 
@@ -112,7 +112,7 @@ static void test_menu_btn1_selects_default_first_item(void) {
     TEST_ASSERT_EQUAL_INT((int)ModeId::Menu, (int)ModeMachine::current());
 
     inject_button_press(hal::ButtonId::Btn1, hal::ButtonEvent::Pressed);  // select
-    TEST_ASSERT_EQUAL_INT((int)ModeId::AutonomousMaster,
+    TEST_ASSERT_EQUAL_INT((int)ModeId::Director,
                           (int)ModeMachine::current());
 }
 
@@ -123,7 +123,7 @@ static void test_menu_btn2_cycles_then_btn1_selects_slave(void) {
     // Menu order is Master, Slave, Test, Config - so one Btn2 press lands on Slave.
     inject_button_press(hal::ButtonId::Btn2, hal::ButtonEvent::Pressed);
     inject_button_press(hal::ButtonId::Btn1, hal::ButtonEvent::Pressed);
-    TEST_ASSERT_EQUAL_INT((int)ModeId::Slave, (int)ModeMachine::current());
+    TEST_ASSERT_EQUAL_INT((int)ModeId::Lume, (int)ModeMachine::current());
 }
 
 static void test_menu_cycle_wraps(void) {
@@ -135,7 +135,7 @@ static void test_menu_cycle_wraps(void) {
         inject_button_press(hal::ButtonId::Btn2, hal::ButtonEvent::Pressed);
     }
     inject_button_press(hal::ButtonId::Btn1, hal::ButtonEvent::Pressed);
-    TEST_ASSERT_EQUAL_INT((int)ModeId::AutonomousMaster,
+    TEST_ASSERT_EQUAL_INT((int)ModeId::Director,
                           (int)ModeMachine::current());
 }
 
@@ -144,15 +144,15 @@ static void test_long_press_btnb_returns_to_menu_from_each_runtime_mode(void) {
     // picker overlay; with no vis registered in this test env the
     // picker contains only the "<- Menu" sentinel at cursor=0, so a
     // straight Confirm switches to Menu.
-    ModeMachine::switch_to(ModeId::AutonomousMaster);
-    TEST_ASSERT_EQUAL_INT((int)ModeId::AutonomousMaster,
+    ModeMachine::switch_to(ModeId::Director);
+    TEST_ASSERT_EQUAL_INT((int)ModeId::Director,
                           (int)ModeMachine::current());
     inject_input_action(hal::InputAction::Picker);
     inject_input_action(hal::InputAction::Confirm);
     TEST_ASSERT_EQUAL_INT((int)ModeId::Menu, (int)ModeMachine::current());
 
     // From Slave
-    ModeMachine::switch_to(ModeId::Slave);
+    ModeMachine::switch_to(ModeId::Lume);
     inject_button_press(hal::ButtonId::Btn2, hal::ButtonEvent::LongPressed);
     TEST_ASSERT_EQUAL_INT((int)ModeId::Menu, (int)ModeMachine::current());
 

@@ -59,8 +59,8 @@ ModeId s_last_runtime     = persistence::kDefaultRuntimeMode;
 
 BootMode             s_boot;
 MenuMode             s_menu;
-DirectorMode s_autonomous_master;
-LumeMode            s_slave;
+DirectorMode s_director;
+LumeMode            s_lume;
 ConfigMode           s_config;
 TestMode             s_test;
 
@@ -68,8 +68,8 @@ Mode* mode_instance(ModeId id) {
     switch (id) {
         case ModeId::Boot:             return &s_boot;
         case ModeId::Menu:             return &s_menu;
-        case ModeId::AutonomousMaster: return &s_autonomous_master;
-        case ModeId::Slave:            return &s_slave;
+        case ModeId::Director: return &s_director;
+        case ModeId::Lume:            return &s_lume;
         case ModeId::Config:           return &s_config;
         case ModeId::Test:             return &s_test;
     }
@@ -180,8 +180,8 @@ const char* ModeMachine::current_name() {
 // the anonymous namespace above, so we expose a typed accessor
 // inside this TU. Test TUs reach it via the free-function bridge
 // defined just below in the global namespace.
-DirectorMode& test_seam_get_autonomous_master() {
-    return s_autonomous_master;
+DirectorMode& test_seam_get_director() {
+    return s_director;
 }
 #endif
 
@@ -192,7 +192,7 @@ DirectorMode& test_seam_get_autonomous_master() {
 // Free-function bridge so test TUs can pick up the accessor with a plain
 // extern declaration; mirrors the extern "C" millis() seam at the top
 // of this file. Kept thin: just forwards to the in-namespace symbol.
-nocturnation::modes::DirectorMode& test_get_autonomous_master() {
-    return nocturnation::modes::test_seam_get_autonomous_master();
+nocturnation::modes::DirectorMode& test_get_director() {
+    return nocturnation::modes::test_seam_get_director();
 }
 #endif

@@ -110,8 +110,8 @@ Battery* HAL::battery()  { return nullptr; }
 // =============================================================================
 
 static DirectorMode* master_instance() {
-    extern DirectorMode& test_get_autonomous_master();
-    return &test_get_autonomous_master();
+    extern DirectorMode& test_get_director();
+    return &test_get_director();
 }
 
 static void inject_input_action(hal::InputAction action) {
@@ -138,7 +138,7 @@ void setUp(void) {
     // Skip past the Boot countdown.
     set_millis(6000);
     ModeMachine::loop_tick();
-    ModeMachine::switch_to(ModeId::AutonomousMaster);
+    ModeMachine::switch_to(ModeId::Director);
 }
 
 void tearDown(void) {}
@@ -185,7 +185,7 @@ static void test_picker_confirm_show_row_persists_selection(void) {
     // AutonomousMaster and persist "simple-beat" to NVS.
     inject_input_action(hal::InputAction::Confirm);
 
-    TEST_ASSERT_EQUAL_INT((int)ModeId::AutonomousMaster,
+    TEST_ASSERT_EQUAL_INT((int)ModeId::Director,
                           (int)ModeMachine::current());
     TEST_ASSERT_EQUAL_INT(
         (int)DirectorMode::OverlayKind::None,
@@ -272,7 +272,7 @@ static void test_settings_back_row_closes_overlay(void) {
 static void test_unknown_saved_id_falls_back_to_simple_beat(void) {
     modes::persistence::save_active_show_id("nonsense-id");
     ModeMachine::switch_to(ModeId::Menu);
-    ModeMachine::switch_to(ModeId::AutonomousMaster);
+    ModeMachine::switch_to(ModeId::Director);
 
     auto* m = master_instance();
     TEST_ASSERT_EQUAL_STRING("simple-beat", m->active_show_id_for_tests());
@@ -289,7 +289,7 @@ static void test_persisted_picker_selection_survives_round_trip(void) {
         modes::persistence::load_active_show_id());
 
     ModeMachine::switch_to(ModeId::Menu);
-    ModeMachine::switch_to(ModeId::AutonomousMaster);
+    ModeMachine::switch_to(ModeId::Director);
     auto* m = master_instance();
     TEST_ASSERT_EQUAL_STRING("simple-beat", m->active_show_id_for_tests());
 }
