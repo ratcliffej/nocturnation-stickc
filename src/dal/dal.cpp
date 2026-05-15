@@ -171,12 +171,12 @@ bool dispatch_output(const char* target, CapabilityId cap, const Event& ev) {
 }
 
 // Structured-target dispatch. Routes through the "esp-now-broadcast"
-// transport driver (slaves filter on receive per Epic 4.65 Block 5)
-// AND fires the master's own IR transmit when the target class is
-// the addressing wildcard (0) or Light (1) - the master is "its own
-// slave" with respect to its IR output, so a `render_fx("01:02", ev)`
-// fires the master's IR LED with PixMob group byte 2 (matching what
-// a slave's relay PixMobIrBinding would emit downstream). Gated on:
+// transport driver (Lumes filter on receive per Epic 4.65 Block 5)
+// AND fires the Director's own IR transmit when the target class is
+// the addressing wildcard (0) or Light (1) - the Director is "its own
+// Lume" with respect to its IR output, so a `render_fx("01:02", ev)`
+// fires the Director's IR LED with PixMob group byte 2 (matching what
+// a Lume's relay PixMobIrBinding would emit downstream). Gated on:
 //   - target_class in {0, 1} so non-Light routes (Screen, etc.) don't
 //     fire IR
 //   - target rgb non-zero so the Off colour (operator mute) doesn't
@@ -188,7 +188,7 @@ bool dispatch_output(const char* target, CapabilityId cap, const Event& ev) {
 bool dispatch_output_class_group(uint8_t target_class,
                                   uint8_t target_group,
                                   const RgbPulseEvent& ev) {
-    // 1. Wire to slaves via ESP-NOW broadcast.
+    // 1. Wire to Lumes via ESP-NOW broadcast.
     Driver* wire = find_driver_for_transport("esp-now-broadcast");
     bool wire_ok = false;
     if (wire && wire->enabled()) {
@@ -196,10 +196,10 @@ bool dispatch_output_class_group(uint8_t target_class,
         if (wire_ok) wire->increment_send_count();
     }
 
-    // 2. Master-local IR loopback. Treats the master as if it were its
-    // own slave: target_group is passed through as the PixMob protocol
-    // group byte, so the master's IR LED fires with the same per-group
-    // filter the slave's relay binding would apply.
+    // 2. Director-local IR loopback. Treats the Director as if it were its
+    // own Lume: target_group is passed through as the PixMob protocol
+    // group byte, so the Director's IR LED fires with the same per-group
+    // filter the Lume's relay binding would apply.
     if (target_class == 0 || target_class == 1) {
         Driver* ir = find_driver_for_transport("ir-pixmob");
         if (ir && ir->enabled()) {
@@ -208,8 +208,8 @@ bool dispatch_output_class_group(uint8_t target_class,
         }
     }
 
-    // 3. Master-local screen loopback. When target_class is wildcard
-    // (0) or Screen (2), also fire the LocalDriver so the master's
+    // 3. Director-local screen loopback. When target_class is wildcard
+    // (0) or Screen (2), also fire the LocalDriver so the Director's
     // own screen pulses alongside the wire / IR. LocalDriver gates
     // its RgbPulse handler internally on the Config > Display > Pulse
     // flag, so operators who want a quiet screen can disable it there
@@ -295,7 +295,7 @@ void DAL::begin() {
     }
 
     // Epic 4.65 Block 9: the legacy "esp-now-broadcast" device name is no
-    // longer registered. All master broadcast call sites moved to the
+    // longer registered. All Director broadcast call sites moved to the
     // structured "<class>:<group>" target form in Block 7, which routes
     // directly via find_driver_for_transport("esp-now-broadcast") and
     // bypasses the device registry. The EspNowBroadcastDriver still
@@ -669,7 +669,7 @@ const DeviceProfile PixMobX4Gen3_1 = DeviceProfile{
     /* max_group_id             = */ 31,
 };
 
-// EspNowBroadcast: the master->slaves wire target. Profile declares
+// EspNowBroadcast: the Director->Lumes wire target. Profile declares
 // RgbPulse so render_fx("esp-now-broadcast", RgbPulseEvent{...}) routes
 // through EspNowBroadcastDriver and emits a LIGHT_COMMAND frame.
 // supports_groups + max_group_id=31 lets future code register

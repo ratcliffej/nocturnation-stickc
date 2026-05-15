@@ -279,8 +279,8 @@ static void test_groups_2_merges_snare_and_hihat(void) {
     TEST_ASSERT_EQUAL_UINT8(2, g_espnow_driver.last_group());
 }
 
-// Master-IR loopback: the dispatch_output_class_group helper fires the
-// master's ir-pixmob driver alongside the ESP-NOW broadcast whenever
+// Director-IR loopback: the dispatch_output_class_group helper fires the
+// Director's ir-pixmob driver alongside the ESP-NOW broadcast whenever
 // target_class is 0 or 1. Tests that opt into the loopback see an
 // ir-pixmob send call per render_fx.
 static void test_kick_fires_master_ir_via_loopback(void) {
@@ -296,7 +296,7 @@ static void test_kick_fires_master_ir_via_loopback(void) {
 
     // ESP-NOW broadcast fires once (groups=1 default -> 00:00).
     TEST_ASSERT_EQUAL_INT(1, g_espnow_driver.count());
-    // Master IR fires once via the dispatch loopback.
+    // Director IR fires once via the dispatch loopback.
     TEST_ASSERT_EQUAL_INT(1, g_ir_driver.count());
 }
 

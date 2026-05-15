@@ -1,9 +1,9 @@
 // Shared NVS persistence helpers used by ModeMachine + multiple modes.
 //
-// Slave-only NVS keys (slv_chan, slv_repeat) are owned here as of
+// Lume-only NVS keys (slv_chan, slv_repeat) are owned here as of
 // Epic 4.6 Block 9 because both LumeMode and ConfigMode read/write them
 // and the per-mode anonymous-namespace copies were drifting. The third
-// slave key (slv_ir_grp) is gone - migrated to PixMobIrBinding's
+// Lume key (slv_ir_grp) is gone - migrated to PixMobIrBinding's
 // property bag (NVS namespace "nb_pixmob-ir", key "group") via
 // migrate_legacy_nvs_keys() on first boot after the upgrade.
 
@@ -50,20 +50,20 @@ void             save_screen_pulse_enabled(bool e);
 uint8_t          load_master_channel();
 void             save_master_channel(uint8_t c);
 
-// Slave ESP-NOW channel preference. 0 = auto (dual-channel scan with
+// Lume ESP-NOW channel preference. 0 = auto (dual-channel scan with
 // show priority), 1 / 6 / 11 = locked to that channel. Defaults to 0.
 // LumeMode reads on enter(); ConfigMode mutates from the operator menu.
 uint8_t          load_slave_channel();
 void             save_slave_channel(uint8_t c);
 
-// Slave repeater mode. When enabled, slave rebroadcasts each unique
+// Lume repeater mode. When enabled, Lume rebroadcasts each unique
 // frame with hop_count + 1 (capped at spec §4.3's 3-hop limit). Off
 // by default. Receive-rebroadcast is an ESP-NOW transport concern, not
-// an output-binding concern, so it stays a slave-mode setting.
+// an output-binding concern, so it stays a Lume-mode setting.
 bool             load_slave_repeat_enabled();
 void             save_slave_repeat_enabled(bool e);
 
-// Slave NocturNation group ID. Device-wide value used by LumeMode's
+// Lume NocturNation group ID. Device-wide value used by LumeMode's
 // receive filter: a non-relay binding fires when LIGHT_COMMAND
 // target_group is 0 (the broadcast group; everyone responds) OR
 // matches this value exactly. A device with slv_group == 0 has no
@@ -79,7 +79,7 @@ void             save_slave_repeat_enabled(bool e);
 uint8_t          load_slv_group();
 void             save_slv_group(uint8_t g);
 
-// Active master-side visualisation id. Pre-Epic-4.7 selection key;
+// Active Director-side visualisation id. Pre-Epic-4.7 selection key;
 // retained for read-side back-compat during migration. Block 1 of
 // Epic 4.7 retires this in favour of active_show; the value is
 // consumed by migrate_legacy_nvs_keys on first boot post-upgrade.
@@ -87,7 +87,7 @@ void             save_slv_group(uint8_t g);
 const char*      load_active_vis_id();
 void             save_active_vis_id(const char* id);
 
-// Active master-side Show id (Epic 4.7 Block 1). DirectorMode
+// Active Director-side Show id (Epic 4.7 Block 1). DirectorMode
 // resolves the returned id against show_registry() on enter(); if the
 // saved id no longer resolves to a registered Show (uninstalled,
 // renamed) the mode falls back to the canonical "simple-beat" default.
@@ -108,8 +108,8 @@ void             save_active_show_id(const char* id);
 // second call is a no-op.
 //
 // Current migrations:
-//   noct/slv_ir_grp -> nb_pixmob-ir/group  (Block 9; slave IR forward
-//                                           group moved from a slave-
+//   noct/slv_ir_grp -> nb_pixmob-ir/group  (Block 9; Lume IR forward
+//                                           group moved from a Lume-
 //                                           mode private NVS key to
 //                                           PixMobIrBinding's property
 //                                           bag).
@@ -131,7 +131,7 @@ AudioCalibration& current_calibration();
 ModeId current_last_runtime();
 
 #ifndef ARDUINO
-// Native test seam. The slave-mode persistence helpers fall through to
+// Native test seam. The Lume-mode persistence helpers fall through to
 // process-static storage on native; tests reach in via these helpers to
 // seed legacy-key state (for migrate_legacy_nvs_keys coverage) and to
 // reset the static between test cases.

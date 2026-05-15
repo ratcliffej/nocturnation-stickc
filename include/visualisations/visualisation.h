@@ -1,4 +1,4 @@
-// Visualisation - abstract base for master-side visualisation plugins.
+// Visualisation - abstract base for Director-side visualisation plugins.
 //
 // Concrete visualisations subclass this and override the hooks they
 // care about. The framework owns one instance per registered vis and
@@ -63,7 +63,7 @@ public:
     virtual void on_property_changed(VisualisationContext&, const char* /*key*/) {}
 
     // Screen-ownership flag (Epic 4.6 hotfix to Block 11). A vis that
-    // returns true claims the master LCD for its own rendering; the
+    // returns true claims the Director LCD for its own rendering; the
     // mode skips its BeatPulse-era chrome (colour title, BPM line,
     // flux meter, footer) so the vis can paint freely. Vis that share
     // the screen with the mode chrome (BeatPulse) return false and

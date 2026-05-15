@@ -64,8 +64,8 @@ constexpr TestMode::MenuItem TestMode::kSubTests[7];
 void TestMode::enter() {
     menu_selected_    = 0;
     menu_view_offset_ = 0;
-    // Same channel as AutonomousMaster (NVS-configured). Test fires
-    // broadcast over ESP-NOW so any slave on the configured show
+    // Same channel as Director (NVS-configured). Test fires
+    // broadcast over ESP-NOW so any Lume on the configured show
     // channel renders the colour and forwards IR to its own bracelets,
     // just like during a real show.
     dal::esp_now_broadcast_driver_instance()->start_broadcast(
@@ -277,8 +277,8 @@ void TestMode::fire_cycle_step(bool fade) {
     const RgbPulseEvent ev{
         c.r, c.g, c.b, attack, sustain, release, pixmob::CHANCE_100};
     // Single transmit call: dispatch_output_class_group fans out to
-    // ESP-NOW broadcast (slaves), master IR (Light-class loopback),
-    // and master screen (Screen-class loopback / Config > Display >
+    // ESP-NOW broadcast (Lumes), Director IR (Light-class loopback),
+    // and Director screen (Screen-class loopback / Config > Display >
     // Pulse gated). Same path Shows use.
     DAL::render_fx("00:00", ev);
     last_step_ms_ = millis();
@@ -481,7 +481,7 @@ void TestMode::process_audio_frame(const AudioFrameEvent& ev) {
 
     // Beat firing now driven by the DAL analyser's BeatDetector
     // (Epic 4.5 Block 3), so what you see here matches exactly what
-    // would fire in Master mode. The flux/baseline tracking below
+    // would fire in Director mode. The flux/baseline tracking below
     // remains for the diagnostic meter strip - it shows what the
     // legacy single-threshold detector would have seen at this
     // frame, decoupled from the actual beat decision.

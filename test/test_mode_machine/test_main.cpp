@@ -68,7 +68,7 @@ static void inject_button_press(hal::ButtonId id, hal::ButtonEvent kind) {
 // DirectorMode migrated to InputAction-driven control in Block 10;
 // the raw Btn2-LongPressed -> Menu handler is gone (the picker holds a
 // "<- Menu" row that the operator reaches via Picker + Confirm). Tests
-// that need to leave AutonomousMaster inject the semantic actions
+// that need to leave Director inject the semantic actions
 // directly here. The other runtime modes still consume raw button events.
 static void inject_input_action(hal::InputAction action) {
     dal::DAL::deliver_input_action("local",
@@ -91,7 +91,7 @@ static void test_starts_in_boot_mode(void) {
 
 static void test_boot_timeout_enters_default_runtime_mode(void) {
     // No NVS in native builds, so the persisted-mode loader returns the
-    // hard-coded default (AutonomousMaster). After 5s of countdown,
+    // hard-coded default (Director). After 5s of countdown,
     // BootMode::loop_tick() should switch to it.
     set_millis(5001);
     ModeMachine::loop_tick();
@@ -106,8 +106,8 @@ static void test_boot_button_press_enters_menu(void) {
 
 static void test_menu_btn1_selects_default_first_item(void) {
     // Default cursor lands on the persisted last-used mode, which on first
-    // boot is AutonomousMaster - that's also the first menu item, so a
-    // straight Btn1 selects AutonomousMaster.
+    // boot is Director - that's also the first menu item, so a
+    // straight Btn1 selects Director.
     inject_button_press(hal::ButtonId::Btn1, hal::ButtonEvent::Pressed);  // Boot -> Menu
     TEST_ASSERT_EQUAL_INT((int)ModeId::Menu, (int)ModeMachine::current());
 
@@ -120,7 +120,7 @@ static void test_menu_btn2_cycles_then_btn1_selects_slave(void) {
     inject_button_press(hal::ButtonId::Btn1, hal::ButtonEvent::Pressed);  // Boot -> Menu
     TEST_ASSERT_EQUAL_INT((int)ModeId::Menu, (int)ModeMachine::current());
 
-    // Menu order is Master, Slave, Test, Config - so one Btn2 press lands on Slave.
+    // Menu order is Director, Lume, Test, Config - so one Btn2 press lands on Lume.
     inject_button_press(hal::ButtonId::Btn2, hal::ButtonEvent::Pressed);
     inject_button_press(hal::ButtonId::Btn1, hal::ButtonEvent::Pressed);
     TEST_ASSERT_EQUAL_INT((int)ModeId::Lume, (int)ModeMachine::current());
@@ -130,7 +130,7 @@ static void test_menu_cycle_wraps(void) {
     inject_button_press(hal::ButtonId::Btn1, hal::ButtonEvent::Pressed);  // Boot -> Menu
 
     // Four Btn2 presses with a 4-item menu cycles back to start; Btn1 then
-    // selects AutonomousMaster (the first item).
+    // selects Director (the first item).
     for (int i = 0; i < 4; ++i) {
         inject_button_press(hal::ButtonId::Btn2, hal::ButtonEvent::Pressed);
     }
@@ -140,7 +140,7 @@ static void test_menu_cycle_wraps(void) {
 }
 
 static void test_long_press_btnb_returns_to_menu_from_each_runtime_mode(void) {
-    // From AutonomousMaster (Block 10): InputAction::Picker opens the
+    // From Director (Block 10): InputAction::Picker opens the
     // picker overlay; with no vis registered in this test env the
     // picker contains only the "<- Menu" sentinel at cursor=0, so a
     // straight Confirm switches to Menu.
@@ -151,7 +151,7 @@ static void test_long_press_btnb_returns_to_menu_from_each_runtime_mode(void) {
     inject_input_action(hal::InputAction::Confirm);
     TEST_ASSERT_EQUAL_INT((int)ModeId::Menu, (int)ModeMachine::current());
 
-    // From Slave
+    // From Lume
     ModeMachine::switch_to(ModeId::Lume);
     inject_button_press(hal::ButtonId::Btn2, hal::ButtonEvent::LongPressed);
     TEST_ASSERT_EQUAL_INT((int)ModeId::Menu, (int)ModeMachine::current());

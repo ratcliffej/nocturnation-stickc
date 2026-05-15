@@ -6,11 +6,11 @@
 // rendering (previously chrome owned by DirectorMode) live
 // here so the Show owns its canvas.
 //
-// Post-Epic-4.7 master-IR loopback (dispatch_output_class_group fires
-// the master's ir-pixmob driver automatically when target_class is
+// Post-Epic-4.7 Director-IR loopback (dispatch_output_class_group fires
+// the Director's ir-pixmob driver automatically when target_class is
 // Light or wildcard and rgb is non-zero) means the Show no longer
 // has to fire IR explicitly via effects::Pulse - one
-// render_fx("00:00", ev) call reaches the wire AND the master's own
+// render_fx("00:00", ev) call reaches the wire AND the Director's own
 // IR LED. The Off colour gates inside the loopback (zero rgb skips IR)
 // preserving the legacy "muted on Off" behaviour.
 
@@ -211,13 +211,13 @@ void SimpleBeatShow::on_beat_detected(ShowContext& ctx, uint8_t /*strength*/) {
     // ---- Render fan-out.
     //
     // Single render_fx("00:00", ev) reaches both:
-    //   - slaves via the esp-now-broadcast driver (target_class=0,
+    //   - Lumes via the esp-now-broadcast driver (target_class=0,
     //     target_group=0 = everyone everywhere)
-    //   - master's own IR LED via the dispatch_output_class_group
+    //   - Director's own IR LED via the dispatch_output_class_group
     //     loopback that fires the ir-pixmob driver when target_class
     //     is 0 or 1 and rgb is non-zero (Off colour skips IR)
     //
-    // Plus a separate fire_display_clear for the master-screen flash
+    // Plus a separate fire_display_clear for the Director-screen flash
     // (the screen uses DisplayClearEvent, not RgbPulseEvent).
     {
         uint8_t r=0, g=0, b=0;

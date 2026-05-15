@@ -46,8 +46,8 @@ enum class Capability : uint8_t {
     // Sub-capabilities that compose what an analyser produces. A host
     // with Mic + an analyser implementation declares the subset of
     // these that its current operating point actually supports.
-    // Slaves consume events over the wire and need none of these
-    // declared - the analyser is master-side only.
+    // Lumes consume events over the wire and need none of these
+    // declared - the analyser is Director-side only.
     //
     // Lit by Epic 4.5 (this Epic):
     AnalyserBeatDetection,    // produces BEAT_DETECTED events (bass-band onset)
@@ -114,7 +114,7 @@ struct AudioFrame {
     float    presence      = 0.0f;    // [4000, 6000) Hz
     float    air           = 0.0f;    // [6000, 20000) Hz, truncated at Nyquist
 
-    // 32-band log-spaced spectrum covering [30 Hz, Nyquist). Master-
+    // 32-band log-spaced spectrum covering [30 Hz, Nyquist). Director-
     // local; never broadcast over ESP-NOW (too heavy at FFT rate). At
     // the canonical 16 kHz / 512 FFT operating point this spans 30 Hz
     // to 8 kHz; at higher operating points the upper edge follows
@@ -230,7 +230,7 @@ public:
     virtual void end() = 0;
 
     // Switch the radio to a different WiFi channel without tearing down
-    // ESP-NOW. Required for slave dual-channel scanning per spec §4.5.
+    // ESP-NOW. Required for Lume dual-channel scanning per spec §4.5.
     // Returns false if the radio isn't running or the channel switch fails.
     virtual bool set_channel(uint8_t wifi_channel) = 0;
 

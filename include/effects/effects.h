@@ -80,8 +80,8 @@ public:
 
 // BPM -> attack/sustain/release envelope picker. Single source of truth for
 // the prototype's tempo-driven envelope mapping; Pulse / ProbabilityPulse use
-// it for IR fires, AutonomousMaster uses it when packing LIGHT_COMMAND frames
-// for ESP-NOW so slaves render the same envelope on screen.
+// it for IR fires, Director uses it when packing LIGHT_COMMAND frames
+// for ESP-NOW so Lumes render the same envelope on screen.
 struct PulseEnvelope {
     pixmob::Time attack;
     pixmob::Time sustain;

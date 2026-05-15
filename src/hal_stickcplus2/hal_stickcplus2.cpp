@@ -24,8 +24,8 @@
 //
 //   ESPNow  - WiFi-radio broadcast/peer messaging. begin() is NOT called
 //             from HAL::begin(); orchestration brings the radio up when
-//             entering a mode that needs it (AutonomousMaster as Master,
-//             Slave Mode for receive). Mirrors the Mic on-demand pattern.
+//             entering a mode that needs it (Director as Director,
+//             Lume Mode for receive). Mirrors the Mic on-demand pattern.
 
 #include "hal/hal.h"
 #include "M5Unified.h"

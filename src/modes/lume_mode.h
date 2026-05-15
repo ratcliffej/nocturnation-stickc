@@ -1,13 +1,13 @@
 // LumeMode - ESP-NOW receive (Epic 4 Block 3, RX side).
 //
-// Pulls the radio up on channel 1 (matching the master's hobby default;
+// Pulls the radio up on channel 1 (matching the Director's hobby default;
 // channel-priority dual-scan lands in Block 6) and registers a receive
 // callback. Each inbound frame is decoded into its typed payload and
 // logged via Serial - this is the byte-for-byte verification path the
 // Epic Block 3 acceptance criterion calls for.
 //
-// Higher-level orchestration (deduplication, master-loss timeout +
-// idle-effect fallback, display-as-light, IR re-fire on the slave) is
+// Higher-level orchestration (deduplication, Director-loss timeout +
+// idle-effect fallback, display-as-light, IR re-fire on the Lume) is
 // Block 4's work. For now LumeMode just shows a counter of received
 // frames and the last source_id / message type seen.
 
@@ -38,11 +38,11 @@ public:
     void on_button_event(const dal::ButtonPressEvent& ev) override;
 
 private:
-    // No-signal threshold: 3x the master's heartbeat period (1 Hz). Three
-    // missed heartbeats with no other traffic = master almost certainly
-    // gone. Slaves do NOT auto-promote to master on this transition - the
-    // master might be momentarily out of range or paused, and a rogue
-    // slave-promoted-to-master would compete with the real master and
+    // No-signal threshold: 3x the Director's heartbeat period (1 Hz). Three
+    // missed heartbeats with no other traffic = Director almost certainly
+    // gone. Lumes do NOT auto-promote to Director on this transition - the
+    // Director might be momentarily out of range or paused, and a rogue
+    // Lume-promoted-to-Director would compete with the real Director and
     // ruin show coordination. Block 4 will run a subtle local idle
     // effect through this state; for now we just display NO SIGNAL.
     static constexpr uint32_t kNoSignalMs          = 3000;
@@ -99,7 +99,7 @@ private:
 
     // NocturNation group ID for receive filtering (Epic 4.65 Block 5).
     // Loaded from NVS on enter() via persistence::load_slv_group();
-    // operator sets via Config > Slave > Group. Default 0 means
+    // operator sets via Config > Lume > Group. Default 0 means
     // "respond to everything". Distinct from the per-PixMobIrBinding
     // `group` property which is the PixMob protocol's IR group code.
     uint8_t   slv_group_            = 0;
@@ -117,11 +117,11 @@ private:
     volatile bool                            pending_light_ = false;
     transport::espnow::LightCommandPayload   pending_light_payload_{};
 
-    // Repeater mode (per spec §4.3, configurable per-slave via
+    // Repeater mode (per spec §4.3, configurable per-Lume via
     // Config > ESP-NOW > Repeat). When enabled, each unique inbound
     // frame is rebroadcast once with hop_count incremented by 1, up
     // to a 3-hop ceiling. Source_id and sequence_number are preserved
-    // exactly so dedup works across the mesh - other slaves receiving
+    // exactly so dedup works across the mesh - other Lumes receiving
     // both the original and the repeat see them as duplicates.
     //
     // Queue same shape as the LIGHT_COMMAND queue: copy in on_recv,
@@ -135,8 +135,8 @@ private:
 
     // Deduplication ring (architecture spec §4.3): receivers track the
     // last 16 (source_id, sequence_number) tuples and drop repeats. The
-    // master sends each frame 2-3 times for airtime resilience (Block 5
-    // adds the redundant TX); without this gate the slave would paint
+    // Director sends each frame 2-3 times for airtime resilience (Block 5
+    // adds the redundant TX); without this gate the Lume would paint
     // and fire IR twice per logical beat.
     //
     // Sequence number 0 is reserved as "sequencing disabled" per spec -

@@ -157,7 +157,7 @@ void DirectorMode::on_audio_frame(const AudioFrameEvent& ev) {
             static_cast<transport::espnow::MusicEventType>(ev.music_event));
     }
 
-    // Render gating: while an overlay is open the master's local
+    // Render gating: while an overlay is open the Director's local
     // display is taken over by the overlay UI. We skip event dispatch
     // to the show so the BPM tracking / fan-out aligns with what the
     // operator sees on screen. Audio analysis + ESP-NOW broadcast
@@ -324,7 +324,7 @@ bool DirectorMode::picker_row_is_back(size_t row) const {
 void DirectorMode::on_picker_confirm() {
     if (picker_row_is_back(overlay_cursor_)) {
         // "<- Menu" sentinel. Close overlay first so re-entry to
-        // AutonomousMaster starts cleanly, then switch.
+        // Director starts cleanly, then switch.
         overlay_ = Overlay::None;
         ModeMachine::switch_to(ModeId::Menu);
         return;

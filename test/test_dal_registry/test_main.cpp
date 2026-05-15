@@ -79,7 +79,7 @@ static void test_local_profile_reflects_hal_capabilities(void) {
     // declare AudioFrame + ButtonPress as inputs and the display capabilities
     // + RgbPulse as outputs. RgbPulse is added alongside the Display
     // capabilities because the screen IS this host's "light" surface (Epic 4
-    // slave-as-target-device design): render_fx("local", RgbPulseEvent{...})
+    // Lume-as-target-device design): render_fx("local", RgbPulseEvent{...})
     // paints the screen with attack/sustain/release fade. ESPNow is NOT
     // declared, so EspNowInbound must NOT appear as an input.
     TEST_ASSERT_TRUE (dal::DAL::supports("local", CapabilityId::AudioFrame));
@@ -259,7 +259,7 @@ static void test_active_device_listing(void) {
     // DAL::begin() registers "local", "all-pixmobs", "group-1".."group-31"
     // (Epic 4.65 Block 6 extended from 1-5 to the PixMob protocol's full
     // 1-31 native range). Epic 4.65 Block 9 dropped the named
-    // "esp-now-broadcast" device entry - the master broadcast path now
+    // "esp-now-broadcast" device entry - the Director broadcast path now
     // routes through find_driver_for_transport rather than via the
     // device registry. This test then adds "a" + "b". Total = 1 + 1 +
     // 31 + 2 = 35, in registration order.

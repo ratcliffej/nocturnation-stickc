@@ -39,7 +39,7 @@
 //   2026-05-10 round 2: cross-device hardware verification on Plus2
 //   + S3 showed the round-1 tuning was just slightly too tight - a
 //   few softer kicks were being missed, leaving >1 s gaps that the
-//   master's heartbeat (architecture spec §4.3) legitimately filled.
+//   Director's heartbeat (architecture spec §4.3) legitimately filled.
 //   Mechanism: after a loud kick the kick's energy enters the per-
 //   band history, elevating the mean and raising the threshold for
 //   the next ~1 s. A soft kick within that window can fall just
@@ -166,7 +166,7 @@ public:
     bool process(const SpectrumFrame& frame, uint32_t now_ms);
 
     // Clear all history and the refractory clock. Used at mode
-    // transitions (entering Master mode, leaving Pause) so a stale
+    // transitions (entering Director mode, leaving Pause) so a stale
     // history doesn't bias detection on resume.
     void reset();
 

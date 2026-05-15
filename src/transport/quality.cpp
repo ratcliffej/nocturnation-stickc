@@ -10,7 +10,7 @@ void SignalQuality::note_frame(uint8_t source_id, uint8_t seq,
     if (seq == 0) return;
 
     // New source: reset state and seed with this first frame. Avoids
-    // counting "missed" frames from a previous master that just went away.
+    // counting "missed" frames from a previous Director that just went away.
     if (last_source_id_ != source_id) {
         last_source_id_  = source_id;
         last_seq_        = seq;

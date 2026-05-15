@@ -2,18 +2,18 @@
 // beat-pulse behaviour under the new Show plug-in framework.
 //
 // Wire output is byte-identical to BeatPulseVisualisation (the
-// pre-Epic-4.7 master-side renderer): every detected beat fires three
+// pre-Epic-4.7 Director-side renderer): every detected beat fires three
 // render targets in the same order with the same envelopes:
 //   1. DAL::render_fx("00:00", RgbPulseEvent{...})
 //      -> broadcast to all classes / all groups (Epic 4.65 unified
 //      target format; equivalent to the pre-4.65 "esp-now-broadcast"
 //      device name).
 //   2. DAL::fire_display_clear("local", DisplayClearEvent{colour})
-//      -> screen flash on the master itself (preserved as
+//      -> screen flash on the Director itself (preserved as
 //      DisplayClearEvent, not RgbPulseEvent).
 //   3. effects::Pulse::on_beat(...) which fans out
 //      render_fx("all-pixmobs", ...) -> IR via the PixMob driver on
-//      the master.
+//      the Director.
 //
 // Compared to BeatPulseVisualisation, SimpleBeatShow additionally
 // owns the full screen rendering: status strip (show name), colour

@@ -186,7 +186,7 @@ void BeatPulseVisualisation::on_audio_frame(VisualisationContext& ctx,
 
     // ---- Render fan-out, in the exact order the pre-migration code used.
 
-    // 1. Wire to slaves. Same envelope picker, same CHANCE_100.
+    // 1. Wire to Lumes. Same envelope picker, same CHANCE_100.
     {
         uint8_t r=0, g=0, b=0;
         colour_to_rgb(colour, r, g, b);
@@ -201,7 +201,7 @@ void BeatPulseVisualisation::on_audio_frame(VisualisationContext& ctx,
         // migration from the legacy "esp-now-broadcast" device name; routes
         // to EspNowBroadcastDriver with target_class=0 / target_group=0 on
         // the LIGHT_COMMAND payload, byte-identical to pre-migration wire
-        // output for slaves that pass the filter (everyone matches).
+        // output for Lumes that pass the filter (everyone matches).
         DAL::render_fx("00:00", wire);
     }
 

@@ -529,7 +529,7 @@ static void test_migration_is_idempotent_for_first_boot(void) {
 }
 
 // =============================================================================
-// Slave persistence helpers (channel + repeat) - sanity round-trip via the
+// Lume persistence helpers (channel + repeat) - sanity round-trip via the
 // shared persistence module helpers added in Block 9.
 // =============================================================================
 

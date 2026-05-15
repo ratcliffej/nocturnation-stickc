@@ -32,7 +32,7 @@ using nocturnation::hal::ButtonId;
 using nocturnation::hal::ButtonEvent;
 
 // ConfigMode reads/writes operator-mutable settings. Channel + repeat
-// for the slave route through persistence:: shared helpers (Block 9).
+// for the Lume route through persistence:: shared helpers (Block 9).
 // The NocturNation receive-filter slv_group setting (was Config >
 // ESP-NOW > Group) now lives at the top level as a direct-action
 // "Group" item per the post-Epic-4.65 menu restructure.
@@ -439,7 +439,7 @@ void ConfigMode::draw_stub(const char* title,
 // Picker over the registered Shows (show_registry). Btn2 cycles the
 // cursor; Btn1 persists the selection as active_show in NVS. Mirrors
 // DirectorMode's in-flight picker but reachable from Config
-// without entering Master mode. Empty registry is defensive only -
+// without entering Director mode. Empty registry is defensive only -
 // production builds always register at least SimpleBeatShow.
 // -------------------------------------------------------------------------
 
@@ -519,7 +519,7 @@ void ConfigMode::draw_show() {
 // display mode (Live / 25 / 50 / 75 / 100 %); the four percentage
 // modes override to fixed values so a developer can verify the
 // IR + ESP-NOW path without audio. Btn1 fires a render_fx pulse at
-// the displayed level so slaves pulse and the master's
+// the displayed level so Lumes pulse and the Director's
 // PixMobIrBinding transmits.
 //
 // Audio input starts on entering the sub and stops on the B-hold
@@ -531,7 +531,7 @@ void ConfigMode::draw_show() {
 
 namespace {
 // Flux-meter tuning - mirrors SimpleBeatShow exactly so the display
-// reads the same on bench and in master mode.
+// reads the same on bench and in Director mode.
 constexpr float kLevelTuningBeatMultiplier = 2.5f;
 constexpr float kLevelTuningBaselineAlpha  = 0.02f;
 constexpr float kLevelTuningVolumeGate     = 500.0f;
@@ -764,7 +764,7 @@ void ConfigMode::draw_display() {
 // -------------------------------------------------------------------------
 // IR submenu (functional: Enable toggle + Protocol info)
 //
-// The "Slave Group" item that used to surface PixMobIrBinding's `group`
+// The "Lume Group" item that used to surface PixMobIrBinding's `group`
 // property here was dropped post-Epic-4.65: the protocol IR group is
 // now relay-driven via inbound LIGHT_COMMAND target_group (Block 5);
 // the per-binding group property still exists as broadcast fallback
@@ -816,11 +816,11 @@ void ConfigMode::draw_ir() {
 }
 
 // -------------------------------------------------------------------------
-// ESP-NOW submenu (functional: Master Channel + Slave Channel + Repeat)
+// ESP-NOW submenu (functional: Director Channel + Lume Channel + Repeat)
 //
 // Per architecture spec §4.5 the project's two-channel social contract
 // is channel 1 = hobby/community/open, channel 11 = show/commercial.
-// Master picks 1, 11, or 6 (advanced override). Slave picks Auto (dual-
+// Director picks 1, 11, or 6 (advanced override). Lume picks Auto (dual-
 // channel scan with show priority) or locks to a specific channel.
 // Both persist to NVS and survive reboot. The receive-filter slv_group
 // setting (Epic 4.65 Block 5) moved to the top-level "Group" item in
@@ -888,7 +888,7 @@ void ConfigMode::handle_espnow(const ButtonPressEvent& ev) {
                     !persistence::load_slave_repeat_enabled());
                 break;
         }
-        // New value applies on next AutonomousMaster / LumeMode enter().
+        // New value applies on next Director / LumeMode enter().
         // Operator returns to Menu and re-enters the mode to pick it up.
         draw();
     }

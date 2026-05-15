@@ -1,4 +1,4 @@
-// LocalDisplayBinding - slave-side local-screen render of inbound
+// LocalDisplayBinding - Lume-side local-screen render of inbound
 // LIGHT_COMMAND events.
 //
 // Migrated from LumeMode::render_light's first `DAL::render_fx("local",

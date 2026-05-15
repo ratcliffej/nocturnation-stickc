@@ -1,4 +1,4 @@
-// DirectorMode - thin shell that hosts the active master-side
+// DirectorMode - thin shell that hosts the active Director-side
 // Show (Epic 4.7 Block 1 onwards).
 //
 // Pre-Epic-4.7 this hosted a Visualisation; Block 1 swaps that for the
@@ -64,7 +64,7 @@ public:
 #endif
 
 private:
-    // Channel comes from NVS (Config > Connectivity > ESP-NOW > Master
+    // Channel comes from NVS (Config > Connectivity > ESP-NOW > Director
     // Channel) per spec §4.5. The radio itself lives in
     // EspNowBroadcastDriver - this mode just starts / stops broadcast
     // in enter / exit; the driver's loop_tick handles retransmits and

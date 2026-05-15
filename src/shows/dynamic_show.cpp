@@ -275,7 +275,7 @@ void DynamicShow::on_beat_detected(ShowContext& ctx, uint8_t strength) {
     const uint8_t group_count = ctx.get_property("groups").as_u8();
     fire_event(ctx, kick_target_for(group_count), strength);
 
-    // Master local screen flash on kick so the operator sees the show
+    // Director local screen flash on kick so the operator sees the show
     // is alive even without bracelets. Colour from the same compute
     // that drives the wire output.
     uint8_t r=0, g=0, b=0;

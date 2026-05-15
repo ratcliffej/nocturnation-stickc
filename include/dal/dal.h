@@ -58,7 +58,7 @@ enum class CapabilityId : uint16_t {
 
     // ----- Input -----
     AudioFrame,           // 3-band B/M/T + 8-band perceptual band summaries
-    SpectrumFrame,        // 32-band log-spaced spectrum (master-local; not on the wire)
+    SpectrumFrame,        // 32-band log-spaced spectrum (Director-local; not on the wire)
     ButtonPress,          // Button events from a host's buttons
     EspNowInbound,        // Inbound ESP-NOW peer messages (Epic 4+)
     DmxInbound,           // Inbound DMX instructions (Epic 7+)
@@ -169,7 +169,7 @@ struct AudioFrameEvent {
     // Macro-level music event fired by the analyser's DropDetector
     // on this frame, or 0 (none). Wire-stable values match
     // transport::espnow::MusicEventType (1=DROP, 2=BREAKDOWN, 3=BUILD
-    // reserved). Master orchestration broadcasts MUSIC_EVENT frames
+    // reserved). Director orchestration broadcasts MUSIC_EVENT frames
     // when this is non-zero. Epic 4.5 Block 4.
     uint8_t  music_event   = 0;
 
@@ -208,14 +208,14 @@ struct AudioFrameEvent {
     uint8_t  section   = 0;
 };
 
-// 32-band log-spaced spectrum frame, master-local. Delivered alongside
+// 32-band log-spaced spectrum frame, Director-local. Delivered alongside
 // AudioFrameEvent via a separate subscription channel so consumers
 // that only want band summaries (most effects) don't pay the cost of
 // receiving 128 bytes of magnitudes per FFT cycle. Consumers that
 // want the rich surface (Diagnostic UI in Epic 4.6, FX modulators in
 // Epic 4.7) subscribe specifically.
 //
-// NOT broadcast over ESP-NOW - too heavy at FFT rate. Slaves consume
+// NOT broadcast over ESP-NOW - too heavy at FFT rate. Lumes consume
 // the more compact MUSIC_DESCRIPTOR wire descriptor when Epic 4.7
 // ships.
 struct SpectrumFrameEvent {
@@ -279,7 +279,7 @@ public:
 
     // Lifetime counter of successful sends through this driver. Bumped by
     // DAL::dispatch_output after a send() override returns true; used by
-    // orchestration (AutonomousMaster status display) to surface activity.
+    // orchestration (Director status display) to surface activity.
     uint32_t send_count() const     { return send_count_; }
     void increment_send_count()     { ++send_count_; }
 
@@ -389,7 +389,7 @@ public:
     // proliferation. Existing fire_* helpers are kept for the call sites
     // that already use them; new code should prefer render_fx.
     //
-    // Per the slave-as-target-device model, calling
+    // Per the Lume-as-target-device model, calling
     //   DAL::render_fx("local", RgbPulseEvent{...})
     // on a StickC paints the screen with an attack/sustain/release fade;
     // on a future LED-only device it drives the LED; on a Tildagon it can

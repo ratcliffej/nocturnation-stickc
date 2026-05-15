@@ -1,6 +1,6 @@
 // Native test: Show plug-in framework + SimpleBeatShow (Epic 4.7 Block 1).
 //
-// Covers the new master-side Show contract / context / registry plus
+// Covers the new Director-side Show contract / context / registry plus
 // the first concrete Show. The pre-Block-1 BeatPulse fan-out moves
 // here; this test exercises the new Show in isolation against recording
 // drivers registered on "ir-pixmob" and "esp-now-broadcast" so the
@@ -387,7 +387,7 @@ static void test_on_beat_fires_three_targets(void) {
     TEST_ASSERT_EQUAL_UINT8(0x00, g_espnow_driver.last_rgb_pulse().g);
     TEST_ASSERT_EQUAL_UINT8(0x00, g_espnow_driver.last_rgb_pulse().b);
 
-    // 2. IR fires once: dispatch_output_class_group's master-local
+    // 2. IR fires once: dispatch_output_class_group's Director-local
     // loopback for class 0 / 1 targets.
     TEST_ASSERT_EQUAL_INT(1, g_ir_driver.rgb_pulse_count());
     TEST_ASSERT_EQUAL_UINT8(0xFF, g_ir_driver.last_rgb_pulse().r);
@@ -485,7 +485,7 @@ static void test_off_colour_fires_reset_pulse(void) {
     set_test_millis(500);
     sb->on_beat_detected(ctx, 255);
 
-    // Wire fires a RgbPulse with zero rgb (slaves' bindings decide
+    // Wire fires a RgbPulse with zero rgb (Lumes' bindings decide
     // what to do with it).
     TEST_ASSERT_EQUAL_INT(1, g_espnow_driver.rgb_pulse_count());
     TEST_ASSERT_EQUAL_UINT8(0x00, g_espnow_driver.last_rgb_pulse().r);

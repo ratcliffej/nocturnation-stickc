@@ -1,10 +1,10 @@
-// Show - abstract base for master-side performance plug-ins (Epic 4.7).
+// Show - abstract base for Director-side performance plug-ins (Epic 4.7).
 //
-// A Show is the unit of "what is the master doing right now": it
+// A Show is the unit of "what is the Director doing right now": it
 // consumes analyser events, makes render_fx() calls with class+group
 // targets, owns the screen, and owns button handling beyond the
 // back-gesture. DirectorMode holds exactly one active Show at
-// a time, selectable via the master-mode picker or ConfigMode > Show.
+// a time, selectable via the Director-mode picker or ConfigMode > Show.
 //
 // Compared to the Epic 4.6 Visualisation plug-in: a Show is a richer
 // surface that *owns* the screen (rather than rendering inside the

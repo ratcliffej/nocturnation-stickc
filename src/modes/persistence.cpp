@@ -72,8 +72,8 @@ void save_screen_pulse_enabled(bool e) {
     prefs.end();
 }
 
-// ESP-NOW radio channel preferences. Master uses one of {1, 6, 11}; slave
-// uses {0=Auto/scan, 1, 6, 11}. Defaults: master 1 (hobby), slave 0 (auto-
+// ESP-NOW radio channel preferences. Director uses one of {1, 6, 11}; Lume
+// uses {0=Auto/scan, 1, 6, 11}. Defaults: Director 1 (hobby), Lume 0 (auto-
 // scan with show priority). Per architecture spec §4.5: channel 1 = hobby /
 // open community traffic, channel 11 = show / commercial; channel 6 is an
 // advanced operator override only.
@@ -94,7 +94,7 @@ void save_master_channel(uint8_t c) {
     prefs.end();
 }
 
-// Slave channel: 0 = auto (dual-channel scan with show priority); 1 / 6 /
+// Lume channel: 0 = auto (dual-channel scan with show priority); 1 / 6 /
 // 11 = locked. Validated on read so an out-of-range value persisted by an
 // older build can't push LumeMode into an invalid state.
 uint8_t load_slave_channel() {
@@ -129,7 +129,7 @@ void save_slave_repeat_enabled(bool e) {
     prefs.end();
 }
 
-// Slave NocturNation group ID. Device-wide value used by LumeMode's
+// Lume NocturNation group ID. Device-wide value used by LumeMode's
 // receive filter. Range 0-255; default 0 means "respond to everything".
 uint8_t load_slv_group() {
     Preferences prefs;
@@ -231,7 +231,7 @@ void migrate_legacy_nvs_keys() {
     }
 
     // active_vis -> active_show (Epic 4.7 Block 1). The Show plug-in
-    // framework replaces the Visualisation framework as the master-side
+    // framework replaces the Visualisation framework as the Director-side
     // performance unit. The canonical pre-Block-1 vis ids
     // ("beat-pulse", "spectrum-bars") both map to "simple-beat" - the
     // Block 1 Show that preserves BeatPulse's behaviour. Custom or
@@ -287,7 +287,7 @@ void save_calibration(const AudioCalibration& c) {
     prefs.end();
 }
 #else
-// Native test stubs. The slave-channel / repeater values are held in
+// Native test stubs. The Lume-channel / repeater values are held in
 // process-static memory so test fixtures can seed values via save_*
 // and exercise LumeMode's enter() against the same load_* helpers
 // that the firmware path uses. The legacy-key migration delegates to

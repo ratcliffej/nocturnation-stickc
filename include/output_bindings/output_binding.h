@@ -1,8 +1,8 @@
-// OutputBinding - abstract base for slave-side output bindings.
+// OutputBinding - abstract base for Lume-side output bindings.
 //
 // Concrete bindings subclass this and override the hooks they care
 // about. The framework owns one instance per registered binding and
-// activates the per-slave-config subset simultaneously: a slave with
+// activates the per-Lume-config subset simultaneously: a Lume with
 // PixMob IR enabled has both LocalDisplayBinding and PixMobIrBinding
 // active, so the same incoming RgbPulseEvent fires both surfaces.
 // Block 6 lands the contract only; Block 9 migrates the existing
@@ -11,7 +11,7 @@
 //
 // Lifetime:
 //   - enter(ctx) / exit(ctx) bracket the active period.
-//   - on_light_command fires for every render event the slave decodes
+//   - on_light_command fires for every render event the Lume decodes
 //     from incoming ESP-NOW LIGHT_COMMAND frames while this binding
 //     is active. This is the primary hook - bindings turn the colour
 //     event into a hardware action (paint LCD, transmit PixMob IR
@@ -49,7 +49,7 @@ class OutputBinding : public plugins::Plugin {
 public:
     plugins::PluginKind kind() const override { return plugins::PluginKind::OutputBinding; }
 
-    // Device-class taxonomy (Epic 4.65). Master encodes the chosen class
+    // Device-class taxonomy (Epic 4.65). Director encodes the chosen class
     // into LIGHT_COMMAND.target_class; LumeMode filters inbound frames
     // against this value per active binding. Pure-virtual so every
     // binding declares its class explicitly - silent defaults would let
@@ -61,9 +61,9 @@ public:
     // Relay flag (Epic 4.65 Block 5). When true the binding is a
     // pass-through to a downstream protocol that does its own group
     // filtering (PixMob bracelets check the IR group code at their
-    // own level), so the slave's slv_group filter is BYPASSED for this
+    // own level), so the Lume's slv_group filter is BYPASSED for this
     // binding - it fires whenever the target_class matches, regardless
-    // of whether target_group matches the slave's own group. The
+    // of whether target_group matches the Lume's own group. The
     // binding's on_light_command reads OutputBindingContext::
     // current_target_group() to relay the inbound group code into the
     // downstream protocol. Default: false (local binding; slv_group

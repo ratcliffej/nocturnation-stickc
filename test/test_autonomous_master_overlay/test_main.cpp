@@ -182,7 +182,7 @@ static void test_picker_confirm_show_row_persists_selection(void) {
     auto* m = master_instance();
     inject_input_action(hal::InputAction::Picker);
     // Cursor=0 -> "simple-beat". Confirm should keep us in
-    // AutonomousMaster and persist "simple-beat" to NVS.
+    // Director and persist "simple-beat" to NVS.
     inject_input_action(hal::InputAction::Confirm);
 
     TEST_ASSERT_EQUAL_INT((int)ModeId::Director,

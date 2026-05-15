@@ -107,7 +107,7 @@ static void test_source_change_resets_state(void) {
     TEST_ASSERT_EQUAL_INT(4, q.bars(30));
 
     // New source should reset; first frame from new source seeds without
-    // synthesising missed frames from a now-defunct old master.
+    // synthesising missed frames from a now-defunct old Director.
     q.note_frame(/*src=*/2, 100, 100);
     TEST_ASSERT_EQUAL_UINT(1, q.received_count());
     TEST_ASSERT_EQUAL_UINT(0, q.missed_count());

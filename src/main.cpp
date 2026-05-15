@@ -34,7 +34,7 @@ void setup() {
 
     nocturnation::dal::DAL::begin();
 
-    // Register master-side Shows (Epic 4.7 Block 1). SimpleBeatShow
+    // Register Director-side Shows (Epic 4.7 Block 1). SimpleBeatShow
     // preserves the pre-Block-1 BeatPulse behaviour; Block 5 adds
     // DynamicShow. The pre-Block-2 BeatPulse / SpectrumBars Visualisation
     // registrations retired in Block 2 - their screen-rendering logic
@@ -46,11 +46,11 @@ void setup() {
     nocturnation::shows::show_registry().register_plugin(
         nocturnation::shows::dynamic_show_instance());
 
-    // Register slave-side output bindings (Epic 4.6 Block 9). LumeMode
+    // Register Lume-side output bindings (Epic 4.6 Block 9). LumeMode
     // walks this registry on enter() and activates every binding whose
     // required capabilities the host supports. LocalDisplayBinding
     // owns the "local" render surface (screen); PixMobIrBinding owns
-    // IR forward to bracelets in this slave's configured group.
+    // IR forward to bracelets in this Lume's configured group.
     nocturnation::output_bindings::output_binding_registry().register_plugin(
         nocturnation::output_bindings::local_display_instance());
     nocturnation::output_bindings::output_binding_registry().register_plugin(

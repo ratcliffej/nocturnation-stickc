@@ -54,7 +54,7 @@ void Pulse::set_colour(uint8_t r, uint8_t g, uint8_t b) {
 }
 
 void Pulse::on_beat(uint32_t /*now_ms*/, float bpm) {
-    // Skip if colour is full black; matches AutonomousMaster's MODE_OFF
+    // Skip if colour is full black; matches Director's MODE_OFF
     // behaviour pre-AC1 (cycle includes an "OFF" colour that suppresses IR).
     if (r_ == 0 && g_ == 0 && b_ == 0) return;
     fire(r_, g_, b_, bpm);
