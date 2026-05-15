@@ -1,6 +1,6 @@
-// SlaveMode implementation.
+// LumeMode implementation.
 
-#include "slave_mode.h"
+#include "lume_mode.h"
 
 #include "persistence.h"
 #include "dal/dal.h"
@@ -50,7 +50,7 @@ OutputBindingContext* context_for(const OutputBinding* binding) {
 
 }  // namespace
 
-void SlaveMode::enter() {
+void LumeMode::enter() {
     rx_count_         = 0;
     last_rx_ms_       = 0;
     last_source_id_   = 0;
@@ -131,7 +131,7 @@ void SlaveMode::enter() {
     }
 }
 
-void SlaveMode::exit() {
+void LumeMode::exit() {
     if (radio_active_) {
         if (auto* radio = hal::HAL::esp_now()) radio->end();
         radio_active_ = false;
@@ -150,7 +150,7 @@ void SlaveMode::exit() {
     dal::local_driver_instance()->reset_pulse_rect();
 }
 
-void SlaveMode::loop_tick() {
+void LumeMode::loop_tick() {
     const uint32_t now = millis();
 
     // Drain any LIGHT_COMMAND queued by the ESP-NOW callback. Doing
@@ -251,13 +251,13 @@ void SlaveMode::loop_tick() {
     }
 }
 
-void SlaveMode::on_button_event(const ButtonPressEvent& ev) {
+void LumeMode::on_button_event(const ButtonPressEvent& ev) {
     if (ev.id == ButtonId::Btn2 && ev.kind == ButtonEvent::LongPressed) {
         ModeMachine::switch_to(ModeId::Menu);
     }
 }
 
-bool SlaveMode::seen_recently(uint8_t src, uint8_t seq) const {
+bool LumeMode::seen_recently(uint8_t src, uint8_t seq) const {
     if (seq == 0) return false;
     for (size_t i = 0; i < kDedupRingSize; ++i) {
         if (dedup_ring_[i].source_id == src
@@ -268,7 +268,7 @@ bool SlaveMode::seen_recently(uint8_t src, uint8_t seq) const {
     return false;
 }
 
-void SlaveMode::mark_seen(uint8_t src, uint8_t seq) {
+void LumeMode::mark_seen(uint8_t src, uint8_t seq) {
     if (seq == 0) return;
     dedup_ring_[dedup_head_] = DedupEntry{src, seq};
     dedup_head_ = (dedup_head_ + 1) % kDedupRingSize;
@@ -285,7 +285,7 @@ void SlaveMode::mark_seen(uint8_t src, uint8_t seq) {
 // gates the ir-pixmob driver via DAL::set_driver_enabled).
 // -------------------------------------------------------------------------
 
-void SlaveMode::fan_out_light_command(const transport::espnow::LightCommandPayload& p) {
+void LumeMode::fan_out_light_command(const transport::espnow::LightCommandPayload& p) {
     RgbPulseEvent ev{};
     ev.r       = p.r;
     ev.g       = p.g;
@@ -322,7 +322,7 @@ void SlaveMode::fan_out_light_command(const transport::espnow::LightCommandPaylo
     }
 }
 
-void SlaveMode::on_recv(const hal::ESPNowMessage& m) {
+void LumeMode::on_recv(const hal::ESPNowMessage& m) {
     using namespace transport::espnow;
 
     // Any frame received - including duplicates - counts as the
@@ -436,7 +436,7 @@ void SlaveMode::on_recv(const hal::ESPNowMessage& m) {
 // tracker has accumulated enough data for a real estimate, and as the
 // post-NO-SIGNAL killer (any bar count is meaningless if the master
 // is gone entirely).
-int SlaveMode::signal_bars_from_age() const {
+int LumeMode::signal_bars_from_age() const {
     if (rx_count_ == 0)              return 0;
     // Saturating subtract: handle the WiFi-task / main-task race where
     // last_rx_ms_ can briefly be slightly ahead of millis() because
@@ -459,7 +459,7 @@ int SlaveMode::signal_bars_from_age() const {
 //   - NO SIGNAL: frame age beats whatever the loss tracker says,
 //     because no recent frames means no current signal regardless
 //     of historical fidelity.
-int SlaveMode::signal_bars() const {
+int LumeMode::signal_bars() const {
     if (no_signal_ || rx_count_ == 0)            return 0;
     const int q = quality_.bars(millis());
     if (q < 0)                                    return signal_bars_from_age();
@@ -467,7 +467,7 @@ int SlaveMode::signal_bars() const {
     return (q < a) ? q : a;
 }
 
-void SlaveMode::draw_status_pip() {
+void LumeMode::draw_status_pip() {
     // Buffered paint session: the ~7 fill_rects that compose the pip
     // batch into a single sprite, then push to the panel as one SPI
     // burst. Without this each op writes independently to the panel
@@ -543,7 +543,7 @@ void SlaveMode::draw_status_pip() {
 // size-3 "NO SIGNAL" headline near the top (just below the pip),
 // then a related group of size-1 diagnostic lines (channel, rx total,
 // last rx age), then the gesture hint anchored at the bottom.
-void SlaveMode::draw_no_signal_body() {
+void LumeMode::draw_no_signal_body() {
     char line[40];
 
     // Headline: centred horizontally just below the pip. Size-3 char
@@ -581,7 +581,7 @@ void SlaveMode::draw_no_signal_body() {
             kDiagX, kDiagY + 2 * kLineStep, line, RED, BLACK, 1});
     }
 
-    // Gesture hint anchored at the bottom of the screen. SlaveMode is
+    // Gesture hint anchored at the bottom of the screen. LumeMode is
     // still on raw ButtonEvent (it hasn't migrated to InputAction yet),
     // and its on_button_event routes Btn2 LongPressed straight to
     // ModeMachine::switch_to(Menu) - so "B-hold: menu" is literally

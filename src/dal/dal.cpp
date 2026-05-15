@@ -277,7 +277,7 @@ void DAL::begin() {
     // Register PixMob bracelets. "all-pixmobs" is broadcast (group 0).
     // "group-1".."group-31" cover the PixMob protocol's full native group
     // range (Epic 4.65 Block 6 extended this from the original 1-5 cap
-    // which was a SlaveMode::ir_target_name artifact; the protocol always
+    // which was a LumeMode::ir_target_name artifact; the protocol always
     // supported the full 5-bit field). Names use string-literal pointers
     // because register_device stores the pointer rather than copying.
     register_device("all-pixmobs", &profiles::PixMobX4Gen3_1, 0);

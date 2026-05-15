@@ -1,4 +1,4 @@
-// Native test: AutonomousMasterMode picker + settings overlays
+// Native test: DirectorMode picker + settings overlays
 // (Epic 4.7 Block 1).
 //
 // Mode now hosts a Show (Epic 4.7) instead of a Visualisation
@@ -25,10 +25,10 @@
 #include "shows/simple_beat_show.h"
 #include "modes/mode_machine.h"
 
-// AutonomousMasterMode is a private header inside src/modes/. The test
+// DirectorMode is a private header inside src/modes/. The test
 // build's include path adds src/modes/ so we can reach the test-seam
 // accessors directly without exposing them in the public include/ tree.
-#include "../../src/modes/autonomous_master_mode.h"
+#include "../../src/modes/director_mode.h"
 #include "../../src/modes/persistence.h"
 
 // =============================================================================
@@ -39,7 +39,7 @@ using namespace nocturnation;
 using modes::ModeId;
 using modes::ModeMachine;
 using modes::test_seam::set_millis;
-using modes::AutonomousMasterMode;
+using modes::DirectorMode;
 using shows::show_registry;
 using shows::simple_beat_show_instance;
 using plugins::PropertyBag;
@@ -109,8 +109,8 @@ Battery* HAL::battery()  { return nullptr; }
 // Test helpers
 // =============================================================================
 
-static AutonomousMasterMode* master_instance() {
-    extern AutonomousMasterMode& test_get_autonomous_master();
+static DirectorMode* master_instance() {
+    extern DirectorMode& test_get_autonomous_master();
     return &test_get_autonomous_master();
 }
 
@@ -150,17 +150,17 @@ void tearDown(void) {}
 static void test_picker_opens_and_closes_on_picker_action(void) {
     auto* m = master_instance();
     TEST_ASSERT_EQUAL_INT(
-        (int)AutonomousMasterMode::OverlayKind::None,
+        (int)DirectorMode::OverlayKind::None,
         (int)m->overlay_for_tests());
 
     inject_input_action(hal::InputAction::Picker);
     TEST_ASSERT_EQUAL_INT(
-        (int)AutonomousMasterMode::OverlayKind::Picker,
+        (int)DirectorMode::OverlayKind::Picker,
         (int)m->overlay_for_tests());
 
     inject_input_action(hal::InputAction::Picker);
     TEST_ASSERT_EQUAL_INT(
-        (int)AutonomousMasterMode::OverlayKind::None,
+        (int)DirectorMode::OverlayKind::None,
         (int)m->overlay_for_tests());
 }
 
@@ -188,7 +188,7 @@ static void test_picker_confirm_show_row_persists_selection(void) {
     TEST_ASSERT_EQUAL_INT((int)ModeId::AutonomousMaster,
                           (int)ModeMachine::current());
     TEST_ASSERT_EQUAL_INT(
-        (int)AutonomousMasterMode::OverlayKind::None,
+        (int)DirectorMode::OverlayKind::None,
         (int)m->overlay_for_tests());
     TEST_ASSERT_EQUAL_STRING("simple-beat",
         modes::persistence::load_active_show_id());
@@ -223,12 +223,12 @@ static void test_settings_opens_and_closes_on_settings_action(void) {
     auto* m = master_instance();
     inject_input_action(hal::InputAction::Settings);
     TEST_ASSERT_EQUAL_INT(
-        (int)AutonomousMasterMode::OverlayKind::Settings,
+        (int)DirectorMode::OverlayKind::Settings,
         (int)m->overlay_for_tests());
 
     inject_input_action(hal::InputAction::Settings);
     TEST_ASSERT_EQUAL_INT(
-        (int)AutonomousMasterMode::OverlayKind::None,
+        (int)DirectorMode::OverlayKind::None,
         (int)m->overlay_for_tests());
 }
 
@@ -261,7 +261,7 @@ static void test_settings_back_row_closes_overlay(void) {
     TEST_ASSERT_EQUAL_size_t(1u, m->overlay_cursor_for_tests());
     inject_input_action(hal::InputAction::Confirm);
     TEST_ASSERT_EQUAL_INT(
-        (int)AutonomousMasterMode::OverlayKind::None,
+        (int)DirectorMode::OverlayKind::None,
         (int)m->overlay_for_tests());
 }
 

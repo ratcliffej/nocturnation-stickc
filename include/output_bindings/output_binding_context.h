@@ -57,7 +57,7 @@ public:
     void     mark_entered(uint32_t now_ms);
 
     // -- Inbound-frame addressing (Epic 4.65 Block 5) ---------------------
-    // SlaveMode sets these on every LIGHT_COMMAND fan-out before calling
+    // LumeMode sets these on every LIGHT_COMMAND fan-out before calling
     // the binding's on_light_command. Relay bindings (e.g. PixMobIrBinding)
     // read current_target_group() to thread the inbound group code into
     // their downstream protocol. Local bindings can ignore both - the

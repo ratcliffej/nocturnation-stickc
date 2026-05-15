@@ -1,4 +1,4 @@
-// AutonomousMasterMode - thin shell that hosts the active master-side
+// DirectorMode - thin shell that hosts the active master-side
 // Show (Epic 4.7 Block 1 onwards).
 //
 // Pre-Epic-4.7 this hosted a Visualisation; Block 1 swaps that for the
@@ -33,12 +33,12 @@ namespace shows { class Show; class ShowContext; }
 
 namespace modes {
 
-class AutonomousMasterMode : public Mode {
+class DirectorMode : public Mode {
 public:
     ModeId id() const override { return ModeId::AutonomousMaster; }
     const char* name() const override { return "Autonomous Master"; }
 
-    AutonomousMasterMode() = default;
+    DirectorMode() = default;
 
     void enter() override;
     void exit() override;

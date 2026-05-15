@@ -1,8 +1,8 @@
 // LocalDisplayBinding - slave-side local-screen render of inbound
 // LIGHT_COMMAND events.
 //
-// Migrated from SlaveMode::render_light's first `DAL::render_fx("local",
-// ev)` line in Epic 4.6 Block 9. The pre-migration SlaveMode fired
+// Migrated from LumeMode::render_light's first `DAL::render_fx("local",
+// ev)` line in Epic 4.6 Block 9. The pre-migration LumeMode fired
 // render_fx("local", ev) unconditionally for every decoded
 // LIGHT_COMMAND payload, which routed through LocalDriver to paint the
 // pulse rect. This binding owns that responsibility now: on_light_command

@@ -3,7 +3,7 @@
 // A Show is the unit of "what is the master doing right now": it
 // consumes analyser events, makes render_fx() calls with class+group
 // targets, owns the screen, and owns button handling beyond the
-// back-gesture. AutonomousMasterMode holds exactly one active Show at
+// back-gesture. DirectorMode holds exactly one active Show at
 // a time, selectable via the master-mode picker or ConfigMode > Show.
 //
 // Compared to the Epic 4.6 Visualisation plug-in: a Show is a richer

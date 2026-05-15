@@ -1,4 +1,4 @@
-// SlaveMode - ESP-NOW receive (Epic 4 Block 3, RX side).
+// LumeMode - ESP-NOW receive (Epic 4 Block 3, RX side).
 //
 // Pulls the radio up on channel 1 (matching the master's hobby default;
 // channel-priority dual-scan lands in Block 6) and registers a receive
@@ -8,7 +8,7 @@
 //
 // Higher-level orchestration (deduplication, master-loss timeout +
 // idle-effect fallback, display-as-light, IR re-fire on the slave) is
-// Block 4's work. For now SlaveMode just shows a counter of received
+// Block 4's work. For now LumeMode just shows a counter of received
 // frames and the last source_id / message type seen.
 
 #pragma once
@@ -27,7 +27,7 @@
 namespace nocturnation {
 namespace modes {
 
-class SlaveMode : public Mode {
+class LumeMode : public Mode {
 public:
     ModeId id() const override { return ModeId::Slave; }
     const char* name() const override { return "Slave"; }

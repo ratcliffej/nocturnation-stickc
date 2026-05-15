@@ -4,7 +4,7 @@
 // care about. The framework owns one instance per registered vis and
 // activates exactly one at a time (selected via the picker). Block 5
 // lands the contract only; Block 8 migrates BeatPulse to it and lands
-// the autonomous_master_mode rewrite that drives the lifecycle, and
+// the director_mode rewrite that drives the lifecycle, and
 // Block 11 adds Spectrum Bars on top.
 //
 // Lifetime:
@@ -47,7 +47,7 @@ public:
 
     // Singleton context accessor (Epic 4.6 Block 11). Each concrete vis
     // owns a single VisualisationContext singleton in its translation
-    // unit; the framework (AutonomousMasterMode picker / settings path)
+    // unit; the framework (DirectorMode picker / settings path)
     // routes events through this accessor so it scales to any number of
     // registered visualisations without hardcoding per-id branches.
     virtual VisualisationContext& context() = 0;

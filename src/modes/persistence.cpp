@@ -96,7 +96,7 @@ void save_master_channel(uint8_t c) {
 
 // Slave channel: 0 = auto (dual-channel scan with show priority); 1 / 6 /
 // 11 = locked. Validated on read so an out-of-range value persisted by an
-// older build can't push SlaveMode into an invalid state.
+// older build can't push LumeMode into an invalid state.
 uint8_t load_slave_channel() {
     Preferences prefs;
     prefs.begin("noct", /*readOnly=*/true);
@@ -129,7 +129,7 @@ void save_slave_repeat_enabled(bool e) {
     prefs.end();
 }
 
-// Slave NocturNation group ID. Device-wide value used by SlaveMode's
+// Slave NocturNation group ID. Device-wide value used by LumeMode's
 // receive filter. Range 0-255; default 0 means "respond to everything".
 uint8_t load_slv_group() {
     Preferences prefs;
@@ -289,7 +289,7 @@ void save_calibration(const AudioCalibration& c) {
 #else
 // Native test stubs. The slave-channel / repeater values are held in
 // process-static memory so test fixtures can seed values via save_*
-// and exercise SlaveMode's enter() against the same load_* helpers
+// and exercise LumeMode's enter() against the same load_* helpers
 // that the firmware path uses. The legacy-key migration delegates to
 // a process-static "noct/slv_ir_grp" stand-in that tests seed via
 // the helper at the bottom of this block.

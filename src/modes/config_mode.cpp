@@ -438,7 +438,7 @@ void ConfigMode::draw_stub(const char* title,
 //
 // Picker over the registered Shows (show_registry). Btn2 cycles the
 // cursor; Btn1 persists the selection as active_show in NVS. Mirrors
-// AutonomousMasterMode's in-flight picker but reachable from Config
+// DirectorMode's in-flight picker but reachable from Config
 // without entering Master mode. Empty registry is defensive only -
 // production builds always register at least SimpleBeatShow.
 // -------------------------------------------------------------------------
@@ -888,7 +888,7 @@ void ConfigMode::handle_espnow(const ButtonPressEvent& ev) {
                     !persistence::load_slave_repeat_enabled());
                 break;
         }
-        // New value applies on next AutonomousMaster / SlaveMode enter().
+        // New value applies on next AutonomousMaster / LumeMode enter().
         // Operator returns to Menu and re-enters the mode to pick it up.
         draw();
     }

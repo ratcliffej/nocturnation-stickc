@@ -177,7 +177,7 @@ struct AudioFrameEvent {
     // signal "an onset fired on this frame in this band"; zero means
     // no onset. The kick path coexists with is_beat for back-compat:
     // is_beat is the legacy boolean from Epic 4.5; beat_strength is
-    // the Block 3 quantised intensity that AutonomousMasterMode
+    // the Block 3 quantised intensity that DirectorMode
     // passes to Show::on_beat_detected. snare / hihat are new in
     // Block 3 - their detectors watch ~200-2000 Hz and ~4-8 kHz
     // sub-bands respectively.
@@ -186,7 +186,7 @@ struct AudioFrameEvent {
     uint8_t  hihat_strength = 0;
 
     // Continuous music descriptors (Epic 4.7 Block 3). Updated every
-    // frame at FFT rate (~30-40 Hz). AutonomousMasterMode applies a
+    // frame at FFT rate (~30-40 Hz). DirectorMode applies a
     // 5 %-change rate limit before delivering to Show::on_music_descriptor
     // so Shows don't have to filter every-frame churn.
     //
@@ -201,7 +201,7 @@ struct AudioFrameEvent {
     // Current section label (Epic 4.7 Block 4). Values per
     // analyser::SectionType: 0=UNKNOWN, 1=VERSE, 2=CHORUS, 3=BUILDUP,
     // 4=BREAKDOWN, 5=VOCALS_ONLY (reserved), 6=INSTRUMENTAL_BREAK
-    // (reserved), 7=DROP. AutonomousMasterMode fires
+    // (reserved), 7=DROP. DirectorMode fires
     // Show::on_section_change(section) only when this value differs
     // from the previously-delivered section so the hook fires on
     // transitions, not every frame.
@@ -419,7 +419,7 @@ public:
     static bool subscribe_dmx_inbound      (const char* target, DmxInboundCallback    cb);
 
     // Drop all spectrum-frame subscriptions for `target` (Epic 4.6 Block 11).
-    // Added so AutonomousMasterMode can flip Block 7's pipeline gate live
+    // Added so DirectorMode can flip Block 7's pipeline gate live
     // when switching between vis with and without
     // PowerProfile::needs_spectrum_frame. Returns the count removed.
     // Subscribe surfaces for other event channels remain one-shot (no

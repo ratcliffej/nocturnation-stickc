@@ -1,8 +1,8 @@
 // BeatPulseVisualisation - implementation (Epic 4.6 Block 8).
 //
-// Extracted from src/modes/autonomous_master_mode.cpp. The Colour enum +
+// Extracted from src/modes/director_mode.cpp. The Colour enum +
 // helpers, the IBI/BPM tracking, the per-beat render fan-out, and the
-// owned effects::Pulse all live here. AutonomousMasterMode shrinks to a
+// owned effects::Pulse all live here. DirectorMode shrinks to a
 // shell that forwards events to the active vis.
 //
 // Wire output is byte-identical to the pre-migration code path. The three
@@ -37,7 +37,7 @@ using nocturnation::plugins::PropertyValue;
 using nocturnation::plugins::Span;
 
 // =============================================================================
-// Colour enum + helpers (verbatim from autonomous_master_mode.cpp)
+// Colour enum + helpers (verbatim from director_mode.cpp)
 // =============================================================================
 //
 // Same six-state cycle including the OFF "skip IR" state that the

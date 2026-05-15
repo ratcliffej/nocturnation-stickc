@@ -6,7 +6,7 @@
 // PixMob IR enabled has both LocalDisplayBinding and PixMobIrBinding
 // active, so the same incoming RgbPulseEvent fires both surfaces.
 // Block 6 lands the contract only; Block 9 migrates the existing
-// hardcoded display + PixMob IR forward in slave_mode.cpp into
+// hardcoded display + PixMob IR forward in lume_mode.cpp into
 // concrete LocalDisplayBinding + PixMobIrBinding.
 //
 // Lifetime:
@@ -50,7 +50,7 @@ public:
     plugins::PluginKind kind() const override { return plugins::PluginKind::OutputBinding; }
 
     // Device-class taxonomy (Epic 4.65). Master encodes the chosen class
-    // into LIGHT_COMMAND.target_class; SlaveMode filters inbound frames
+    // into LIGHT_COMMAND.target_class; LumeMode filters inbound frames
     // against this value per active binding. Pure-virtual so every
     // binding declares its class explicitly - silent defaults would let
     // bindings drift untagged and break the addressing contract. Never

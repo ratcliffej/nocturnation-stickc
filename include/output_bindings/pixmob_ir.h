@@ -1,8 +1,8 @@
 // PixMobIrBinding - slave-side PixMob protocol IR transmitter.
 //
-// Migrated from SlaveMode::render_light in Epic 4.6 Block 9, then
+// Migrated from LumeMode::render_light in Epic 4.6 Block 9, then
 // refactored to a pure relay binding in Epic 4.65 Block 5 / follow-up.
-// SlaveMode threads the inbound LIGHT_COMMAND target_group through
+// LumeMode threads the inbound LIGHT_COMMAND target_group through
 // OutputBindingContext::current_target_group(); this binding passes it
 // straight through as the PixMob protocol group code on the outgoing
 // IR frame. PixMob bracelets do their own group filtering at the
@@ -14,7 +14,7 @@
 // and "broadcast to all PixMobs" (group 0) is the only sensible default.
 // The slave's own NocturNation receive-filter group lives at
 // persistence::load_slv_group() (Config > Group) and is applied by
-// SlaveMode upstream of the binding fan-out.
+// LumeMode upstream of the binding fan-out.
 //
 // No properties.
 // Power profile: defaults (event-driven; no audio/spectrum/tick needs).

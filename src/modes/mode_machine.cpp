@@ -15,8 +15,8 @@
 #include "persistence.h"                  // co-located in src/modes/
 #include "boot_mode.h"
 #include "menu_mode.h"
-#include "autonomous_master_mode.h"
-#include "slave_mode.h"
+#include "director_mode.h"
+#include "lume_mode.h"
 #include "config_mode.h"
 #include "test_mode.h"
 #include "../dal/drivers/local_driver.h"   // for set_pulse_enabled gating
@@ -59,8 +59,8 @@ ModeId s_last_runtime     = persistence::kDefaultRuntimeMode;
 
 BootMode             s_boot;
 MenuMode             s_menu;
-AutonomousMasterMode s_autonomous_master;
-SlaveMode            s_slave;
+DirectorMode s_autonomous_master;
+LumeMode            s_slave;
 ConfigMode           s_config;
 TestMode             s_test;
 
@@ -105,11 +105,11 @@ void on_dal_input_action(const char*, const hal::InputEvent& ev) {
 
 // Spectrum-frame routing (Epic 4.6 Block 11). Symmetric to the audio
 // callback in the anonymous namespace above, but exposed at namespace
-// scope so AutonomousMasterMode can pass it to DAL::subscribe_spectrum_frames
+// scope so DirectorMode can pass it to DAL::subscribe_spectrum_frames
 // at vis-activation time. ModeMachine does NOT subscribe to spectrum
 // frames globally at begin() - that would pin
 // DAL::has_spectrum_frame_subscribers() to true and defeat Block 7's
-// pipeline gate. AutonomousMasterMode subscribes/unsubscribes on vis
+// pipeline gate. DirectorMode subscribes/unsubscribes on vis
 // activation based on the active vis's PowerProfile.needs_spectrum_frame
 // flag, so the gate flips live with the picker.
 void on_dal_spectrum_frame(const char*, const SpectrumFrameEvent& ev) {
@@ -149,7 +149,7 @@ void ModeMachine::begin() {
 
     // One-shot migration of legacy NVS keys to their post-Block-9 homes.
     // Must run BEFORE the first enter_mode() so any later transition
-    // into SlaveMode finds PixMobIrBinding's "group" property already
+    // into LumeMode finds PixMobIrBinding's "group" property already
     // populated from the legacy slv_ir_grp key.
     persistence::migrate_legacy_nvs_keys();
 
@@ -175,12 +175,12 @@ const char* ModeMachine::current_name() {
 
 #ifndef ARDUINO
 // Native test seam. The Block 10 overlay tests need to reach the
-// AutonomousMasterMode instance to read its internal state via the
+// DirectorMode instance to read its internal state via the
 // test_seam accessors on the class; the per-mode singletons live in
 // the anonymous namespace above, so we expose a typed accessor
 // inside this TU. Test TUs reach it via the free-function bridge
 // defined just below in the global namespace.
-AutonomousMasterMode& test_seam_get_autonomous_master() {
+DirectorMode& test_seam_get_autonomous_master() {
     return s_autonomous_master;
 }
 #endif
@@ -192,7 +192,7 @@ AutonomousMasterMode& test_seam_get_autonomous_master() {
 // Free-function bridge so test TUs can pick up the accessor with a plain
 // extern declaration; mirrors the extern "C" millis() seam at the top
 // of this file. Kept thin: just forwards to the in-namespace symbol.
-nocturnation::modes::AutonomousMasterMode& test_get_autonomous_master() {
+nocturnation::modes::DirectorMode& test_get_autonomous_master() {
     return nocturnation::modes::test_seam_get_autonomous_master();
 }
 #endif

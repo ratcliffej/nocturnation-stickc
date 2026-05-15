@@ -4,7 +4,7 @@
 // Library widget, not a plug-in: Shows compose it inside their
 // on_render() and `ConfigMode > Utilities > Level Tuning` hosts it
 // standalone for bench work. The pre-Block-1 flux meter that lived
-// inside AutonomousMasterMode (and then SimpleBeatShow's on_render
+// inside DirectorMode (and then SimpleBeatShow's on_render
 // from Block 1) is replaced by this widget; the visible shape stays
 // identical so operators see no change.
 //

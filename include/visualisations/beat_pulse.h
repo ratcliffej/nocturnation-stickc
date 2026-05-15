@@ -1,5 +1,5 @@
 // BeatPulseVisualisation - the existing single-colour beat-driven pulse,
-// migrated from AutonomousMasterMode in Epic 4.6 Block 8.
+// migrated from DirectorMode in Epic 4.6 Block 8.
 //
 // Properties:
 //   "color" : Enum, 0-5 (Off/Red/Green/Blue/Yellow/White), default Red.
@@ -74,7 +74,7 @@ BeatPulseVisualisation* beat_pulse_instance();
 plugins::PropertyBag&   beat_pulse_property_bag();
 VisualisationContext&   beat_pulse_context();
 
-// Status-display accessors used by AutonomousMasterMode::draw(). They read
+// Status-display accessors used by DirectorMode::draw(). They read
 // the current "color" enum out of the singleton property bag and map it via
 // the same lookup helpers the pre-migration mode used.
 const char* beat_pulse_colour_label();

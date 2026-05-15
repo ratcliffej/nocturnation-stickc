@@ -85,7 +85,7 @@ private:
     float     estimated_bpm_  = 0.0f;
 
     // Flux meter state (display-only; mirrors pre-Block-1
-    // AutonomousMasterMode's per-frame tracking that fed the meter).
+    // DirectorMode's per-frame tracking that fed the meter).
     float     baseline_flux_    = 100.0f;
     float     prev_bass_energy_ = 0.0f;
     float     current_flux_     = 0.0f;

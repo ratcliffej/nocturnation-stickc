@@ -1,7 +1,7 @@
 // PixMobIrBinding - implementation.
 //
 // The slave-side PixMob protocol IR transmitter. Operates as a relay
-// (is_relay() == true): SlaveMode threads the inbound LIGHT_COMMAND
+// (is_relay() == true): LumeMode threads the inbound LIGHT_COMMAND
 // target_group through OutputBindingContext::current_target_group();
 // this binding passes it straight through as the PixMob protocol group
 // code on the outgoing IR frame. PixMob bracelets do their own group
@@ -31,7 +31,7 @@ namespace {
 
 // Built-in target names "all-pixmobs" + "group-1".."group-31". Buffer
 // is a thread-unsafe static (caller copies before next call); the IR
-// path is single-threaded inside SlaveMode::fan_out_light_command so
+// path is single-threaded inside LumeMode::fan_out_light_command so
 // this is safe in practice. 12-char max ("group-31\0") well under
 // the 16-byte buffer.
 const char* ir_target_name(uint8_t group_id) {
