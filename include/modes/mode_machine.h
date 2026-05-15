@@ -2,7 +2,7 @@
 //
 // Implements the runtime mode FSM defined in architecture spec §8.1-8.2.
 // Modes are top-level operating states (Boot countdown, Menu, Autonomous
-// Master, Slave, Config, Test). Transitions are driven by button events
+// Director, Lume, Config, Test). Transitions are driven by button events
 // from the DAL and by per-mode timers.
 //
 // The DAL is the only thing this layer talks to. ModeMachine subscribes to
@@ -28,7 +28,7 @@ namespace modes {
 //
 // Boot is transient (countdown to default mode). Menu is the navigation hub
 // reached by interrupting Boot or by long-pressing PWR from any runtime
-// mode. AutonomousMaster, Slave, Config, and Test are the persisted runtime
+// mode. Director, Lume, Config, and Test are the persisted runtime
 // modes; ModeMachine remembers which was last selected and defaults the
 // next boot's countdown to it.
 //
@@ -92,7 +92,7 @@ public:
 class ModeMachine {
 public:
     // Bring up the FSM. Subscribes to DAL button + audio events for "local",
-    // loads the last-used runtime mode from NVS (defaults to AutonomousMaster
+    // loads the last-used runtime mode from NVS (defaults to Director
     // first boot), then enters Boot for the 5s countdown.
     static void begin();
 
@@ -100,8 +100,8 @@ public:
     static void loop_tick();
 
     // Switch modes. Calls exit() on the current mode then enter() on the
-    // target. If the target is a persisted runtime mode (AutonomousMaster,
-    // Slave, Config, Test), the choice is also written to NVS so the next
+    // target. If the target is a persisted runtime mode (Director,
+    // Lume, Config, Test), the choice is also written to NVS so the next
     // boot defaults to it.
     static void switch_to(ModeId target);
 

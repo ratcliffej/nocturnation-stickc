@@ -319,7 +319,7 @@ static void test_on_beat_fires_wire_screen_ir_in_order(void) {
     //    pre-Epic-4.7 full-bleed screen flash) and once via
     //    dispatch_output_class_group's screen-loopback added in the
     //    post-Block-5 fix (render_fx("00:00", ev) now also fans out
-    //    to the master's LocalDriver for Screen-class targets).
+    //    to the Director's LocalDriver for Screen-class targets).
     TEST_ASSERT_EQUAL_UINT32(local_before + 2,
                               dal::DAL::driver_send_count("local"));
 

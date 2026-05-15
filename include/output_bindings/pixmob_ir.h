@@ -1,4 +1,4 @@
-// PixMobIrBinding - slave-side PixMob protocol IR transmitter.
+// PixMobIrBinding - Lume-side PixMob protocol IR transmitter.
 //
 // Migrated from LumeMode::render_light in Epic 4.6 Block 9, then
 // refactored to a pure relay binding in Epic 4.65 Block 5 / follow-up.
@@ -12,7 +12,7 @@
 // The pre-Epic-4.65 per-binding "group" property is gone - it was a
 // pre-relay artifact whose only remaining use was a broadcast fallback,
 // and "broadcast to all PixMobs" (group 0) is the only sensible default.
-// The slave's own NocturNation receive-filter group lives at
+// The Lume's own NocturNation receive-filter group lives at
 // persistence::load_slv_group() (Config > Group) and is applied by
 // LumeMode upstream of the binding fan-out.
 //
@@ -38,7 +38,7 @@ public:
     }
 
     // Relay binding: transmits PixMob protocol IR with the inbound
-    // target_group as the PixMob group code, so the slave's slv_group
+    // target_group as the PixMob group code, so the Lume's slv_group
     // filter is bypassed for this binding. PixMob bracelets do their
     // own group filtering at the IR protocol level.
     bool is_relay() const override { return true; }

@@ -62,7 +62,7 @@ void LumeMode::enter() {
     // Load operator-configured preferences from NVS. Channel preference
     // picks hobby (1) / show (11) / advanced (6) / auto-scan (0) per
     // spec §4.5. The slv_ir_grp setting moved to PixMobIrBinding's
-    // property bag in Block 9; ConfigMode > IR > Slave Group mutates
+    // property bag in Block 9; ConfigMode > IR > Lume Group mutates
     // it there and on_light_command reads it inline.
     slave_channel_pref_  = persistence::load_slave_channel();
     slave_repeat_en_     = persistence::load_slave_repeat_enabled();
@@ -117,9 +117,9 @@ void LumeMode::enter() {
         radio_active_ = radio->begin(current_listen_chan_);
 #ifdef ARDUINO
         if (!radio_active_) {
-            Serial.println("[espnow] slave begin() failed");
+            Serial.println("[espnow] lume begin() failed");
         } else {
-            Serial.printf("[espnow] slave up: ch=%u (pref=%s, bindings=%u)\n",
+            Serial.printf("[espnow] lume up: ch=%u (pref=%s, bindings=%u)\n",
                           (unsigned)current_listen_chan_,
                           slave_channel_pref_ == 0 ? "auto"
                           : slave_channel_pref_ == 1 ? "1 hobby"
@@ -181,9 +181,9 @@ void LumeMode::loop_tick() {
 
     // Edge into NO SIGNAL: paint the status UI immediately (the rest
     // of the screen below the strip is dead space anyway since no
-    // pulses are arriving). Slave does NOT auto-promote and does NOT
+    // pulses are arriving). Lume does NOT auto-promote and does NOT
     // run any visually distinctive idle effect - per show-coordination
-    // discipline, a slave that loses the master should fail subtle
+    // discipline, a Lume that loses the Director should fail subtle
     // (NO SIGNAL text only) so a brief outage doesn't visually
     // fragment the show.
     //
@@ -200,7 +200,7 @@ void LumeMode::loop_tick() {
         no_signal_ = true;
         last_chan_switch_ms_ = now;   // reset scan timer
 #ifdef ARDUINO
-        Serial.printf("[espnow] slave NO SIGNAL: %lu ms since last RX\n",
+        Serial.printf("[espnow] lume NO SIGNAL: %lu ms since last RX\n",
                       (unsigned long)age_since_rx);
 #endif
         DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
@@ -212,8 +212,8 @@ void LumeMode::loop_tick() {
 
     // Dual-channel scan in auto mode. Spec §4.5: alternate channel
     // 11 (show priority) and channel 1 (hobby), 2 s dwell each.
-    // Scans on cold start (no frames received yet, master could be
-    // on either channel) AND on master-loss (no_signal_). Any
+    // Scans on cold start (no frames received yet, Director could be
+    // on either channel) AND on Director-loss (no_signal_). Any
     // inbound frame in on_recv stops the scan implicitly because
     // it locks us to whichever channel we were on when the frame
     // arrived.
@@ -225,7 +225,7 @@ void LumeMode::loop_tick() {
         if (auto* radio = hal::HAL::esp_now()) {
             radio->set_channel(current_listen_chan_);
 #ifdef ARDUINO
-            Serial.printf("[espnow] slave scan -> ch=%u\n",
+            Serial.printf("[espnow] lume scan -> ch=%u\n",
                           (unsigned)current_listen_chan_);
 #endif
         }
@@ -275,10 +275,10 @@ void LumeMode::mark_seen(uint8_t src, uint8_t seq) {
 }
 
 // -------------------------------------------------------------------------
-// Slave-as-target-device: an inbound LIGHT_COMMAND fans out to every
+// Lume-as-target-device: an inbound LIGHT_COMMAND fans out to every
 // active OutputBinding. Each binding owns one render surface (e.g.
 // LocalDisplayBinding -> screen on the StickC; PixMobIrBinding -> IR
-// to bracelets in the slave's configured group). Bindings are
+// to bracelets in the Lume's configured group). Bindings are
 // fail-silent if their underlying transport / driver isn't enabled;
 // neither auto-forwards from inside render_fx - keeps each call to one
 // job and respects toggles like IR mute (Config > IR > Enable, which
@@ -326,8 +326,8 @@ void LumeMode::on_recv(const hal::ESPNowMessage& m) {
     using namespace transport::espnow;
 
     // Any frame received - including duplicates - counts as the
-    // master being alive. Update rx_count_ and last_rx_ms_ before
-    // the dedup gate so master-loss detection isn't fooled by
+    // Director being alive. Update rx_count_ and last_rx_ms_ before
+    // the dedup gate so Director-loss detection isn't fooled by
     // redundant retransmissions.
     rx_count_++;
     last_rx_ms_ = millis();
@@ -336,7 +336,7 @@ void LumeMode::on_recv(const hal::ESPNowMessage& m) {
     no_signal_ = false;
     if (was_no_signal) {
 #ifdef ARDUINO
-        Serial.println("[espnow] slave SIGNAL RECOVERED");
+        Serial.println("[espnow] lume SIGNAL RECOVERED");
 #endif
     }
 
@@ -357,14 +357,14 @@ void LumeMode::on_recv(const hal::ESPNowMessage& m) {
 
     // Deduplication gate: if we've already processed this exact
     // (source_id, sequence_number) within the last 16 frames, log
-    // and drop. Prevents the master's 2-3x redundant TX (per spec
+    // and drop. Prevents the Director's 2-3x redundant TX (per spec
     // §4.3 reliability strategy, lands in Block 5) from causing
     // double IR fires / double screen paints per logical beat.
     const bool is_dup = seen_recently(hdr.source_id, hdr.sequence_number);
     if (!is_dup) {
         mark_seen(hdr.source_id, hdr.sequence_number);
         // Quality tracker only counts unique frames - duplicates from
-        // the master's redundancy-for-reliability TX shouldn't make
+        // the Director's redundancy-for-reliability TX shouldn't make
         // the signal look better than it actually is.
         quality_.note_frame(hdr.source_id,
                             hdr.sequence_number,
@@ -434,7 +434,7 @@ void LumeMode::on_recv(const hal::ESPNowMessage& m) {
 
 // Frame-age proxy. Used as a cold-start fallback before the quality
 // tracker has accumulated enough data for a real estimate, and as the
-// post-NO-SIGNAL killer (any bar count is meaningless if the master
+// post-NO-SIGNAL killer (any bar count is meaningless if the Director
 // is gone entirely).
 int LumeMode::signal_bars_from_age() const {
     if (rx_count_ == 0)              return 0;

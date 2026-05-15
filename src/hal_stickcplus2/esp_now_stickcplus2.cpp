@@ -51,7 +51,7 @@ bool ESPNowStickCplus2::begin(uint8_t wifi_channel) {
     channel_ = wifi_channel;
 
     // 3. Set max TX power. +21 dBm is our default (architecture §4.6); a
-    //    later Epic may expose this for slaves/repeaters.
+    //    later Epic may expose this for Lumes/repeaters.
     esp_wifi_set_max_tx_power(kTxPower21dBm);
 
     // 4. Initialise ESP-NOW and register the legacy receive callback.

@@ -61,7 +61,7 @@ public:
     // the binding's on_light_command. Relay bindings (e.g. PixMobIrBinding)
     // read current_target_group() to thread the inbound group code into
     // their downstream protocol. Local bindings can ignore both - the
-    // slv_group filter has already gated their fan-out at the slave level.
+    // slv_group filter has already gated their fan-out at the Lume level.
     // Default 0 when no LIGHT_COMMAND is in flight (broadcast semantics).
     uint8_t current_target_class() const { return current_target_class_; }
     uint8_t current_target_group() const { return current_target_group_; }

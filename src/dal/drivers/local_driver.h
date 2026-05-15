@@ -68,7 +68,7 @@ public:
 
     // Configure the screen rectangle that pulses paint into. Default is
     // full-screen; orchestration that wants to keep a persistent overlay
-    // (e.g. Slave mode's battery + signal-strength icon strip at the top)
+    // (e.g. Lume mode's battery + signal-strength icon strip at the top)
     // shrinks this rectangle so its overlay area stays untouched by pulse
     // frames. Coordinates are display-space, in pixels.
     void set_pulse_rect(int x, int y, int w, int h) {
@@ -96,7 +96,7 @@ private:
     // -------------------------------------------------------------------------
     // RgbPulse animation state. The screen IS this host's primary "light",
     // so an inbound RgbPulseEvent (whether from local effect code or
-    // forwarded from an ESP-NOW LIGHT_COMMAND on a slave) becomes a timed
+    // forwarded from an ESP-NOW LIGHT_COMMAND on a Lume) becomes a timed
     // attack/sustain/release fade rather than an instant paint.
     //
     // Throttled to ~30 Hz: any faster and the SPI display can't keep up;
@@ -108,7 +108,7 @@ private:
     bool      pulse_terminated_ = true;   // last frame already drawn as black
     bool      pulse_enabled_    = true;   // Config > Display > Pulse Enable
 
-    // Default: full-screen rectangle. Slave mode shrinks this so the top
+    // Default: full-screen rectangle. Lume mode shrinks this so the top
     // status strip is preserved across pulse paints.
     int       pulse_rect_x_     = 0;
     int       pulse_rect_y_     = 0;
@@ -169,7 +169,7 @@ private:
 
     // Drop and breakdown detector. Same lifecycle as beat_detector_ -
     // one update per FFT cycle, the result is stamped onto each
-    // AudioFrameEvent's music_event field. Master orchestration then
+    // AudioFrameEvent's music_event field. Director orchestration then
     // broadcasts MUSIC_EVENT frames over ESP-NOW when the field is
     // non-zero.
     analyser::DropDetector drop_detector_;

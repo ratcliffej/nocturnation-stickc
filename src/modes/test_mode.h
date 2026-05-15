@@ -96,7 +96,7 @@ private:
     float    rainbow_hue_         = 0.0f;
     uint32_t rainbow_last_step_ms_ = 0;
 
-    // Test mode broadcasts on the same channel AutonomousMaster uses
+    // Test mode broadcasts on the same channel Director uses
     // (NVS-configured: 1 hobby / 11 show / 6 custom). The radio itself
     // lives in EspNowBroadcastDriver - this mode just starts/stops it
     // in enter/exit and hits the wire via render_fx.

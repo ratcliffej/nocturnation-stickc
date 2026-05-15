@@ -176,7 +176,7 @@ private:
     // Show submenu (functional: picker over registered shows). Cycles
     // through show_registry, persists active_show on confirm. Mirrors
     // the DirectorMode picker but reachable from Config without
-    // entering Master mode (Epic 4.7 Block 1).
+    // entering Director mode (Epic 4.7 Block 1).
     void handle_show(const dal::ButtonPressEvent& ev);
     void draw_show();
 
@@ -243,8 +243,8 @@ private:
     void handle_ir(const dal::ButtonPressEvent& ev);
     void draw_ir();
 
-    // ESP-NOW submenu (functional: Master Channel + Slave Channel +
-    // Slave Repeat). The Slave Group setting moved to the top-level
+    // ESP-NOW submenu (functional: Director Channel + Lume Channel +
+    // Lume Repeat). The Lume Group setting moved to the top-level
     // Config > Group item (direct action).
     enum class EspNowItem : uint8_t {
         MasterChannel = 0,

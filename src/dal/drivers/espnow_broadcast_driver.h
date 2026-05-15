@@ -3,7 +3,7 @@
 // Encodes the NocturNation ESP-NOW wire format (transport/espnow/frame.h)
 // and broadcasts over hal::HAL::esp_now()->send_broadcast(). Replaces the
 // per-mode EspNowBroadcaster helper that lived in src/modes/ before Epic
-// 4.6 Block 2: master broadcast logic now lives behind a single DAL
+// 4.6 Block 2: Director broadcast logic now lives behind a single DAL
 // driver registered under transport "esp-now-broadcast", and orchestration
 // reaches the wire via DAL::render_fx("esp-now-broadcast", ev) for
 // LIGHT_COMMAND, plus driver-specific entry points for protocol concepts
@@ -35,7 +35,7 @@ public:
 
     // Per spec §4.3 reliability strategy: each frame goes out 3 times
     // total (initial + 2 retransmits) with the SAME sequence number,
-    // separated by 5-15 ms of pseudo-random jitter. Slave dedup catches
+    // separated by 5-15 ms of pseudo-random jitter. Lume dedup catches
     // the duplicates; the redundancy buys airtime resilience against
     // collisions and brief interference. Total send burst is ~20-30 ms,
     // well under the inter-beat interval at any musical tempo.
@@ -79,7 +79,7 @@ public:
     void stop_broadcast();
 
     // MUSIC_EVENT (0x06): macro-level musical events fired by the
-    // master's drop detector (Epic 4.5 Block 4). Wire-byte values
+    // Director's drop detector (Epic 4.5 Block 4). Wire-byte values
     // match analyser::DropEvent and transport::espnow::MusicEventType,
     // so callers can pass the analyser's enum directly.
     bool send_music_event(transport::espnow::MusicEventType event_type);
@@ -101,7 +101,7 @@ private:
 
     void send_heartbeat();
 
-    // Master loop_tick equivalent: if no frame has gone out within
+    // Director loop_tick equivalent: if no frame has gone out within
     // kHeartbeatPeriodMs, sends one. During music with BEAT_DETECTED
     // / LIGHT_COMMAND firing every 350-500 ms, this short-circuits and
     // heartbeat traffic stays at zero.

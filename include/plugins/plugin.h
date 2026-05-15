@@ -1,6 +1,6 @@
 // Plugin - shared base for the two plugin kinds in Epic 4.6:
-//   - Visualisation (Block 5)         - master-side rendering of audio events
-//   - OutputBinding (Block 6)         - slave-side fan-out of render events
+//   - Visualisation (Block 5)         - Director-side rendering of audio events
+//   - OutputBinding (Block 6)         - Lume-side fan-out of render events
 //
 // This block (Block 3) lands only the contract and supporting types.
 // Concrete plugins arrive in Blocks 5+. Headers stay heap-free; the
@@ -150,7 +150,7 @@ struct Span {
 // Plugin kind - used for NVS namespace prefix and registry separation.
 //   Visualisation -> NVS namespace "nv_<id>"  (Epic 4.6 - widget candidates post-4.7)
 //   OutputBinding -> NVS namespace "nb_<id>"
-//   Show          -> NVS namespace "ns_<id>"  (Epic 4.7 - master-side performance)
+//   Show          -> NVS namespace "ns_<id>"  (Epic 4.7 - Director-side performance)
 enum class PluginKind : uint8_t {
     Visualisation = 0,
     OutputBinding = 1,

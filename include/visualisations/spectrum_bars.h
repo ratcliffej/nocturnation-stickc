@@ -1,7 +1,7 @@
 // SpectrumBarsVisualisation - the first vis that consumes
 // SpectrumFrameEvent (Epic 4.6 Block 11).
 //
-// Renders 32 vertical bars across the master LCD, heights driven by the
+// Renders 32 vertical bars across the Director LCD, heights driven by the
 // 32-band log-spaced spectrum the analyser ships in SpectrumFrameEvent.
 // Confirm is the manual sound-check trigger: fires a guaranteed pulse
 // across the wire + IR + screen so the operator can validate IR reach
@@ -69,7 +69,7 @@ public:
 
     VisualisationContext& context() override;
 
-    // SpectrumBars paints 32 bars across the full master LCD; the
+    // SpectrumBars paints 32 bars across the full Director LCD; the
     // mode's BeatPulse-era chrome (colour title, BPM line, flux meter)
     // would clobber the bars on every 50 ms loop_tick if it kept
     // running.

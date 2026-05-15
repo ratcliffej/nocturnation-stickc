@@ -1,7 +1,7 @@
 // SpectrumBarsVisualisation - implementation (Epic 4.6 Block 11).
 //
 // First vis to consume SpectrumFrameEvent, verifying Block 7's pipeline
-// gate end-to-end. Render is 32 bars across the 240 px master LCD,
+// gate end-to-end. Render is 32 bars across the 240 px Director LCD,
 // heights driven by ev.magnitudes scaled by the "sensitivity" property,
 // and the "band_focus" property tints the focused range so the operator
 // can spot Bass/Mid/Treble onset at a glance. Confirm fires a manual

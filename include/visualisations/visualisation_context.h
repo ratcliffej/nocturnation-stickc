@@ -31,9 +31,9 @@ public:
 
     // -- Output -----------------------------------------------------------
     // Forward to DAL::render_fx. Vis fires multiple targets explicitly:
-    //   ctx.render_fx("local",             ev);   // master screen pulse
+    //   ctx.render_fx("local",             ev);   // Director screen pulse
     //   ctx.render_fx("all-pixmobs",       ev);   // IR PixMob fan-out
-    //   ctx.render_fx("esp-now-broadcast", ev);   // wire to slaves
+    //   ctx.render_fx("esp-now-broadcast", ev);   // wire to Lumes
     bool render_fx(const char* target, const dal::RgbPulseEvent& ev);
 
     // -- Property bag -----------------------------------------------------

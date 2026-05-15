@@ -2,9 +2,9 @@
 //
 // Lighting designers think in device classes ("light bracelets", "screen
 // devices", "multi-LED+screen devices"), not capability sets. Class is
-// the master-side addressing axis paired with group ID; the
+// the Director-side addressing axis paired with group ID; the
 // "<class>:<group>" target string passed to render_fx parses into these
-// two bytes, and slaves filter inbound LIGHT_COMMAND on
+// two bytes, and Lumes filter inbound LIGHT_COMMAND on
 // (target_class, target_group) against each active OutputBinding's
 // (class(), configured_group). See architecture spec §4.3 + §7.6.
 //

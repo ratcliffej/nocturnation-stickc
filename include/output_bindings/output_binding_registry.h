@@ -8,8 +8,8 @@
 //
 // main.cpp / setup() calls
 // output_binding_registry().register_plugin(...) for each binding
-// instance at boot. The slave mode walks the registry on entry to
-// activate the per-slave-config subset (config maps existing
+// instance at boot. The Lume mode walks the registry on entry to
+// activate the per-Lume-config subset (config maps existing
 // `slv_ir_grp` etc. NVS keys onto per-binding properties in Block 9).
 
 #pragma once

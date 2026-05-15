@@ -1,6 +1,6 @@
 // PixMobIrBinding - implementation.
 //
-// The slave-side PixMob protocol IR transmitter. Operates as a relay
+// The Lume-side PixMob protocol IR transmitter. Operates as a relay
 // (is_relay() == true): LumeMode threads the inbound LIGHT_COMMAND
 // target_group through OutputBindingContext::current_target_group();
 // this binding passes it straight through as the PixMob protocol group

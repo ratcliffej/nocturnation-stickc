@@ -37,7 +37,7 @@ constexpr uint16_t kPixMobTimeMs[8] = {
 };
 
 // pixmob::Chance enum index -> percentage. Used by roll_chance(); each
-// "light" (bracelet OR local screen, per the slave-as-target-device
+// "light" (bracelet OR local screen, per the Lume-as-target-device
 // model) rolls independently against this percentage so a CHANCE_50
 // sparkle fires on roughly half the lights in range.
 constexpr uint8_t kPixMobChancePct[8] = {
@@ -128,7 +128,7 @@ bool LocalDriver::begin() {
     //
     // Per-frame the BeatDetector runs over the spectrum frame and
     // stamps is_beat onto AudioFrameEvent so orchestration consumers
-    // (Master + TestMode in mode_machine.cpp) gate their per-beat
+    // (Director + TestMode in mode_machine.cpp) gate their per-beat
     // actions on the detector's output rather than re-running their
     // own threshold logic.
     //
@@ -201,7 +201,7 @@ bool LocalDriver::begin() {
             af.section         = static_cast<uint8_t>(section);
             DAL::deliver_audio_frame("local", af);
 
-            // Spectrum-frame event: 32 log-spaced magnitudes. Master-
+            // Spectrum-frame event: 32 log-spaced magnitudes. Director-
             // local; Epic 4.7 wires effects-side consumers.
             //
             // Epic 4.6 Block 7 (pipeline gating): skip the per-frame
@@ -242,7 +242,7 @@ bool LocalDriver::send(uint8_t /*group_id*/, const RgbPulseEvent& ev) {
     if (!pulse_enabled_) return false;
 
     // Chance roll: each "light" (bracelet OR local screen) rolls
-    // independently per the slave-as-target-device model. CHANCE_50 on
+    // independently per the Lume-as-target-device model. CHANCE_50 on
     // a sparkle effect paints the screen on roughly half the firings,
     // matching what bracelets in range are doing - the screen behaves
     // like one of many lights.

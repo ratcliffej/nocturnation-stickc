@@ -16,7 +16,7 @@
 // Sequence-number conventions follow architecture spec §4.3:
 //   - 1-255 wrapping (255 -> 1, 0 reserved as "sequencing disabled")
 //   - 0 frames are skipped for quality purposes
-//   - Source ID change (e.g. master swap) resets state cleanly
+//   - Source ID change (e.g. Director swap) resets state cleanly
 
 #pragma once
 

@@ -12,7 +12,7 @@
 // every detected beat fires three explicit render_fx targets in the
 // same order the existing code did:
 //   1. DAL::render_fx("esp-now-broadcast", RgbPulseEvent{...})
-//      -> wire to slaves
+//      -> wire to Lumes
 //   2. DAL::fire_display_clear("local", DisplayClearEvent{...})
 //      -> screen flash (preserved as-is, NOT RgbPulseEvent)
 //   3. effects::Pulse::on_beat(...) which internally fires
@@ -49,7 +49,7 @@ public:
     // VisualisationContext singleton defined in beat_pulse.cpp.
     VisualisationContext& context() override;
 
-    // Status-display accessor: current BPM tracked by the vis. AutonomousMaster
+    // Status-display accessor: current BPM tracked by the vis. Director
     // draw() reads this through beat_pulse_estimated_bpm() so the mode's status
     // display stays consistent with what the vis is acting on.
     float estimated_bpm() const { return estimated_bpm_; }
