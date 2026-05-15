@@ -41,7 +41,7 @@ public:
     int  battery_level() override;
 
     // True while an RgbPulseEvent is mid-render. Orchestration that owns
-    // the same screen (SlaveMode showing status text, etc.) should use
+    // the same screen (LumeMode showing status text, etc.) should use
     // this to defer its own draws until the pulse finishes - otherwise
     // the status redraw cuts the fade short.
     bool is_pulse_active() const { return pulse_active_; }
@@ -58,7 +58,7 @@ public:
     }
 
     // Pass-through to hal::Display's buffered paint session API. Wrap a
-    // multi-element draw (e.g. SlaveMode's status strip - icons + text)
+    // multi-element draw (e.g. LumeMode's status strip - icons + text)
     // in begin/end and the backend batches all the intermediate
     // fill_rect / draw_text calls into one SPI burst, eliminating the
     // tearing that comes from the panel scanning out mid-burst between
@@ -182,7 +182,7 @@ private:
     // Section state machine (Epic 4.7 Block 4). Consumes the
     // descriptors plus the DropDetector's drop event flag and
     // produces a section label per frame; AudioFrameEvent.section
-    // carries the current section, AutonomousMasterMode fires
+    // carries the current section, DirectorMode fires
     // Show::on_section_change(section) on transitions.
     analyser::SectionDetector section_detector_;
 };

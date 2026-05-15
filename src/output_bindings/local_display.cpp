@@ -1,6 +1,6 @@
 // LocalDisplayBinding - implementation (Epic 4.6 Block 9).
 //
-// Extracted from src/modes/slave_mode.cpp's render_light() first
+// Extracted from src/modes/lume_mode.cpp's render_light() first
 // render_fx call. Just forwards the event to the "local" target via
 // DAL::render_fx. Wire output is byte-identical to the pre-migration
 // code path - same call, same args.

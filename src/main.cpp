@@ -46,7 +46,7 @@ void setup() {
     nocturnation::shows::show_registry().register_plugin(
         nocturnation::shows::dynamic_show_instance());
 
-    // Register slave-side output bindings (Epic 4.6 Block 9). SlaveMode
+    // Register slave-side output bindings (Epic 4.6 Block 9). LumeMode
     // walks this registry on enter() and activates every binding whose
     // required capabilities the host supports. LocalDisplayBinding
     // owns the "local" render surface (screen); PixMobIrBinding owns

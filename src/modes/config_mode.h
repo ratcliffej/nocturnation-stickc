@@ -175,7 +175,7 @@ private:
 
     // Show submenu (functional: picker over registered shows). Cycles
     // through show_registry, persists active_show on confirm. Mirrors
-    // the AutonomousMasterMode picker but reachable from Config without
+    // the DirectorMode picker but reachable from Config without
     // entering Master mode (Epic 4.7 Block 1).
     void handle_show(const dal::ButtonPressEvent& ev);
     void draw_show();

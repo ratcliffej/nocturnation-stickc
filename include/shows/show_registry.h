@@ -6,7 +6,7 @@
 // nothing.
 //
 // main.cpp / setup() calls show_registry().register_plugin(...) for
-// each Show instance at boot. AutonomousMasterMode walks the registry
+// each Show instance at boot. DirectorMode walks the registry
 // to populate the show picker and resolve the operator's last-used
 // show on entry (via persistence::load_active_show_id).
 

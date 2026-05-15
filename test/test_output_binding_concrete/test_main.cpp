@@ -350,12 +350,12 @@ static void test_registry_register_both(void) {
 // =============================================================================
 // Fan-out: both bindings registered and entered, a single on_light_command
 // per binding fires both transport surfaces with the SAME byte-identical
-// RgbPulseEvent. This is the SlaveMode shell's primary behaviour
+// RgbPulseEvent. This is the LumeMode shell's primary behaviour
 // (preserved byte-for-byte from the pre-Block-9 render_light() path).
 // =============================================================================
 
 // Epic 4.65 Block 5: relay flag distinguishes pass-through bindings
-// (PixMobIr) from local bindings (LocalDisplay). The SlaveMode filter
+// (PixMobIr) from local bindings (LocalDisplay). The LumeMode filter
 // uses this to decide whether to apply the slv_group check.
 static void test_is_relay_flag(void) {
     TEST_ASSERT_FALSE(local_display_instance()->is_relay());
@@ -387,7 +387,7 @@ static void test_pixmob_ir_uses_current_target_group(void) {
 
 // Epic 4.65 Block 5: slv_group NVS round-trip. The native persistence
 // stub stores in a process-static, mirroring the Arduino Preferences
-// path for SlaveMode + ConfigMode read/write.
+// path for LumeMode + ConfigMode read/write.
 static void test_slv_group_nvs_round_trip(void) {
     nocturnation::modes::persistence::save_slv_group(7);
     TEST_ASSERT_EQUAL_UINT8(7, nocturnation::modes::persistence::load_slv_group());
@@ -411,7 +411,7 @@ static void test_fan_out_both_bindings_fire_with_same_event(void) {
                      pixmob::T_96_MS, pixmob::CHANCE_100};
 
     // Manual fan-out using the same ev for both - this mirrors what
-    // SlaveMode::fan_out_light_command does over the active_bindings_
+    // LumeMode::fan_out_light_command does over the active_bindings_
     // list.
     local_display_instance()->on_light_command(local_display_context(), ev);
     pixmob_ir_instance()->on_light_command(pixmob_ir_context(),       ev);

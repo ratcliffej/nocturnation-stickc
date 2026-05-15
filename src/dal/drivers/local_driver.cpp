@@ -156,7 +156,7 @@ bool LocalDriver::begin() {
                 s_instance.drop_detector_.process(frame.bass_energy, frame.timestamp_ms);
 
             // Continuous descriptors (Block 3). Always updated; the
-            // consumer (AutonomousMasterMode) applies rate-limiting
+            // consumer (DirectorMode) applies rate-limiting
             // before delivering to Show::on_music_descriptor.
             s_instance.music_descriptors_.process(
                 sf, frame.overall_rms, beat || snare || hihat,

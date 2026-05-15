@@ -65,7 +65,7 @@ static void inject_button_press(hal::ButtonId id, hal::ButtonEvent kind) {
     dal::DAL::deliver_button_press("local", dal::ButtonPressEvent{id, kind});
 }
 
-// AutonomousMasterMode migrated to InputAction-driven control in Block 10;
+// DirectorMode migrated to InputAction-driven control in Block 10;
 // the raw Btn2-LongPressed -> Menu handler is gone (the picker holds a
 // "<- Menu" row that the operator reaches via Picker + Confirm). Tests
 // that need to leave AutonomousMaster inject the semantic actions

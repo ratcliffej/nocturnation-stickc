@@ -69,7 +69,7 @@ public:
 // =============================================================================
 //
 // The current default beat-reactive behaviour (was inline in
-// AutonomousMasterMode pre-AC1). The envelope (attack / sustain / release)
+// DirectorMode pre-AC1). The envelope (attack / sustain / release)
 // is selected at fire time based on the current BPM:
 //   > 160 BPM:               very fast (0+32+96 = 128 ms)
 //   100..160 / unknown BPM:  punchy default (32+96+96 = 224 ms)

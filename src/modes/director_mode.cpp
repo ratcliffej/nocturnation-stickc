@@ -1,4 +1,4 @@
-// AutonomousMasterMode implementation (Epic 4.7 Block 1).
+// DirectorMode implementation (Epic 4.7 Block 1).
 //
 // Thin shell over the active Show. Mode owns: pause flag, music_event
 // broadcast (transport concern, separate from the LIGHT_COMMAND
@@ -6,7 +6,7 @@
 // picker / settings overlays. The per-beat render fan-out, BPM
 // tracking, flux meter, and full screen rendering live in the Show.
 
-#include "autonomous_master_mode.h"
+#include "director_mode.h"
 
 #include "persistence.h"
 #include "dal/dal.h"
@@ -30,7 +30,7 @@ extern "C" uint32_t millis();
 #endif
 
 // Spectrum-frame routing callback. Defined at namespace scope in
-// mode_machine.cpp so AutonomousMasterMode can pass it to
+// mode_machine.cpp so DirectorMode can pass it to
 // DAL::subscribe_spectrum_frames at show-activation time without
 // ModeMachine itself needing to subscribe at begin() (which would pin
 // has_spectrum_frame_subscribers() to true and defeat Block 7's gate).
@@ -64,7 +64,7 @@ bool show_capability_gate_open(const shows::Show& s) {
 
 }  // namespace
 
-void AutonomousMasterMode::enter() {
+void DirectorMode::enter() {
     last_draw_ms_              = 0;
     paused_                    = false;
     overlay_                   = Overlay::None;
@@ -96,7 +96,7 @@ void AutonomousMasterMode::enter() {
     draw();
 }
 
-void AutonomousMasterMode::exit() {
+void DirectorMode::exit() {
     if (active_show_ && ctx_) active_show_->exit(*ctx_);
     // Always drop any spectrum subscription installed in enter() /
     // picker_confirm. The mode loses the radio + audio pipeline on
@@ -106,7 +106,7 @@ void AutonomousMasterMode::exit() {
     esp_now_broadcast_driver_instance()->stop_broadcast();
 }
 
-void AutonomousMasterMode::loop_tick() {
+void DirectorMode::loop_tick() {
     const uint32_t now = millis();
     if (now - last_draw_ms_ > 50) {
         draw();
@@ -114,7 +114,7 @@ void AutonomousMasterMode::loop_tick() {
     }
 }
 
-void AutonomousMasterMode::resolve_active_show_from_nvs() {
+void DirectorMode::resolve_active_show_from_nvs() {
     const char* saved = persistence::load_active_show_id();
     shows::Show* s = show_registry().find(saved);
     if (!s) {
@@ -129,15 +129,15 @@ void AutonomousMasterMode::resolve_active_show_from_nvs() {
 }
 
 #ifndef ARDUINO
-const char* AutonomousMasterMode::active_show_id_for_tests() const {
+const char* DirectorMode::active_show_id_for_tests() const {
     return (active_show_ != nullptr) ? active_show_->id() : "";
 }
-const char* AutonomousMasterMode::status_label_for_tests() const {
+const char* DirectorMode::status_label_for_tests() const {
     return (active_show_ != nullptr) ? active_show_->display_name() : "";
 }
 #endif
 
-void AutonomousMasterMode::on_audio_frame(const AudioFrameEvent& ev) {
+void DirectorMode::on_audio_frame(const AudioFrameEvent& ev) {
     // Broadcast macro-level musical events (DROP / BREAKDOWN / BUILD)
     // as MUSIC_EVENT (0x06) frames. Mode-level transport concern, not
     // show concern. Skipped during pause so the entire deployment
@@ -216,7 +216,7 @@ void AutonomousMasterMode::on_audio_frame(const AudioFrameEvent& ev) {
     }
 }
 
-void AutonomousMasterMode::on_spectrum_frame(const SpectrumFrameEvent& ev) {
+void DirectorMode::on_spectrum_frame(const SpectrumFrameEvent& ev) {
     if (overlay_ != Overlay::None) return;
 
     if (active_show_ && ctx_) {
@@ -224,7 +224,7 @@ void AutonomousMasterMode::on_spectrum_frame(const SpectrumFrameEvent& ev) {
     }
 }
 
-void AutonomousMasterMode::sync_spectrum_subscription(bool active) {
+void DirectorMode::sync_spectrum_subscription(bool active) {
     // Always unsubscribe first so we start from a known state and the
     // subscriber count is monotonic per (active_show, active) pair.
     DAL::unsubscribe_spectrum_frames("local");
@@ -236,7 +236,7 @@ void AutonomousMasterMode::sync_spectrum_subscription(bool active) {
     DAL::subscribe_spectrum_frames("local", &on_dal_spectrum_frame);
 }
 
-void AutonomousMasterMode::on_input_action(const InputEvent& ev) {
+void DirectorMode::on_input_action(const InputEvent& ev) {
     // Picker / Settings act as toggles: a second press of the same
     // action closes the overlay.
     if (overlay_ == Overlay::Picker) {
@@ -313,15 +313,15 @@ void AutonomousMasterMode::on_input_action(const InputEvent& ev) {
 // Picker overlay
 // ---------------------------------------------------------------------------
 
-size_t AutonomousMasterMode::picker_row_count() const {
+size_t DirectorMode::picker_row_count() const {
     return show_registry().count() + 1;   // + "<- Menu"
 }
 
-bool AutonomousMasterMode::picker_row_is_back(size_t row) const {
+bool DirectorMode::picker_row_is_back(size_t row) const {
     return row == show_registry().count();
 }
 
-void AutonomousMasterMode::on_picker_confirm() {
+void DirectorMode::on_picker_confirm() {
     if (picker_row_is_back(overlay_cursor_)) {
         // "<- Menu" sentinel. Close overlay first so re-entry to
         // AutonomousMaster starts cleanly, then switch.
@@ -362,18 +362,18 @@ void AutonomousMasterMode::on_picker_confirm() {
 // Settings overlay
 // ---------------------------------------------------------------------------
 
-size_t AutonomousMasterMode::settings_row_count() const {
+size_t DirectorMode::settings_row_count() const {
     if (!active_show_) return 1;             // just "<- Back"
     const auto props = active_show_->properties();
     return props.size + 1;                   // + "<- Back"
 }
 
-bool AutonomousMasterMode::settings_row_is_back(size_t row) const {
+bool DirectorMode::settings_row_is_back(size_t row) const {
     if (!active_show_) return row == 0;
     return row == active_show_->properties().size;
 }
 
-void AutonomousMasterMode::on_settings_confirm() {
+void DirectorMode::on_settings_confirm() {
     if (settings_row_is_back(overlay_cursor_)) {
         overlay_ = Overlay::None;
         draw();
@@ -436,7 +436,7 @@ void AutonomousMasterMode::on_settings_confirm() {
 // Render
 // ---------------------------------------------------------------------------
 
-void AutonomousMasterMode::draw() {
+void DirectorMode::draw() {
     if (overlay_ == Overlay::Picker)   { draw_picker();   return; }
     if (overlay_ == Overlay::Settings) { draw_settings(); return; }
 
@@ -444,7 +444,7 @@ void AutonomousMasterMode::draw() {
     if (active_show_ && ctx_) active_show_->on_render(*ctx_);
 }
 
-void AutonomousMasterMode::draw_picker() {
+void DirectorMode::draw_picker() {
     DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         10, 5, "Show", WHITE, BLACK, 2});
@@ -480,7 +480,7 @@ void AutonomousMasterMode::draw_picker() {
         WHITE, BLACK, 1});
 }
 
-void AutonomousMasterMode::draw_settings() {
+void DirectorMode::draw_settings() {
     DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         10, 5, "Settings", WHITE, BLACK, 2});

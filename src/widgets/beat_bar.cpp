@@ -1,7 +1,7 @@
 // BeatBarWidget implementation (Epic 4.7 Block 2).
 //
 // Pre-Block-2 the flux meter rendering lived inside SimpleBeatShow's
-// on_render (and AutonomousMasterMode's draw before Block 1). Both
+// on_render (and DirectorMode's draw before Block 1). Both
 // drew the same frame + fill + threshold-marker pattern with
 // hard-coded 220 px width / 14 px height. The widget abstracts the
 // geometry so any Show (or Utilities > Level Tuning) can compose the

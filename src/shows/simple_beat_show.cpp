@@ -3,7 +3,7 @@
 // Preserves Epic 4.6 BeatPulse behaviour under the new Show plug-in
 // framework. IBI/BPM tracking, Colour enum, and the per-beat fan-out
 // match BeatPulseVisualisation; the flux meter tracking + full-screen
-// rendering (previously chrome owned by AutonomousMasterMode) live
+// rendering (previously chrome owned by DirectorMode) live
 // here so the Show owns its canvas.
 //
 // Post-Epic-4.7 master-IR loopback (dispatch_output_class_group fires
@@ -90,7 +90,7 @@ void colour_to_rgb(Colour c, uint8_t& r, uint8_t& g, uint8_t& b) {
     }
 }
 
-// Flux meter tuning - mirrors AutonomousMasterMode's pre-Block-1 values.
+// Flux meter tuning - mirrors DirectorMode's pre-Block-1 values.
 constexpr float kBeatMultiplier = 2.5f;
 constexpr float kBaselineAlpha  = 0.02f;
 constexpr float kVolumeGate     = 500.0f;
@@ -268,7 +268,7 @@ void SimpleBeatShow::update_bpm_from_buffer() {
 //
 // Owns the full canvas: status strip (show name), colour title,
 // BPM, batt + IR fire counter, flux meter, footer hint. Mirrors the
-// pre-Block-1 AutonomousMasterMode::draw() so the visible behaviour
+// pre-Block-1 DirectorMode::draw() so the visible behaviour
 // stays the same. The mode's draw cadence (50 ms) drives this; the
 // beat-flash DisplayClear from on_beat_detected briefly overpaints
 // before the next on_render() repaints the chrome.

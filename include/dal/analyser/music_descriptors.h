@@ -17,7 +17,7 @@
 //              1 s, in 0..255. Tracks how busy the music is.
 //
 // Block 3 fires the descriptors on every frame; rate-limited delivery
-// to the Show hook is done at the consumer (AutonomousMasterMode)
+// to the Show hook is done at the consumer (DirectorMode)
 // where the wire / Show-event contract lives.
 
 #pragma once

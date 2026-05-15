@@ -1,7 +1,7 @@
 // Shared NVS persistence helpers used by ModeMachine + multiple modes.
 //
 // Slave-only NVS keys (slv_chan, slv_repeat) are owned here as of
-// Epic 4.6 Block 9 because both SlaveMode and ConfigMode read/write them
+// Epic 4.6 Block 9 because both LumeMode and ConfigMode read/write them
 // and the per-mode anonymous-namespace copies were drifting. The third
 // slave key (slv_ir_grp) is gone - migrated to PixMobIrBinding's
 // property bag (NVS namespace "nb_pixmob-ir", key "group") via
@@ -52,7 +52,7 @@ void             save_master_channel(uint8_t c);
 
 // Slave ESP-NOW channel preference. 0 = auto (dual-channel scan with
 // show priority), 1 / 6 / 11 = locked to that channel. Defaults to 0.
-// SlaveMode reads on enter(); ConfigMode mutates from the operator menu.
+// LumeMode reads on enter(); ConfigMode mutates from the operator menu.
 uint8_t          load_slave_channel();
 void             save_slave_channel(uint8_t c);
 
@@ -63,7 +63,7 @@ void             save_slave_channel(uint8_t c);
 bool             load_slave_repeat_enabled();
 void             save_slave_repeat_enabled(bool e);
 
-// Slave NocturNation group ID. Device-wide value used by SlaveMode's
+// Slave NocturNation group ID. Device-wide value used by LumeMode's
 // receive filter: a non-relay binding fires when LIGHT_COMMAND
 // target_group is 0 (the broadcast group; everyone responds) OR
 // matches this value exactly. A device with slv_group == 0 has no
@@ -87,7 +87,7 @@ void             save_slv_group(uint8_t g);
 const char*      load_active_vis_id();
 void             save_active_vis_id(const char* id);
 
-// Active master-side Show id (Epic 4.7 Block 1). AutonomousMasterMode
+// Active master-side Show id (Epic 4.7 Block 1). DirectorMode
 // resolves the returned id against show_registry() on enter(); if the
 // saved id no longer resolves to a registered Show (uninstalled,
 // renamed) the mode falls back to the canonical "simple-beat" default.
@@ -103,7 +103,7 @@ void             save_active_show_id(const char* id);
 
 // One-shot NVS migration from pre-Block-9 keys to their new homes.
 // Called from ModeMachine::begin() BEFORE enter_mode(Boot) so the
-// property bags populated here are visible when SlaveMode is later
+// property bags populated here are visible when LumeMode is later
 // entered. Idempotent: removes legacy keys after migrating so the
 // second call is a no-op.
 //

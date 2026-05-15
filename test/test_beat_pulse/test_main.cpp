@@ -1,7 +1,7 @@
 // Native test: BeatPulseVisualisation (Epic 4.6 Block 8).
 //
 // Covers the first concrete Visualisation. The pre-migration code lived
-// inside AutonomousMasterMode; this test exercises the migrated vis in
+// inside DirectorMode; this test exercises the migrated vis in
 // isolation against recording test drivers registered on the standard
 // "esp-now-broadcast" and "ir-pixmob" transports so the per-beat render
 // fan-out can be asserted byte-for-byte against the pre-migration shape.
