@@ -2,6 +2,35 @@
 
 Notable changes to the NocturNation M5 firmware. Newest first.
 
+## 2026-05-16 — Protocol v2: magic prefix for ESP-NOW disambiguation
+
+Wire-incompatible bump from protocol version `0x01` to `0x02`.
+
+- Frames now carry a two-byte magic prefix `0x4E 0x4E` (ASCII "NN")
+  at offset 0..1, before the existing `protocol_version` byte.
+- Header grew from 6 to 8 bytes; all other offsets shift +2.
+  `kHeaderSize = 8`, `kMaxPayloadSize = 24`.
+- Receivers validate the magic prefix as the very first check and
+  silently drop anything that isn't "NN" before touching the rest
+  of the header. New `DecodeResult::InvalidMagic` distinguishes
+  "not a NocturNation frame at all" from "wrong NocturNation
+  version" for diagnostics.
+
+Motivation: NocturNation shares the 2.4 GHz band with anything else
+running ESP-NOW vendor action frames on the same channel - a real
+concern at event-density deployments like EMF Camp. The previous
+`protocol_version`-only check was a single-byte filter, with a
+false-positive rate on the order of one in a few million random
+ESP-NOW frames - rare but visible as occasional stray flashes in
+busy RF environments. The two-byte magic drops the false-positive
+rate to roughly one in a few billion, comfortably below the noise
+floor.
+
+v1 and v2 receivers cannot interoperate. Director + Lume must be
+flashed in lockstep. Spec change is documented in
+`docs/manuals/protocol-manual.md` (v0x02) and synced to the
+canonical Notion source-of-truth page.
+
 ## 2026-05-16 — Protocol trim and Lume power optimisation
 
 ESP-NOW protocol surface trimmed to the two message types the

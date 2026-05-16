@@ -1,7 +1,7 @@
 ---
 title: "NocturNation protocol manual"
 status: Draft
-protocol_version: 0x01
+protocol_version: 0x02
 firmware_version: "v0.5"
 notion_url: https://www.notion.so/35ebd067740580378400ec3e0e8a0ca0
 notion_id: 35ebd067740580378400ec3e0e8a0ca0
@@ -15,7 +15,7 @@ sync_direction: bidirectional
 
 This is the implementer-facing document. If you are an operator setting up a venue, read the [user manual](user-manual.md) instead. If you are designing show plug-ins for the NocturNation firmware, read [developing-shows.md](../developing-shows.md). For visual reference alongside this spec, the [flow-diagrams document](flow-diagrams.md) has Mermaid renderings of the receive pipeline and class-and-group routing.
 
-**Protocol version specified by this document**: `0x01`.
+**Protocol version specified by this document**: `0x02`.
 **Reference firmware version**: v0.5 (`include/firmware_version.h`).
 **Reference encoder for the PixMob IR annex**: [jamesw343/PixMob_IR](https://github.com/jamesw343/PixMob_IR).
 
@@ -58,9 +58,9 @@ Throughout this document, the words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD
 
 ### 1.4 Versioning
 
-Every frame begins with a one-byte `protocol_version` field. The value specified by this document is `0x01`. A receiver MUST validate this byte and discard frames whose version it does not recognise. Future revisions of the protocol MAY introduce new message types within the same version (using reserved opcodes) or MAY bump the version byte if a wire-incompatible change is required.
+Every frame begins with a two-byte magic prefix (`0x4E 0x4E`, ASCII "NN") followed by a one-byte `protocol_version` field. The value of `protocol_version` specified by this document is `0x02`. A receiver MUST validate the magic prefix first, then the version byte, discarding frames whose magic or version it does not recognise. Future revisions of the protocol MAY introduce new message types within the same version (using reserved opcodes) or MAY bump the version byte if a wire-incompatible change is required.
 
-The protocol version is independent of the firmware version. Firmware version `v0.5` implements protocol version `0x01`.
+The protocol version is independent of the firmware version. Firmware version `v0.5` implements protocol version `0x02`.
 
 ### 1.5 Licence
 
@@ -110,19 +110,23 @@ NocturNation is unidirectional. A Lume never transmits a frame back to the Direc
 
 ### 3.1 Header
 
-Every frame begins with a six-byte header:
+Every frame begins with an eight-byte header:
 
 | Offset | Field | Size | Description |
 |---:|---|---:|---|
-| 0 | `protocol_version` | 1 | Always `0x01` at this revision |
-| 1 | `source_id` | 1 | 1..254 = sender id; `0xFF` = broadcast / anonymous |
-| 2 | `sequence_number` | 1 | Wraps 1..255 in monotonic order per source; `0x00` indicates no sequencing |
-| 3 | `hop_count` | 1 | 0 = original transmission; receiver MUST drop frames where hop_count > 3 |
-| 4 | `message_type` | 1 | See [section 3.2](#32-message-types) |
-| 5 | `payload_len` | 1 | Bytes of payload following the header |
-| 6..N | `payload` | `payload_len` | Type-specific (see [section 3.3](#33-payloads)) |
+| 0 | `magic[0]` | 1 | Always `0x4E` (ASCII `N`) |
+| 1 | `magic[1]` | 1 | Always `0x4E` (ASCII `N`) |
+| 2 | `protocol_version` | 1 | Always `0x02` at this revision |
+| 3 | `source_id` | 1 | 1..254 = sender id; `0xFF` = broadcast / anonymous |
+| 4 | `sequence_number` | 1 | Wraps 1..255 in monotonic order per source; `0x00` indicates no sequencing |
+| 5 | `hop_count` | 1 | 0 = original transmission; receiver MUST drop frames where hop_count > 3 |
+| 6 | `message_type` | 1 | See [section 3.2](#32-message-types) |
+| 7 | `payload_len` | 1 | Bytes of payload following the header |
+| 8..N | `payload` | `payload_len` | Type-specific (see [section 3.3](#33-payloads)) |
 
-`kHeaderSize = 6`. `kMaxFrameSize = 32`. `kMaxPayloadSize = kMaxFrameSize - kHeaderSize = 26`.
+`kHeaderSize = 8`. `kMaxFrameSize = 32`. `kMaxPayloadSize = kMaxFrameSize - kHeaderSize = 24`.
+
+The two-byte magic prefix (`0x4E 0x4E`, ASCII "NN") discriminates NocturNation traffic from other ESP-NOW users sharing the same 2.4 GHz channel - a real concern at event-density deployments (EMF, festivals) where many devices broadcast on the same band. A receiver MUST validate the magic prefix as the very first check; frames whose `magic[0..1]` is not `0x4E 0x4E` MUST be silently discarded before any further header parsing.
 
 A receiver MUST verify that `payload_len` matches the expected length for the given `message_type` (see [section 3.3](#33-payloads)) and SHOULD silently discard frames whose `payload_len` is inconsistent.
 
@@ -172,7 +176,7 @@ A receiver whose configured `device_class` matches `target_class` (or `target_cl
 
 #### 3.3.3 `EXTENSION` (`0xFF`)
 
-Reserved for future use. A receiver MUST silently discard frames of this type at protocol version `0x01`.
+Reserved for future use. A receiver MUST silently discard frames of this type at protocol version `0x02`.
 
 ---
 
@@ -284,6 +288,7 @@ NocturNation has no Lume-to-Director heartbeat. A Director has no on-wire knowle
 
 A conforming receiver MUST honour the following:
 
+- The magic prefix check (`0x4E 0x4E` at offset 0..1) as the very first inbound validation. Frames failing this check MUST be silently discarded with no further processing.
 - The frame header layout and validation in [section 3.1](#31-header) and [section 3.2](#32-message-types).
 - Deduplication on `(source_id, sequence_number)` against a ring of at least sixteen entries ([section 2.3](#23-redundancy)).
 - The hop-count limit of 3 ([section 2.3](#23-redundancy)).
@@ -452,24 +457,26 @@ A `LIGHT_COMMAND` from source_id 1, sequence 42, broadcast (`target_class = 0x00
 
 ```
 Offset  Byte    Field
-0x00    0x01    protocol_version
-0x01    0x01    source_id
-0x02    0x2A    sequence_number (42)
-0x03    0x00    hop_count
-0x04    0x03    message_type (LIGHT_COMMAND)
-0x05    0x09    payload_len
-0x06    0x00    target_class (All)
-0x07    0x00    target_group (broadcast)
-0x08    0xFF    r
-0x09    0x00    g
-0x0A    0x00    b
-0x0B    0x02    attack (T_96_MS)
-0x0C    0x00    sustain (T_0_MS)
-0x0D    0x04    release (T_480_MS)
-0x0E    0x00    chance (CHANCE_100)
+0x00    0x4E    magic[0] ('N')
+0x01    0x4E    magic[1] ('N')
+0x02    0x02    protocol_version
+0x03    0x01    source_id
+0x04    0x2A    sequence_number (42)
+0x05    0x00    hop_count
+0x06    0x03    message_type (LIGHT_COMMAND)
+0x07    0x09    payload_len
+0x08    0x00    target_class (All)
+0x09    0x00    target_group (broadcast)
+0x0A    0xFF    r
+0x0B    0x00    g
+0x0C    0x00    b
+0x0D    0x02    attack (T_96_MS)
+0x0E    0x00    sustain (T_0_MS)
+0x0F    0x04    release (T_480_MS)
+0x10    0x00    chance (CHANCE_100)
 ```
 
-Total frame length: fifteen bytes.
+Total frame length: seventeen bytes (eight header + nine payload).
 
 ### C.2 ESP-NOW `HEARTBEAT` frame
 
@@ -477,24 +484,26 @@ A `HEARTBEAT` from source_id `0x21`, sequence `0x07`, hop_count 2, carrying tick
 
 ```
 Offset  Byte    Field
-0x00    0x01    protocol_version
-0x01    0x21    source_id
-0x02    0x07    sequence_number (7)
-0x03    0x02    hop_count
-0x04    0x00    message_type (HEARTBEAT)
-0x05    0x09    payload_len (9)
-0x06    0x78    tick LE byte 0
-0x07    0x56    tick LE byte 1
-0x08    0x34    tick LE byte 2
-0x09    0x12    tick LE byte 3
-0x0A    0x23    days_since_2026 LE byte 0
-0x0B    0x01    days_since_2026 LE byte 1
-0x0C    0xEF    centiseconds_today LE byte 0
-0x0D    0xCD    centiseconds_today LE byte 1
-0x0E    0xAB    centiseconds_today LE byte 2
+0x00    0x4E    magic[0] ('N')
+0x01    0x4E    magic[1] ('N')
+0x02    0x02    protocol_version
+0x03    0x21    source_id
+0x04    0x07    sequence_number (7)
+0x05    0x02    hop_count
+0x06    0x00    message_type (HEARTBEAT)
+0x07    0x09    payload_len (9)
+0x08    0x78    tick LE byte 0
+0x09    0x56    tick LE byte 1
+0x0A    0x34    tick LE byte 2
+0x0B    0x12    tick LE byte 3
+0x0C    0x23    days_since_2026 LE byte 0
+0x0D    0x01    days_since_2026 LE byte 1
+0x0E    0xEF    centiseconds_today LE byte 0
+0x0F    0xCD    centiseconds_today LE byte 1
+0x10    0xAB    centiseconds_today LE byte 2
 ```
 
-Total frame length: fifteen bytes (six header + nine payload).
+Total frame length: seventeen bytes (eight header + nine payload).
 
 ### C.3 PixMob infra-red frame
 
@@ -527,7 +536,8 @@ These hand-derived vectors are illustrative. The authoritative reference vectors
 
 | Version | Date | Spec doc | Notable changes |
 |---:|---|---|---|
-| 0x01 | 2026 | This document | Initial public protocol. ESP-NOW transport, 6-byte header, two active message types (`HEARTBEAT`, `LIGHT_COMMAND`) plus `EXTENSION` reserved, class-and-group addressing, PixMob IR annex. |
+| 0x01 | 2026 | (superseded) | Initial public protocol. ESP-NOW transport, 6-byte header, two active message types (`HEARTBEAT`, `LIGHT_COMMAND`) plus `EXTENSION` reserved, class-and-group addressing, PixMob IR annex. |
+| 0x02 | 2026 | This document | Added 2-byte magic prefix (`0x4E 0x4E`, ASCII "NN") at frame offset 0..1 to discriminate NocturNation traffic from other ESP-NOW users sharing the channel at event-density deployments. Header grew from 6 to 8 bytes; all other offsets shift +2. Wire-incompatible with v1: v1 and v2 receivers cannot interoperate. |
 
 Future revisions will be appended to this table.
 

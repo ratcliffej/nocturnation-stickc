@@ -51,16 +51,19 @@ inline uint32_t read_u32_le(const uint8_t* src) {
            (static_cast<uint32_t>(src[3]) << 24);
 }
 
-// Serialise the fixed 6-byte header. Forces protocol_version and writes
-// message_type / payload_len chosen by the caller (the per-type encoder).
+// Serialise the fixed 8-byte header (spec v2). Forces magic + protocol_version
+// and writes message_type / payload_len chosen by the caller (the per-type
+// encoder).
 void write_header(uint8_t* buf, const Header& hdr,
                   MessageType message_type, uint8_t payload_len) {
-    buf[0] = kProtocolVersion;
-    buf[1] = hdr.source_id;
-    buf[2] = hdr.sequence_number;
-    buf[3] = hdr.hop_count;
-    buf[4] = static_cast<uint8_t>(message_type);
-    buf[5] = payload_len;
+    buf[0] = kMagic0;
+    buf[1] = kMagic1;
+    buf[2] = kProtocolVersion;
+    buf[3] = hdr.source_id;
+    buf[4] = hdr.sequence_number;
+    buf[5] = hdr.hop_count;
+    buf[6] = static_cast<uint8_t>(message_type);
+    buf[7] = payload_len;
 }
 
 bool is_known_message_type(uint8_t raw) {
@@ -121,22 +124,27 @@ DecodeResult decode_header(const uint8_t* buf, size_t buf_len, Header& out_hdr) 
     if (buf_len < kHeaderSize) {
         return DecodeResult::BufferTooShort;
     }
-    if (buf[0] != kProtocolVersion) {
+    // Magic check first - cheapest rejection path for non-NocturNation
+    // ESP-NOW chatter sharing the channel. Bytes 0-1 must be "NN".
+    if (buf[0] != kMagic0 || buf[1] != kMagic1) {
+        return DecodeResult::InvalidMagic;
+    }
+    if (buf[2] != kProtocolVersion) {
         return DecodeResult::InvalidProtocolVersion;
     }
-    if (!is_known_message_type(buf[4])) {
+    if (!is_known_message_type(buf[6])) {
         return DecodeResult::InvalidMessageType;
     }
-    const uint8_t payload_len = buf[5];
+    const uint8_t payload_len = buf[7];
     if (static_cast<size_t>(kHeaderSize) + payload_len > buf_len) {
         return DecodeResult::BufferTooShort;
     }
 
-    out_hdr.protocol_version = buf[0];
-    out_hdr.source_id        = buf[1];
-    out_hdr.sequence_number  = buf[2];
-    out_hdr.hop_count        = buf[3];
-    out_hdr.message_type     = static_cast<MessageType>(buf[4]);
+    out_hdr.protocol_version = buf[2];
+    out_hdr.source_id        = buf[3];
+    out_hdr.sequence_number  = buf[4];
+    out_hdr.hop_count        = buf[5];
+    out_hdr.message_type     = static_cast<MessageType>(buf[6]);
     out_hdr.payload_len      = payload_len;
     return DecodeResult::Ok;
 }

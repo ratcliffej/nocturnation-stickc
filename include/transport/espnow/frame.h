@@ -1,20 +1,28 @@
-// NocturNation ESP-NOW frame format (v1)
+// NocturNation ESP-NOW frame format (v2)
 //
-// Wire format per docs/architecture.md §4.3. Pure logic; no ESP32 / radio
-// dependencies, so this layer compiles and tests on native (laptop).
+// Wire format per docs/manuals/protocol-manual.md §3.1. Pure logic; no ESP32
+// / radio dependencies, so this layer compiles and tests on native (laptop).
 //
 // The radio transport (Block 3+ of Epic 4) consumes these encoders to fill
 // ESP-NOW packets, and feeds received bytes through the decoders.
 //
-// Frame layout:
+// Frame layout (v2 - protocol_version == 0x02):
 //   Offset  Field             Size  Notes
-//   0       protocol_version  1     0x01 for v1
-//   1       source_id         1     1-254; 0xFF = broadcast
-//   2       sequence_number   1     1-255 wraps; 0 = sequencing disabled
-//   3       hop_count         1     0 = original; cap at kMaxHopCount
-//   4       message_type      1     See MessageType enum
-//   5       payload_len       1     Bytes of payload following header
-//   6+      payload           N     Type-specific (little-endian)
+//   0       magic[0]          1     0x4E ('N')
+//   1       magic[1]          1     0x4E ('N')
+//   2       protocol_version  1     0x02 for v2
+//   3       source_id         1     1-254; 0xFF = broadcast
+//   4       sequence_number   1     1-255 wraps; 0 = sequencing disabled
+//   5       hop_count         1     0 = original; cap at kMaxHopCount
+//   6       message_type      1     See MessageType enum
+//   7       payload_len       1     Bytes of payload following header
+//   8+      payload           N     Type-specific (little-endian)
+//
+// The 2-byte magic prefix is the cheapest discriminator against other
+// ESP-NOW users sharing the channel (a real concern at events like
+// EMF where many devices broadcast on the same band). A receiver
+// rejects any inbound frame whose first two bytes are not "NN"
+// before doing any further header validation.
 
 #pragma once
 
@@ -25,17 +33,19 @@ namespace nocturnation {
 namespace transport {
 namespace espnow {
 
-// Header constants (spec §4.3)
-constexpr uint8_t kProtocolVersion   = 0x01;
+// Header constants (spec §3.1)
+constexpr uint8_t kMagic0            = 0x4E;  // 'N' - NocturNation discriminator byte 0
+constexpr uint8_t kMagic1            = 0x4E;  // 'N' - NocturNation discriminator byte 1
+constexpr uint8_t kProtocolVersion   = 0x02;  // bumped from 0x01 for the magic-prefix wire change
 constexpr uint8_t kBroadcastSourceId = 0xFF;
-constexpr uint8_t kHeaderSize        = 6;
+constexpr uint8_t kHeaderSize        = 8;     // 2 magic + 1 version + 5 metadata
 constexpr uint8_t kMaxHopCount       = 3;
 
 // ESP-NOW supports up to 250-byte payloads. We cap NocturNation frames much
-// smaller; the largest defined v1 payload is LIGHT_COMMAND at 8 bytes, so a
-// 32-byte working ceiling leaves comfortable room for v2 message types.
+// smaller; the largest active v2 payload is LIGHT_COMMAND at 9 bytes, so a
+// 32-byte working ceiling leaves room for future message types.
 constexpr uint8_t kMaxFrameSize   = 32;
-constexpr uint8_t kMaxPayloadSize = kMaxFrameSize - kHeaderSize;
+constexpr uint8_t kMaxPayloadSize = kMaxFrameSize - kHeaderSize;   // = 24
 
 // Per spec v0.29 §4.3, the protocol has exactly two active message
 // types: HEARTBEAT and LIGHT_COMMAND. Numeric IDs 0x01, 0x02, 0x04,
@@ -101,7 +111,8 @@ constexpr uint8_t kLightCommandPayloadLen = 9;
 enum class DecodeResult : uint8_t {
     Ok,
     BufferTooShort,            // buf_len < kHeaderSize, or < header+payload
-    InvalidProtocolVersion,
+    InvalidMagic,              // buf[0..1] != "NN" - not a NocturNation frame at all
+    InvalidProtocolVersion,    // magic OK but version byte not recognised
     InvalidMessageType,
     PayloadLenMismatch,        // payload_len != expected for the message type
 };

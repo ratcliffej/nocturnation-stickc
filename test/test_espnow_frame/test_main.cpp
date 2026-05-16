@@ -39,12 +39,14 @@ static Header make_header(uint8_t source_id = 7,
 static void assert_header_bytes(const uint8_t* buf,
                                 MessageType expected_type,
                                 uint8_t expected_payload_len) {
-    TEST_ASSERT_EQUAL_UINT8(kProtocolVersion, buf[0]);
-    TEST_ASSERT_EQUAL_UINT8(7,                buf[1]);  // source_id
-    TEST_ASSERT_EQUAL_UINT8(42,               buf[2]);  // sequence_number
-    TEST_ASSERT_EQUAL_UINT8(0,                buf[3]);  // hop_count
-    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(expected_type), buf[4]);
-    TEST_ASSERT_EQUAL_UINT8(expected_payload_len, buf[5]);
+    TEST_ASSERT_EQUAL_UINT8(kMagic0,          buf[0]);
+    TEST_ASSERT_EQUAL_UINT8(kMagic1,          buf[1]);
+    TEST_ASSERT_EQUAL_UINT8(kProtocolVersion, buf[2]);
+    TEST_ASSERT_EQUAL_UINT8(7,                buf[3]);  // source_id
+    TEST_ASSERT_EQUAL_UINT8(42,               buf[4]);  // sequence_number
+    TEST_ASSERT_EQUAL_UINT8(0,                buf[5]);  // hop_count
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(expected_type), buf[6]);
+    TEST_ASSERT_EQUAL_UINT8(expected_payload_len, buf[7]);
 }
 
 // ---------------------------------------------------------------------------
@@ -163,14 +165,26 @@ static void test_encode_buffer_too_small(void) {
 // ---------------------------------------------------------------------------
 
 static void test_decode_header_buffer_too_short(void) {
-    uint8_t buf[3] = { kProtocolVersion, 1, 2 };
+    uint8_t buf[3] = { kMagic0, kMagic1, kProtocolVersion };
     Header h{};
     TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::BufferTooShort),
                       static_cast<int>(decode_header(buf, sizeof(buf), h)));
 }
 
+static void test_decode_header_invalid_magic_rejects_non_nocturnation_frame(void) {
+    // A frame whose first two bytes are not "NN" is foreign ESP-NOW
+    // traffic (or random RF noise that lined up). Reject before any
+    // further validation - this is the cheapest disambiguator at
+    // event-density channels where multiple ESP-NOW users coexist.
+    uint8_t buf[kHeaderSize] = { 0x18, 0xFE, kProtocolVersion, 1, 2, 0,
+                                 static_cast<uint8_t>(MessageType::Heartbeat), 0 };
+    Header h{};
+    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::InvalidMagic),
+                      static_cast<int>(decode_header(buf, sizeof(buf), h)));
+}
+
 static void test_decode_header_bad_protocol_version(void) {
-    uint8_t buf[kHeaderSize] = { 0x99, 1, 2, 0,
+    uint8_t buf[kHeaderSize] = { kMagic0, kMagic1, 0x99, 1, 2, 0,
                                  static_cast<uint8_t>(MessageType::Heartbeat), 0 };
     Header h{};
     TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::InvalidProtocolVersion),
@@ -178,7 +192,7 @@ static void test_decode_header_bad_protocol_version(void) {
 }
 
 static void test_decode_header_unknown_message_type(void) {
-    uint8_t buf[kHeaderSize] = { kProtocolVersion, 1, 2, 0, 0x42, 0 };
+    uint8_t buf[kHeaderSize] = { kMagic0, kMagic1, kProtocolVersion, 1, 2, 0, 0x42, 0 };
     Header h{};
     TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::InvalidMessageType),
                       static_cast<int>(decode_header(buf, sizeof(buf), h)));
@@ -186,7 +200,7 @@ static void test_decode_header_unknown_message_type(void) {
 
 static void test_decode_header_payload_len_overruns_buffer(void) {
     // Header claims 32 bytes of payload but only 0 follow.
-    uint8_t buf[kHeaderSize] = { kProtocolVersion, 1, 2, 0,
+    uint8_t buf[kHeaderSize] = { kMagic0, kMagic1, kProtocolVersion, 1, 2, 0,
                                  static_cast<uint8_t>(MessageType::LightCommand), 32 };
     Header h{};
     TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::BufferTooShort),
@@ -218,12 +232,14 @@ static void test_payload_decoder_wrong_message_type(void) {
 static void test_payload_decoder_wrong_payload_len_in_header(void) {
     // Hand-craft a frame whose header.payload_len is wrong for the type.
     uint8_t buf[kMaxFrameSize] = {};
-    buf[0] = kProtocolVersion;
-    buf[1] = 1;
-    buf[2] = 1;
-    buf[3] = 0;
-    buf[4] = static_cast<uint8_t>(MessageType::LightCommand);
-    buf[5] = 7;  // wrong; expected 9
+    buf[0] = kMagic0;
+    buf[1] = kMagic1;
+    buf[2] = kProtocolVersion;
+    buf[3] = 1;  // source_id
+    buf[4] = 1;  // sequence_number
+    buf[5] = 0;  // hop_count
+    buf[6] = static_cast<uint8_t>(MessageType::LightCommand);
+    buf[7] = 7;  // wrong; expected 9
     // 7 bytes of "payload" (zeros).
     const size_t total = kHeaderSize + 7;
 
@@ -263,7 +279,7 @@ static void test_payload_decoder_caller_payload_len_argument_mismatch(void) {
 // ---------------------------------------------------------------------------
 
 static void test_decode_header_extension_type_recognised(void) {
-    uint8_t buf[kHeaderSize] = { kProtocolVersion, 1, 2, 0,
+    uint8_t buf[kHeaderSize] = { kMagic0, kMagic1, kProtocolVersion, 1, 2, 0,
                                  static_cast<uint8_t>(MessageType::Extension), 0 };
     Header h{};
     TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
@@ -273,7 +289,7 @@ static void test_decode_header_extension_type_recognised(void) {
 
 // ---------------------------------------------------------------------------
 // Wire-format spot check: a fully hand-encoded HEARTBEAT frame matches the
-// spec v0.29 §4.3 layout byte-for-byte. Guards against accidental field-order
+// spec v2 §3.1 layout byte-for-byte. Guards against accidental field-order
 // regressions on the only Director-emitted broadcast besides LIGHT_COMMAND.
 // ---------------------------------------------------------------------------
 
@@ -294,7 +310,9 @@ static void test_heartbeat_wire_format_byte_for_byte(void) {
     TEST_ASSERT_EQUAL_size_t(kHeaderSize + kHeartbeatPayloadLen, n);
 
     const uint8_t expected[kHeaderSize + kHeartbeatPayloadLen] = {
-        0x01,  // protocol_version
+        0x4E,  // magic byte 0 ('N')
+        0x4E,  // magic byte 1 ('N')
+        0x02,  // protocol_version
         0x21,  // source_id
         0x07,  // sequence_number
         0x02,  // hop_count
@@ -317,6 +335,7 @@ int main(int, char**) {
     RUN_TEST(test_light_command_round_trip);
     RUN_TEST(test_encode_buffer_too_small);
     RUN_TEST(test_decode_header_buffer_too_short);
+    RUN_TEST(test_decode_header_invalid_magic_rejects_non_nocturnation_frame);
     RUN_TEST(test_decode_header_bad_protocol_version);
     RUN_TEST(test_decode_header_unknown_message_type);
     RUN_TEST(test_decode_header_payload_len_overruns_buffer);
