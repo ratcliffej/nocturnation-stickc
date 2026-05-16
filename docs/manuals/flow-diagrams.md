@@ -50,16 +50,16 @@ flowchart LR
         MShow --> MLCD
     end
 
-    subgraph Lume1["Lume Stick A"]
+    subgraph Lume1["Lume Stick"]
         L1Recv[ESP-NOW receive]
         L1IR[IR transmitter]
         L1Recv --> L1IR
     end
 
-    subgraph Lume2["Lume Stick B"]
+    subgraph Lume2["Lume Tildagon"]
         L2Recv[ESP-NOW receive]
-        L2IR[IR transmitter]
-        L2Recv --> L2IR
+        L2Out[Perimeter LEDs<br/>+ LCD]
+        L2Recv --> L2Out
     end
 
     Receivers[(Bracelets /<br/>IR receivers)]
@@ -71,14 +71,14 @@ flowchart LR
 
     MIR -- "IR (PixMob today,<br/>protocol-pluggable)" --> Receivers
     L1IR -- IR --> Receivers
-    L2IR -- IR --> Receivers
 ```
 
 Notes:
 - The Director is treated as one of its own Lumes for output purposes (the "loopback"): every `render_fx` call also fires the Director's own IR transmitter and LCD pulse.
 - IR transmission is gated by the `ir_en` config — a Show can run without IR at all (LCD + ESP-NOW only).
 - The IR encoder is protocol-pluggable. PixMob is the reference implementation today; future Lumes can carry different IR encoders without a wire-protocol change.
-- Lumes are receive-only by default. The Lume-as-repeater toggle re-broadcasts accepted frames at hop_count + 1, capped at 3 hops.
+- A Lume's outputs depend on its hardware. A Lume Stick has an IR transmitter and an LCD; a Lume Tildagon drives its own perimeter LEDs and LCD but has no IR transmitter at all — it terminates the chain rather than relaying onward. The frame still arrives and renders locally; the IR fan-out from that Lume is simply absent.
+- Lumes are receive-only by default. The Lume-as-repeater toggle re-broadcasts accepted frames at hop_count + 1, capped at 3 hops (only Lumes with an ESP-NOW transmitter — i.e. the Stick — can act as a repeater).
 - Bracelets are passive: they wake on an IR command, render the envelope, then return to standby.
 
 ---
