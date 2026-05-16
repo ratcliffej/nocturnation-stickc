@@ -70,8 +70,9 @@ void             save_lume_repeat_enabled(bool e);
 // group and only responds to broadcasts; it does not act as a
 // receive-wildcard. Range 0-255; operator sets via Config > Group.
 //
-// First-boot default is a random value in {1, 2, 3} assigned by
-// ensure_slv_group_assigned() and persisted on first migrate call.
+// First-boot default is a random value in {1, 2, 3} assigned inline
+// by migrate_legacy_nvs_keys() on first boot and persisted under the
+// slv_group NVS key (retained for backwards compatibility).
 // This puts fresh devices into one of the three "drum" groups that
 // DynamicShow routes kick / snare / hi-hat to, so a small fleet of
 // freshly-flashed Sticks naturally distributes across per-drum
