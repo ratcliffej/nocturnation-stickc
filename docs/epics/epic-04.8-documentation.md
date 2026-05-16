@@ -32,7 +32,7 @@ The codebase has reached the point where the protocol surface is stable enough t
 
 Three audiences need a cleaner artefact than the architecture spec:
 
-- **Operators** at deployments who want to know what the menu items do, how to recover from "the slaves all went red and stopped flashing", and what the theory of operation is so they can improvise.
+- **Operators** at deployments who want to know what the menu items do, how to recover from "the Lumes all went red and stopped flashing", and what the theory of operation is so they can improvise.
 - **Implementers** building a new receiver (Tildagon is imminent, third-party MicroPython / ESP32-IDF / Arduino-Pico builds are encouraged) who need a normative spec they can write code against.
 - **Visitors** (potential contributors, conference attendees, the curious) who want to understand what the project actually is without reading the architecture document.
 
@@ -48,24 +48,24 @@ Verification ownership: **(L)** = laptop / native (build doc, link-check, spell-
 
 **Included - User manual** (`docs/manuals/user-manual.md`):
 
-- **Theory of operation** chapter: what NocturNation is (one master + N slaves + crowd-worn IR receivers), why it's distributed (slaves extend IR coverage at large venues), how the master detects beats / sections / drops, why class+group addressing exists, why ESP-NOW (low-latency broadcast, no AP needed), why bracelets are pre-grouped at random and the operator addresses groups not individuals.
+- **Theory of operation** chapter: what NocturNation is (one Director + N Lumes + crowd-worn IR receivers), why it's distributed (Lumes extend IR coverage at large venues), how the Director detects beats / sections / drops, why class+group addressing exists, why ESP-NOW (low-latency broadcast, no AP needed), why bracelets are pre-grouped at random and the operator addresses groups not individuals.
 - **Hardware setup**: M5StickC Plus2 vs M5StickS3 (capability differences, when to pick which), bracelet pairing model (groups are pre-programmed - the operator doesn't change them), antenna orientation, IR LED line-of-sight notes (Plus2 omnidirectional vs S3 focused beam).
 - **Firmware installation**: PlatformIO build, environment names per host, flashing.
 - **Configuration walk-through**: every menu item in the Config tree, what it does, when to change it (`Group: N`, `Display`, `Connectivity` (IR / ESP-NOW / WiFi / DMX picker), `Utilities` (PixMob picker), `System`).
-- **Modes and shows**: AutonomousMaster vs Slave vs TestMode vs ConfigMode; show picker (Btn2-long); per-show settings UI (Btn1-long).
-- **Troubleshooting**: bracelets not responding, NO SIGNAL flag on slave, channel mismatch, ESP-NOW range, IR coverage gaps.
+- **Modes and shows**: Director vs Lume vs TestMode vs ConfigMode; show picker (Btn2-long); per-show settings UI (Btn1-long).
+- **Troubleshooting**: bracelets not responding, NO SIGNAL flag on Lume, channel mismatch, ESP-NOW range, IR coverage gaps.
 - **Glossary** + **Index**.
 
 **Included - Protocol manual** (`docs/manuals/protocol-manual.md`):
 
 - **Front matter**: scope, normative language (RFC 2119 MUST/SHOULD/MAY), licence (CC BY-SA 4.0), versioning policy (`PROTOCOL_VERSION` byte at offset 0 of every frame; semver mapping in §A).
 - **Wireless layer**: ESP-NOW vendor-neutral specification (802.11 vendor action frames, channels 1 / 6 / 11, broadcast MAC `ff:ff:ff:ff:ff:ff`), why no encryption (Tier 0; security RFC referenced for Tier 1 path), redundancy (3× TX), dedup ring (16-deep on sequence number).
-- **Frame format**: `LIGHT_COMMAND` (9 bytes: target_class, target_group, r, g, b, attack, sustain, release, chance); `HEARTBEAT` (master-pulse, 1 Hz with skip-if-recent); `MUSIC_EVENT` (drop=1, breakdown=2, build=3 reserved). Byte-by-byte tables; example dumps for each frame.
+- **Frame format**: `LIGHT_COMMAND` (9 bytes: target_class, target_group, r, g, b, attack, sustain, release, chance); `HEARTBEAT` (Director-pulse, 1 Hz with skip-if-recent); `MUSIC_EVENT` (drop=1, breakdown=2, build=3 reserved). Byte-by-byte tables; example dumps for each frame.
 - **Class+group addressing**: the `DeviceClass` enum (`All=0x00`, `Light=0x01`, `Screen=0x02`, `MultiLedScreen=0x03`, reserved 0x04..0xFF); routing semantics (`(class, group) == (0, 0)` = everything; `(class, 0)` = all of that class; `(0, group)` = all classes in that group; exact match otherwise).
 - **PixMob IR encoding** (informative annex): 9-byte frame, attribution to `jamesw343/PixMob_IR`, byte layout, `restrictGroupId & 0x1F`, parity reference vectors.
-- **Channel discovery**: master picks channel 1 / 6 / 11 (default 11 = show); slave auto-scans by default with show priority. Sequence of probes documented.
+- **Channel discovery**: Director picks channel 1 / 6 / 11 (default 11 = show); Lume auto-scans by default with show priority. Sequence of probes documented.
 - **NVS schema** (informative annex, M5Stick reference implementation): `last_mode`, `ir_en`, `cal`, `scr_puls_en`, `slv_ir_grp`, `mst_chan`, `slv_chan`, `slv_repeat`, plus per-plug-in namespaces `nv_<id>` / `nb_<id>` / `ns_<id>`.
-- **Conformance**: what a receiver MUST honour (dedup, target_class / target_group routing, attack/sustain/release/chance interpretation), what it SHOULD honour (NO SIGNAL display after 3 s heartbeat gap, channel auto-scan), what it MAY support (slave-as-repeater, screen pulse).
+- **Conformance**: what a receiver MUST honour (dedup, target_class / target_group routing, attack/sustain/release/chance interpretation), what it SHOULD honour (NO SIGNAL display after 3 s heartbeat gap, channel auto-scan), what it MAY support (Lume-as-repeater, screen pulse).
 - **Reference test vectors** (annex): canonical LIGHT_COMMAND + PixMob IR byte sequences for parity testing.
 
 **Out of scope** (carry-forwards for later Epics):
@@ -82,7 +82,7 @@ Verification ownership: **(L)** = laptop / native (build doc, link-check, spell-
 2. **`docs/manuals/protocol-manual.md`** - normative protocol specification, target ~20-30 pages.
 3. **`docs/manuals/README.md`** - one-pager index pointing at both manuals + the architecture spec.
 4. **Repo README update** - link the two manuals from the top-level `README.md` "Documentation" section. Re-flow the README to absorb the architecture-additions carry-forward from Epic 4.7 (screen loopback / dispatch fan-out).
-5. **`docs/developing-shows.md` re-flow** - bring in the dispatch behaviour additions from Epic 4.7 (master loopback); cross-link from the user manual ("for developers") and the protocol manual ("Show plug-in surface").
+5. **`docs/developing-shows.md` re-flow** - bring in the dispatch behaviour additions from Epic 4.7 (Director loopback); cross-link from the user manual ("for developers") and the protocol manual ("Show plug-in surface").
 6. **Notion pages**: one Notion page per manual under the existing NocturNation workspace; status synced via the bidirectional doc-sync mechanism.
 
 ## Blocks
@@ -111,11 +111,11 @@ Verification ownership: **(L)** = laptop / native build, **(R)** = reader walk-t
 - Write the configuration walk-through (full Config tree, every leaf documented).
 - Write the modes-and-shows chapter (mode FSM, show picker UX, per-show settings UI).
 - Screenshots of menu screens where helpful.
-- **(L)** all linked NVS keys match `src/config_mode/`; **(R)** Jason can hand the manual to a deployment helper and they can configure a slave without supervision.
+- **(L)** all linked NVS keys match `src/config_mode/`; **(R)** Jason can hand the manual to a deployment helper and they can configure a Lume without supervision.
 
 ### Block 4: User manual - troubleshooting, glossary, index
 
-- Troubleshooting chapter organised by symptom: bracelets not flashing, NO SIGNAL on slave, ESP-NOW range, IR coverage gaps, channel mismatch, low battery behaviour, audio not detected.
+- Troubleshooting chapter organised by symptom: bracelets not flashing, NO SIGNAL on Lume, ESP-NOW range, IR coverage gaps, channel mismatch, low battery behaviour, audio not detected.
 - Glossary (PixMob, ESP-NOW, M5Unified, BeatDetector, DropDetector, MUSIC_EVENT, target_class, target_group, ...).
 - Index (Markdown links to every defined term).
 - **(L)** every glossary entry cross-linked in body text; **(R)** Jason reviews troubleshooting against real venue failure modes.
@@ -131,7 +131,7 @@ Verification ownership: **(L)** = laptop / native build, **(R)** = reader walk-t
 ### Block 6: Protocol manual - PixMob IR annex, channel discovery, NVS schema, conformance
 
 - PixMob IR encoding annex (with explicit attribution to `jamesw343/PixMob_IR`, byte tables, reference vectors).
-- Channel discovery chapter (master picks + slave auto-scan sequence).
+- Channel discovery chapter (Director picks + Lume auto-scan sequence).
 - NVS schema annex (informative; M5Stick reference implementation).
 - Conformance chapter (MUST / SHOULD / MAY for receivers).
 - Reference test vectors annex.
@@ -143,9 +143,9 @@ Verification ownership: **(L)** = laptop / native build, **(R)** = reader walk-t
 - Re-flow `docs/developing-shows.md` to reflect the dispatch fan-out - show authors no longer hand-roll fan-out, single `render_fx("00:00", ev)` call handles the whole transmission tree.
 - **(R)** Jason confirms README reads cleanly cold; **(L)** developing-shows builds cleanly and cross-references the new manual sections.
 
-### Block 8: Multi-slave bench verification + close-out
+### Block 8: Multi-Lume bench verification + close-out
 
-- **Folded-in Epic 4.65 Block 8**: stand up two slaves in different IR-coverage zones (Plus2 + S3), confirm class+group routing on the wire (master broadcasts to `01:07`, only slaves whose bindings match light-class group 7 fire), confirm the slave-as-repeater toggle behaviour, confirm sequence-loss signal-quality bars. This was deferred from Epic 4.65 and is the natural verification phase for the user manual's troubleshooting / configuration chapters (Block 3 + Block 4 documented these behaviours; this block proves them under deployment).
+- **Folded-in Epic 4.65 Block 8**: stand up two Lumes in different IR-coverage zones (Plus2 + S3), confirm class+group routing on the wire (Director broadcasts to `01:07`, only Lumes whose bindings match light-class group 7 fire), confirm the Lume-as-repeater toggle behaviour, confirm sequence-loss signal-quality bars. This was deferred from Epic 4.65 and is the natural verification phase for the user manual's troubleshooting / configuration chapters (Block 3 + Block 4 documented these behaviours; this block proves them under deployment).
 - Final cold-read by Jason of both manuals end-to-end.
 - Update architecture spec §1 to point at the manuals as the canonical operator/implementer entry points.
 - (Notion sync deferred per Epic-opening decision: manuals stay local-only until the body stabilises; future Notion sync is its own focused task.)
@@ -162,7 +162,7 @@ Verification ownership: **(L)** = laptop / native build, **(R)** = reader walk-t
 - README re-flow for screen loopback architecture additions (carry-forward from Epic 4.7 close-out).
 - `docs/developing-shows.md` re-flow for dispatch behaviour (same).
 - Diane-style cold README walk-through (carry-forward since Epic 1) - the user manual is the home for what this carry-forward needed.
-- **Epic 4.65 Block 8** (multi-slave bench verification of class+group routing) folded into Block 8 of this Epic - documentation walk-through provides the natural deployment scenario to exercise multi-slave routing end-to-end.
+- **Epic 4.65 Block 8** (multi-Lume bench verification of class+group routing) folded into Block 8 of this Epic - documentation walk-through provides the natural deployment scenario to exercise multi-Lume routing end-to-end.
 
 ## Forward-looking notes
 
@@ -176,7 +176,7 @@ Processing Type: **Documentation-only**. No firmware change, no test change. Eve
 
 Blocks 1-7 drafted in a single pass and committed to main. Outstanding work for Epic 4.8 close-out:
 
-- **Block 8 multi-slave bench verification** (folded-in 4.65 Block 8) - awaiting Jason at the bench with two slaves in different IR-coverage zones. Hardware-only verification path; documentation work has surfaced no remaining doc issues that block this verification.
+- **Block 8 multi-Lume bench verification** (folded-in 4.65 Block 8) - awaiting Jason at the bench with two Lumes in different IR-coverage zones. Hardware-only verification path; documentation work has surfaced no remaining doc issues that block this verification.
 - **Final cold-read** - Jason reads both manuals end-to-end. Expected to surface minor editorial corrections (typos, missing cross-links, occasional clarification). Folds back as a doc patch.
 - **Architecture spec §1 cross-link** - point at the manuals as the canonical operator/implementer entry points. Will land as part of the next architecture spec sync.
 
@@ -186,7 +186,7 @@ Deliverables landed so far:
 - `docs/manuals/user-manual.md` - 8 chapters + glossary + index. Quickstart, theory of operation, hardware, install, configuration walk-through, modes and shows, troubleshooting.
 - `docs/manuals/protocol-manual.md` - 7 sections + 4 annexes (PixMob IR, NVS schema, reference test vectors, protocol version history). Normative MUST/SHOULD/MAY language throughout.
 - Top-level `README.md` re-flowed to v0.5 reality (Plus2 + S3, six-layer architecture, manuals linked, Roadmap reflects closed Epics 1-4.7 + active 4.8 + next 5).
-- `docs/developing-shows.md` - added "What dispatch does for you (Epic 4.7 onward)" subsection covering the master loopback (ESP-NOW + IR + screen fan-out from one `render_fx` call) and the bracelet-residue handling that replaced the rolled-back IR primer.
+- `docs/developing-shows.md` - added "What dispatch does for you (Epic 4.7 onward)" subsection covering the Director loopback (ESP-NOW + IR + screen fan-out from one `render_fx` call) and the bracelet-residue handling that replaced the rolled-back IR primer.
 
 Notion sync wired up 2026-05-12 (afternoon): all four manual documents now have `notion_id` / `notion_url` / `sync_direction: bidirectional` in their frontmatter and live as subpages of the NocturNation project root in Notion. The manuals can now be edited in either VS Code or Notion and synced across.
 
@@ -194,7 +194,7 @@ Notion sync wired up 2026-05-12 (afternoon): all four manual documents now have 
 
 Bench testing during this Epic established that the Epic-4.7 IR reset primer (`dispatch_output_class_group` sending a zero-RGB broadcast frame ahead of the main fire when the IR transmitter has been idle for > 300 ms) was net-harmful: it doubled IR traffic for every sparse-cadence show, and only Rainbow - which already skipped the primer via the idle gate - rendered reliably on the bracelets. Diagnosed as receiver-side overload, not bracelet-side residue (the original premise was that residue dominated; in practice, traffic overload dominates).
 
-Rolled back. The primer block, the `s_last_ir_fire_ms` idle-timestamp state, the `reset_ir_primer_state_for_tests()` test seam, and the now-unused `pixmob_protocol.h` / `<Arduino.h>` includes in [src/dal/dal.cpp](../../src/dal/dal.cpp) are removed. Each `render_fx` call now produces exactly one IR frame on the master loopback path. Residue is handled in the **show**, not the dispatch, by sizing envelope durations to fit inside the show's fire cadence (SparkleVis: 960 ms envelope on 1100 ms cadence is the canonical pattern).
+Rolled back. The primer block, the `s_last_ir_fire_ms` idle-timestamp state, the `reset_ir_primer_state_for_tests()` test seam, and the now-unused `pixmob_protocol.h` / `<Arduino.h>` includes in [src/dal/dal.cpp](../../src/dal/dal.cpp) are removed. Each `render_fx` call now produces exactly one IR frame on the Director loopback path. Residue is handled in the **show**, not the dispatch, by sizing envelope durations to fit inside the show's fire cadence (SparkleVis: 960 ms envelope on 1100 ms cadence is the canonical pattern).
 
 Test impact: assertions in `test_beat_pulse`, `test_dynamic_show`, `test_spectrum_bars`, and `test_show` that expected an extra primer fire per beat dropped by one (3 → 2 or 2 → 1, depending on the test). All 61 affected native tests pass; Plus2 + S3 firmware builds clean. Bench verification on hardware confirmed all non-Rainbow shows now render reliably.
 

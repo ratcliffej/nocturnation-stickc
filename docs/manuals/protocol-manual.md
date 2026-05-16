@@ -78,7 +78,7 @@ A NocturNation frame is encapsulated as the payload of one ESP-NOW vendor action
 
 ### 2.2 Channels
 
-NocturNation uses three of the standard non-overlapping 2.4 GHz Wi-Fi channels. A master MUST be configured on exactly one of these channels at any moment:
+NocturNation uses three of the standard non-overlapping 2.4 GHz Wi-Fi channels. A Director MUST be configured on exactly one of these channels at any moment:
 
 | Channel | Centre frequency | Role |
 |---|---|---|
@@ -88,21 +88,21 @@ NocturNation uses three of the standard non-overlapping 2.4 GHz Wi-Fi channels. 
 
 Channel 11 is suggested for high-density public deployments because it is least congested in venue environments dominated by 2.4 GHz Wi-Fi infrastructure on channels 1 and 6.
 
-Slaves MAY be locked to a single channel or MAY auto-scan. See [section 5](#5-channel-discovery).
+Lumes MAY be locked to a single channel or MAY auto-scan. See [section 5](#5-channel-discovery).
 
 ### 2.3 Redundancy
 
-A master transmitting a frame MUST send it **three** times in immediate succession on the same channel. The three transmissions carry identical bytes; in particular, they carry the **same** sequence number (see [section 3](#3-frame-format)). This redundancy absorbs the occasional ESP-NOW packet loss without requiring acknowledgement.
+A Director transmitting a frame MUST send it **three** times in immediate succession on the same channel. The three transmissions carry identical bytes; in particular, they carry the **same** sequence number (see [section 3](#3-frame-format)). This redundancy absorbs the occasional ESP-NOW packet loss without requiring acknowledgement.
 
 A receiver MUST deduplicate against a ring of at least sixteen recently-seen `(source_id, sequence_number)` pairs. A frame matching any entry in the ring MUST be dropped silently (no processing, no further forwarding). A frame not matching any entry MUST be processed and the pair MUST be appended to the ring, evicting the oldest entry if the ring is full.
 
 ### 2.4 Repeater behaviour
 
-A slave MAY operate as a **repeater**, in which case every accepted frame (one that passed deduplication) is retransmitted with the `hop_count` field incremented by one. A receiver MUST drop frames with `hop_count` greater than 3 to bound the relay topology. The default behaviour is no repeating.
+A Lume MAY operate as a **repeater**, in which case every accepted frame (one that passed deduplication) is retransmitted with the `hop_count` field incremented by one. A receiver MUST drop frames with `hop_count` greater than 3 to bound the relay topology. The default behaviour is no repeating.
 
 ### 2.5 No acknowledgement, no return path
 
-NocturNation is unidirectional. A slave never transmits a frame back to the master; a bracelet never transmits anything at all. Master state (sequence numbers, mode, channel) is the single source of truth; slaves derive their behaviour from received frames and from local configuration.
+NocturNation is unidirectional. A Lume never transmits a frame back to the Director; a bracelet never transmits anything at all. Director state (sequence numbers, mode, channel) is the single source of truth; Lumes derive their behaviour from received frames and from local configuration.
 
 ---
 
@@ -130,13 +130,13 @@ A receiver MUST verify that `payload_len` matches the expected length for the gi
 
 | Code | Name | Payload size | Direction |
 |---:|---|---:|---|
-| `0x00` | `HEARTBEAT` | 0 | Master to all |
-| `0x01` | `BEAT_DETECTED` | 3 | Master to all (currently not emitted by reference firmware) |
-| `0x02` | `MODE_CHANGE` | 2 | Master to all |
-| `0x03` | `LIGHT_COMMAND` | 9 | Master to all |
-| `0x04` | `CLOCK_SYNC` | 4 | Master to all |
-| `0x05` | `TIME_SYNC` | 5 | Master to all |
-| `0x06` | `MUSIC_EVENT` | 1 | Master to all |
+| `0x00` | `HEARTBEAT` | 0 | Director to all |
+| `0x01` | `BEAT_DETECTED` | 3 | Director to all (currently not emitted by reference firmware) |
+| `0x02` | `MODE_CHANGE` | 2 | Director to all |
+| `0x03` | `LIGHT_COMMAND` | 9 | Director to all |
+| `0x04` | `CLOCK_SYNC` | 4 | Director to all |
+| `0x05` | `TIME_SYNC` | 5 | Director to all |
+| `0x06` | `MUSIC_EVENT` | 1 | Director to all |
 | `0xFF` | `EXTENSION` | variable | Reserved for future use |
 
 Codes `0x07..0xFE` are reserved. A receiver MUST treat any reserved or unrecognised code as a request to silently discard the frame.
@@ -165,7 +165,7 @@ Reserved for future use. The reference firmware does not currently emit this typ
 | 0 | `new_mode` | 1 | Target runtime-mode id (see firmware-internal `ModeId` enum) |
 | 1 | `palette_id` | 1 | Reserved; carries 0 in reference firmware |
 
-A receiver MAY use this to follow the master into a coordinated mode change.
+A receiver MAY use this to follow the Director into a coordinated mode change.
 
 #### 3.3.4 `LIGHT_COMMAND` (`0x03`)
 
@@ -209,7 +209,7 @@ Reserved for future time-of-day-aware behaviour. Reference firmware does not cur
 |---:|---|---:|---|
 | 0 | `event_type` | 1 | 0 = Unknown, 1 = Drop, 2 = Breakdown, 3 = Build (reserved) |
 
-Emitted by the master's DropDetector. A receiver MAY interpret this to alter local behaviour (e.g. a different palette during a breakdown).
+Emitted by the Director's DropDetector. A receiver MAY interpret this to alter local behaviour (e.g. a different palette during a breakdown).
 
 #### 3.3.8 `EXTENSION` (`0xFF`)
 
@@ -242,7 +242,7 @@ A receiver MUST accept a `LIGHT_COMMAND` if and only if:
 - `target_class == 0x00` OR `target_class == receiver.class`, AND
 - `target_group == 0x00` OR `target_group == receiver.group`.
 
-`target_group == 0x00` is the **broadcast group**: every receiver MUST accept it regardless of its own configured group, including a receiver whose configured group is itself `0x00`. The broadcast group is the canonical "address everyone in this class" form and is the default routing for `render_fx` calls on the reference master.
+`target_group == 0x00` is the **broadcast group**: every receiver MUST accept it regardless of its own configured group, including a receiver whose configured group is itself `0x00`. The broadcast group is the canonical "address everyone in this class" form and is the default routing for `render_fx` calls on the reference Director.
 
 A receiver whose configured group is `0x00` is treated as "in no specific group". It MUST accept the broadcast group (`target_group == 0x00`) but MUST NOT accept any non-zero `target_group`. This mirrors the way a PixMob bracelet whose factory-programmed group is 0 only responds to the broadcast group on its infra-red link.
 
@@ -259,31 +259,31 @@ A receiver SHOULD therefore advertise a non-zero group in deployment. A receiver
 | `0x02` | `0x00` | Every Screen-class receiver - typically the operator's own LCD |
 | `0x03` | `0x01` | Every MultiLedScreen-class receiver (Tildagon, Epic 5) in group 1 |
 
-### 4.4 Master-side dispatch
+### 4.4 Director-side dispatch
 
 The reference firmware's dispatch function `dispatch_output_class_group` (`src/dal/dal.cpp`) fans every render call out to three sinks:
 
-1. **ESP-NOW broadcast** - always, regardless of `target_class`. Every slave on the channel sees the frame.
-2. **Local infra-red transmitter** - only when `target_class` is `0x00` (All) or `0x01` (Light). This is the master's habit of treating itself as one of its own slaves (the "loopback"). Exactly one IR frame is sent per dispatch call.
+1. **ESP-NOW broadcast** - always, regardless of `target_class`. Every Lume on the channel sees the frame.
+2. **Local infra-red transmitter** - only when `target_class` is `0x00` (All) or `0x01` (Light). This is the Director's habit of treating itself as one of its own Lumes (the "loopback"). Exactly one IR frame is sent per dispatch call.
 3. **Local screen pulse** - only when `target_class` is `0x00` (All) or `0x02` (Screen). Drives the LCD pulse animation.
 
-This is dispatch-side behaviour and is not visible to the wire; a third-party master implementation MAY adopt the same loopback or omit it.
+This is dispatch-side behaviour and is not visible to the wire; a third-party Director implementation MAY adopt the same loopback or omit it.
 
 ---
 
 ## 5. Channel discovery
 
-### 5.1 Master
+### 5.1 Director
 
-The master is configured for a fixed channel (1, 6, or 11) via non-volatile storage (`mst_chan`; see [annex B](#annex-b-non-volatile-storage-schema)). It MUST NOT change channels during a deployment.
+The Director is configured for a fixed channel (1, 6, or 11) via non-volatile storage (`mst_chan`; see [annex B](#annex-b-non-volatile-storage-schema)). It MUST NOT change channels during a deployment.
 
-### 5.2 Slave - locked mode
+### 5.2 Lume - locked mode
 
-A slave configured with `slv_chan ∈ {1, 6, 11}` MUST set its Wi-Fi to that channel and remain there.
+A Lume configured with `slv_chan ∈ {1, 6, 11}` MUST set its Wi-Fi to that channel and remain there.
 
-### 5.3 Slave - auto-scan mode
+### 5.3 Lume - auto-scan mode
 
-A slave configured with `slv_chan == 0x00` MUST perform an auto-scan, defined as the following sequence:
+A Lume configured with `slv_chan == 0x00` MUST perform an auto-scan, defined as the following sequence:
 
 1. Set channel to 11. Listen for up to two seconds for any NocturNation frame with valid `protocol_version`.
 2. If a frame is received, lock to channel 11 and exit scan.
@@ -291,31 +291,31 @@ A slave configured with `slv_chan == 0x00` MUST perform an auto-scan, defined as
 4. If a frame is received, lock to channel 1 and exit scan.
 5. Otherwise, repeat from step 1.
 
-Channel 11 is checked first because it is the suggested show channel and is presumed higher priority. Channel 6 is not auto-scanned; a slave on channel 6 MUST be explicitly locked.
+Channel 11 is checked first because it is the suggested show channel and is presumed higher priority. Channel 6 is not auto-scanned; a Lume on channel 6 MUST be explicitly locked.
 
-A slave that has locked to a channel SHOULD re-enter auto-scan if it loses traffic for longer than the NO SIGNAL threshold (see [section 6](#6-heartbeat-and-liveness)) and the slave was originally configured for auto-scan.
+A Lume that has locked to a channel SHOULD re-enter auto-scan if it loses traffic for longer than the NO SIGNAL threshold (see [section 6](#6-heartbeat-and-liveness)) and the Lume was originally configured for auto-scan.
 
 ---
 
 ## 6. Heartbeat and liveness
 
-### 6.1 Master heartbeat
+### 6.1 Director heartbeat
 
-The master MUST emit `HEARTBEAT` frames at no slower than 1 Hz when there is no other traffic. The master MAY suppress a heartbeat if it has transmitted any other frame within the heartbeat period; this is the "skip-if-recent" rule and minimises duty cycle during active music.
+The Director MUST emit `HEARTBEAT` frames at no slower than 1 Hz when there is no other traffic. The Director MAY suppress a heartbeat if it has transmitted any other frame within the heartbeat period; this is the "skip-if-recent" rule and minimises duty cycle during active music.
 
-The heartbeat carries no payload (`payload_len == 0`). It serves only to demonstrate master liveness on the wire.
+The heartbeat carries no payload (`payload_len == 0`). It serves only to demonstrate Director liveness on the wire.
 
 ### 6.2 Receiver liveness check
 
-A receiver MUST consider the master alive whenever it has received any frame within the last `kNoSignalGapMs` milliseconds. The reference firmware uses `kNoSignalGapMs = 3000` (three times the maximum heartbeat period).
+A receiver MUST consider the Director alive whenever it has received any frame within the last `kNoSignalGapMs` milliseconds. The reference firmware uses `kNoSignalGapMs = 3000` (three times the maximum heartbeat period).
 
-A receiver that detects master loss SHOULD indicate this clearly to a local operator (the reference firmware shows NO SIGNAL on the LCD). A receiver MUST NOT promote itself to master, MUST NOT improvise a local effect that imitates master output, and MUST NOT begin transmitting any NocturNation frames.
+A receiver that detects Director loss SHOULD indicate this clearly to a local operator (the reference firmware shows NO SIGNAL on the LCD). A receiver MUST NOT promote itself to Director, MUST NOT improvise a local effect that imitates Director output, and MUST NOT begin transmitting any NocturNation frames.
 
-A receiver that detects master return (the first received frame after a NO SIGNAL state) MUST resume normal operation immediately.
+A receiver that detects Director return (the first received frame after a NO SIGNAL state) MUST resume normal operation immediately.
 
 ### 6.3 No reverse heartbeat
 
-NocturNation has no slave-to-master heartbeat. A master has no on-wire knowledge of which slaves are alive; the operator visually checks each slave's NO SIGNAL indicator.
+NocturNation has no Lume-to-Director heartbeat. A Director has no on-wire knowledge of which Lumes are alive; the operator visually checks each Lume's NO SIGNAL indicator.
 
 ---
 
@@ -337,7 +337,7 @@ A conforming receiver MUST honour the following:
 A conforming receiver SHOULD honour:
 
 - The NO SIGNAL liveness behaviour in [section 6.2](#62-receiver-liveness-check).
-- Channel auto-scan if it offers the capability ([section 5.3](#53-slave-auto-scan-mode)).
+- Channel auto-scan if it offers the capability ([section 5.3](#53-lume-auto-scan-mode)).
 - The `MUSIC_EVENT` payload (DROP / BREAKDOWN / BUILD) if it has any locally interpretable behaviour for it.
 
 ### 7.3 Receiver MAY honour
@@ -352,18 +352,18 @@ A conforming receiver MAY:
 
 A conforming receiver MUST NOT:
 
-- Auto-promote to master on master loss ([section 6.2](#62-receiver-liveness-check)).
+- Auto-promote to Director on Director loss ([section 6.2](#62-receiver-liveness-check)).
 - Transmit any NocturNation frame other than to forward an accepted frame as a repeater ([section 2.4](#24-repeater-behaviour)) or to render the local infra-red representation of a `LIGHT_COMMAND` ([annex A](#annex-a-pixmob-infra-red-encoding) for the PixMob case).
 - Process frames whose `protocol_version` does not match a recognised version.
 
-### 7.5 Master MUST honour
+### 7.5 Director MUST honour
 
-A conforming master MUST honour:
+A conforming Director MUST honour:
 
 - Three-times redundant transmission with identical sequence numbers ([section 2.3](#23-redundancy)).
-- The heartbeat rule and skip-if-recent suppression ([section 6.1](#61-master-heartbeat)).
+- The heartbeat rule and skip-if-recent suppression ([section 6.1](#61-director-heartbeat)).
 - The protocol-version byte at offset 0 of every frame.
-- Channel fixity for the duration of a deployment ([section 5.1](#51-master)).
+- Channel fixity for the duration of a deployment ([section 5.1](#51-director)).
 
 ---
 
@@ -453,13 +453,13 @@ All keys live in a single namespace named `noct`. The reference firmware uses Es
 
 | Key | Type | Default | Range | Purpose |
 |---|---|---|---|---|
-| `last_mode` | `u8` | `2` (AutonomousMaster) | 0..5 (`ModeId`) | Runtime mode to resume at boot |
+| `last_mode` | `u8` | `2` (Director) | 0..5 (`ModeId`) | Runtime mode to resume at boot |
 | `ir_en` | `bool` | `true` | - | IR transmitter enabled |
 | `scr_puls_en` | `bool` | `true` | - | Local LCD pulse animation enabled |
-| `mst_chan` | `u8` | `1` | {1, 6, 11} | Master Wi-Fi channel |
-| `slv_chan` | `u8` | `0` (auto) | {0, 1, 6, 11} | Slave Wi-Fi channel; 0 = auto-scan |
-| `slv_repeat` | `bool` | `false` | - | Slave operates as repeater |
-| `slv_group` | `u8` | `0` (broadcast) | 0..255 | Slave receive-filter group |
+| `mst_chan` | `u8` | `1` | {1, 6, 11} | Director Wi-Fi channel |
+| `slv_chan` | `u8` | `0` (auto) | {0, 1, 6, 11} | Lume Wi-Fi channel; 0 = auto-scan |
+| `slv_repeat` | `bool` | `false` | - | Lume operates as repeater |
+| `slv_group` | `u8` | `0` (broadcast) | 0..255 | Lume receive-filter group |
 | `active_show` | `string` | `"simple-beat"` | up to 16 bytes | Currently selected Show plug-in id |
 
 ### B.3 Per-plug-in namespaces
@@ -476,7 +476,7 @@ The plug-in id MUST be twelve bytes or fewer; longer ids are truncated.
 
 The reference firmware applies one-shot migrations on first boot after a firmware upgrade. As of v0.5 the migrations are:
 
-- Drop the legacy `slv_ir_grp` key (the function moved to the slave's `slv_group` filter and per-binding namespaces).
+- Drop the legacy `slv_ir_grp` key (the function moved to the Lume's `slv_group` filter and per-binding namespaces).
 - Map the legacy `active_vis` value `"beat-pulse"` or `"spectrum-bars"` to `active_show = "simple-beat"`.
 
 Migrations MUST be idempotent.

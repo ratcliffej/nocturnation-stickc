@@ -10,14 +10,14 @@ sync_direction: bidirectional
 
 ## Closed 2026-05-10
 
-Cross-device hardware verification (Plus2 + S3 in Master mode listening to the same audio) confirms behavioural equivalence: same beat pattern, same response. BPM tracking matches actual song tempo (was reading 155 from a 112 BPM track on tuning round 1; reads correctly after round 2). DROP fires on chorus drops; BREAKDOWN fires on quiet sections.
+Cross-device hardware verification (Plus2 + S3 in Director mode listening to the same audio) confirms behavioural equivalence: same beat pattern, same response. BPM tracking matches actual song tempo (was reading 155 from a 112 BPM track on tuning round 1; reads correctly after round 2). DROP fires on chorus drops; BREAKDOWN fires on quiet sections.
 
 **Blocks shipped:**
 
 - **Block 1** — Audio sample harness: synthetic generators (sine / kick-train / noise / silence) + 16-bit PCM mono WAV I/O + `native_audio` test env (`2c8e11d`).
 - **Block 2** — Capability-aware analyser surface: pure DAL analyser core, Capability flags + extended AudioFrame, mic-backend wiring + SpectrumFrameEvent + DAL stubs (`484adaa`, `801d3ab`, `46131c6`).
 - **Block 3** — Sub-band adaptive-threshold beat detection: `BeatDetector` class + native tests, integration into LocalDriver, two rounds of hardware-driven tuning (`61eee9c`, `98a687b`, `ee96830`, `ddf7f3a`).
-- **Block 4** — Drop and breakdown detection + MUSIC_EVENT 0x06: `DropDetector` with arm/disarm gate, ESP-NOW wire format, master-side broadcast (`42cef9b`, `69e3d52`, `06f7996`).
+- **Block 4** — Drop and breakdown detection + MUSIC_EVENT 0x06: `DropDetector` with arm/disarm gate, ESP-NOW wire format, Director-side broadcast (`42cef9b`, `69e3d52`, `06f7996`).
 - **Block 5** — Cross-device hardware verification (Plus2 + S3 side-by-side).
 - **Block 6** — Architecture spec v0.22 (`48857dc`, plus follow-up additions in `10a6a7b`).
 
@@ -31,7 +31,7 @@ Cross-device hardware verification (Plus2 + S3 in Master mode listening to the s
 - **MUSIC_EVENT serial logging** (`653366b`): grep-friendly `[MUSIC] DROP at <ms>` line so DROP/BREAKDOWN fires are visible during live testing without trawling hex dumps.
 - **Heartbeat-fire diagnostic** (`e680c61`): `[HBEAT] firing after <ms> gap` so the skip-if-recent contract is observable from serial output.
 - **BeatDetector tuning round 2** (`ddf7f3a`): `threshold_k` 2.5 → 2.2 to catch soft kicks following louder ones (mechanism: post-kick history elevation raises threshold for ~1 s; structural fix flagged as future direction).
-- **BEAT_DETECTED master broadcast removed** (`10a6a7b`): slaves consume LIGHT_COMMAND for show rendering; BEAT_DETECTED's BPM/strength metadata had no current consumer, so doubling per-kick airtime was net negative. Wire format definition retained for future re-enable.
+- **BEAT_DETECTED Director broadcast removed** (`10a6a7b`): Lumes consume LIGHT_COMMAND for show rendering; BEAT_DETECTED's BPM/strength metadata had no current consumer, so doubling per-kick airtime was net negative. Wire format definition retained for future re-enable.
 - **Spec future-extensions additions** (`10a6a7b`): detector-layer placement (DAL vs orchestration architectural retrospective), source-separation directions (Demucs / Spleeter / Neuraliser-class with phone-side / Mac-bridge / cue-file architectures captured).
 
 **Honest list of known incomplete:**
@@ -85,7 +85,7 @@ Verification ownership: **(L)** = laptop / native test on captured audio, **(B)*
 
 ## Audio analyser capability model
 
-The audio analyser is treated as a HAL+DAL capability cluster, same pattern as `mic` / `display` / `esp-now`. A host's analyser declares a flat set of feature flags describing what its output surface produces. Orchestration queries these and adapts; ESP-NOW slaves consume whatever the master broadcasts (their own analyser features are master-side only and irrelevant for slave behaviour).
+The audio analyser is treated as a HAL+DAL capability cluster, same pattern as `mic` / `display` / `esp-now`. A host's analyser declares a flat set of feature flags describing what its output surface produces. Orchestration queries these and adapts; ESP-NOW Lumes consume whatever the Director broadcasts (their own analyser features are Director-side only and irrelevant for Lume behaviour).
 
 **Features landed in this Epic:**
 
@@ -117,7 +117,7 @@ S3 has the headroom for higher operating points (8 MB PSRAM, HW-accelerated FFT)
 
 The API is host-agnostic by design: the same `audio_pipeline_operating_points` declaration and the same `configure_audio_pipeline()` setter work for ESP32 hosts now, and for phone or PC HALs in future. No ESP32-specific assumptions in the contract.
 
-Plus2 and S3 declare the same feature set in this Epic; they differ only in the `fft_hw_accelerated` parameter and in the size of their `audio_pipeline_operating_points` list. Orchestration code is identical regardless of host; the difference shows up only in available CPU headroom and is invisible to the consumer when both are running at the canonical default. Tildagon (no microphone) declares no analyser capability at all — it consumes events from the master via ESP-NOW.
+Plus2 and S3 declare the same feature set in this Epic; they differ only in the `fft_hw_accelerated` parameter and in the size of their `audio_pipeline_operating_points` list. Orchestration code is identical regardless of host; the difference shows up only in available CPU headroom and is invisible to the consumer when both are running at the canonical default. Tildagon (no microphone) declares no analyser capability at all — it consumes events from the Director via ESP-NOW.
 
 The capability model is purely additive. Future Epics light up reserved feature flags or implement non-default operating points by extending the analyser implementation; nothing about the interface or the existing flags changes.
 
@@ -221,7 +221,7 @@ The new algorithm sits behind the existing `audio_analyser` interface in the orc
 
 A new ESP-NOW message type is added: **MUSIC_EVENT (0x06)** carrying a single byte `event_type` (DROP=1, BREAKDOWN=2, BUILD=3 reserved for future use). Existing `BEAT_DETECTED` (0x02) is unchanged. Receivers that don't understand 0x06 simply ignore it (forward-compatible).
 
-The `SpectrumFrameEvent` is *local-only* in this Epic — it is delivered to local subscribers (Diagnostic UI in Epic 4.6, future modulators in Epic 4.7), but is **not** broadcast over ESP-NOW. The 32-band magnitudes at FFT rate would be heavy traffic; Epic 4.7 introduces the rate-limited `MUSIC_DESCRIPTOR (0x09)` message to carry the smaller continuous-descriptor set across the wire. Slaves that need spectrum-derived effects either run their own analyser (master-class hosts only) or consume the more compact `MUSIC_DESCRIPTOR` stream when 4.7 ships.
+The `SpectrumFrameEvent` is *local-only* in this Epic — it is delivered to local subscribers (Diagnostic UI in Epic 4.6, future modulators in Epic 4.7), but is **not** broadcast over ESP-NOW. The 32-band magnitudes at FFT rate would be heavy traffic; Epic 4.7 introduces the rate-limited `MUSIC_DESCRIPTOR (0x09)` message to carry the smaller continuous-descriptor set across the wire. Lumes that need spectrum-derived effects either run their own analyser (Director-class hosts only) or consume the more compact `MUSIC_DESCRIPTOR` stream when 4.7 ships.
 
 The architecture spec needs updates:
 
@@ -340,7 +340,7 @@ Add the longer-window energy-comparison pass for macro-level events.
 
 The meaningful empirical test that this Epic exists to pass.
 
-- Set up Plus2 and S3 side-by-side, both in Master mode, listening to the same audio source
+- Set up Plus2 and S3 side-by-side, both in Director mode, listening to the same audio source
 - Verify capability surfaces declare identically on both hosts (Block 2's contract holds end-to-end)
 - Play the test tracks from Block 1; verify both devices produce equivalent beat counts and drop events
 - Tune any per-device sample-rate or normalization quirks until cross-device parity holds
@@ -360,7 +360,7 @@ The meaningful empirical test that this Epic exists to pass.
 
 | Dependency | Type | Status | Owner |
 |---|---|---|---|
-| Epic 4 (ESP-NOW transport, basic Master/Slave) | Internal | Done | Jason |
+| Epic 4 (ESP-NOW transport, basic Director/Lume) | Internal | Done | Jason |
 | Architecture spec v0.21+ (§5 Audio analysis pipeline) | Internal | Done | Jason |
 | Captured audio samples (or ability to record them) | External | Available (Mac + audio interface) | Jason |
 
