@@ -62,4 +62,18 @@ void setup() {
 void loop() {
     nocturnation::dal::DAL::loop_tick();
     nocturnation::modes::ModeMachine::loop_tick();
+    // Yield to the FreeRTOS scheduler. Without this delay the Arduino
+    // loop runs at hundreds of kHz, pinning the CPU at full clock and
+    // burning baseline current that the chip would otherwise spend in
+    // the idle task's light-sleep window. delay(1) sleeps for one
+    // FreeRTOS tick (~1 ms on the default tick rate), which is the
+    // shortest yield the Arduino framework exposes and well below the
+    // shortest cadence any mode needs (audio FFT is ~30 Hz, ESP-NOW
+    // RX is interrupt-driven, LIGHT_COMMAND fires top out at ~8 Hz).
+    // Cuts roughly an order of magnitude off the loop frequency and
+    // a meaningful chunk off baseline current draw - particularly
+    // load-bearing for Lume mode on battery (spec v0.29 §8.2). All
+    // modes benefit, including Director; Director's mains/USB power
+    // budget makes the saving incidental there but not harmful.
+    delay(1);
 }
