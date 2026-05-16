@@ -116,7 +116,7 @@ static void test_menu_btn1_selects_default_first_item(void) {
                           (int)ModeMachine::current());
 }
 
-static void test_menu_btn2_cycles_then_btn1_selects_slave(void) {
+static void test_menu_btn2_cycles_then_btn1_selects_lume(void) {
     inject_button_press(hal::ButtonId::Btn1, hal::ButtonEvent::Pressed);  // Boot -> Menu
     TEST_ASSERT_EQUAL_INT((int)ModeId::Menu, (int)ModeMachine::current());
 
@@ -253,7 +253,7 @@ int main(int, char**) {
     RUN_TEST(test_boot_timeout_enters_default_runtime_mode);
     RUN_TEST(test_boot_button_press_enters_menu);
     RUN_TEST(test_menu_btn1_selects_default_first_item);
-    RUN_TEST(test_menu_btn2_cycles_then_btn1_selects_slave);
+    RUN_TEST(test_menu_btn2_cycles_then_btn1_selects_lume);
     RUN_TEST(test_menu_cycle_wraps);
     RUN_TEST(test_long_press_btnb_returns_to_menu_from_each_runtime_mode);
     RUN_TEST(test_config_picker_layer_bhold_pops_one_level);

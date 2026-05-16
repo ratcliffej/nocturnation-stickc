@@ -533,7 +533,7 @@ static void test_migration_is_idempotent_for_first_boot(void) {
 // shared persistence module helpers added in Block 9.
 // =============================================================================
 
-static void test_slave_channel_round_trip(void) {
+static void test_lume_channel_round_trip(void) {
     modes::persistence::test_seam::clear_native_persistence();
     TEST_ASSERT_EQUAL_UINT8(0, modes::persistence::load_lume_channel());
 
@@ -545,7 +545,7 @@ static void test_slave_channel_round_trip(void) {
     TEST_ASSERT_EQUAL_UINT8(0, modes::persistence::load_lume_channel());
 }
 
-static void test_slave_repeat_round_trip(void) {
+static void test_lume_repeat_round_trip(void) {
     modes::persistence::test_seam::clear_native_persistence();
     TEST_ASSERT_FALSE(modes::persistence::load_lume_repeat_enabled());
 
@@ -583,7 +583,7 @@ int main(int, char**) {
     RUN_TEST(test_first_boot_assigns_random_group);
     RUN_TEST(test_migration_preserves_operator_set_group);
     RUN_TEST(test_migration_is_idempotent_for_first_boot);
-    RUN_TEST(test_slave_channel_round_trip);
-    RUN_TEST(test_slave_repeat_round_trip);
+    RUN_TEST(test_lume_channel_round_trip);
+    RUN_TEST(test_lume_repeat_round_trip);
     return UNITY_END();
 }
