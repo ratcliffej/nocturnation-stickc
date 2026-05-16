@@ -3,7 +3,7 @@ title: "NocturNation flow diagrams"
 status: Draft
 notion_url: https://www.notion.so/35ebd0677405807cb34cccefa936d4d9
 notion_id: 35ebd0677405807cb34cccefa936d4d9
-last_synced: 2026-05-12
+last_synced: 2026-05-16
 sync_direction: bidirectional
 ---
 
@@ -23,6 +23,7 @@ Diagrams use [Mermaid](https://mermaid.js.org/) notation. GitHub, Notion, and mo
 6. [Lume receive pipeline](#6-lume-receive-pipeline) - frame arrival through binding fire
 7. [Class-and-group routing](#7-class-and-group-routing) - the addressing decision matrix
 8. [Configuration menu tree](#8-configuration-menu-tree) - operator-reachable settings
+9. [Channel discovery and re-scan](#9-channel-discovery-and-re-scan) - auto-scan + signal-loss recovery
 
 ---
 
@@ -143,7 +144,7 @@ flowchart TD
     Dispatch -. screen loopback .-> MasterLCD
 ```
 
-The analyser primitives are all Director-internal events. None of them are broadcast on the wire under spec v0.29 — the only Director-emitted frame types are `HEARTBEAT` (1 Hz, skip-if-recent) and `LIGHT_COMMAND` (per Show render). The DropDetector still runs internally (it stamps `AudioFrameEvent::music_event`), but its output has no consumer in the v0.29 reference firmware; the pre-v0.29 `MUSIC_EVENT` (0x06) broadcast was removed in the protocol trim along with the DROP / BREAKDOWN effect rendering. The Show plug-in consumes the events it cares about, computes colour and envelope, and dispatches `LIGHT_COMMAND` frames.
+The analyser primitives are all Director-internal events. None of them are broadcast on the wire under spec v0.29 — the only Director-emitted frame types are `HEARTBEAT` (1 Hz, skip-if-recent) and `LIGHT_COMMAND` (per Show render). The DropDetector still runs and stamps its output onto `AudioFrameEvent::music_event` (`0` = none, `1` = DROP, `2` = BREAKDOWN, `3` = BUILD reserved). The field is **available as part of the Show toolset** — any Show that wants DROP- or BREAKDOWN-responsive behaviour can read it on `on_audio_frame` and compose a richer `LIGHT_COMMAND` accordingly. No current Show consumes it, but the wiring is intentional. The pre-v0.29 `MUSIC_EVENT` (0x06) standalone-wire broadcast was removed in the protocol trim, but the *Director-internal signal* it once carried is still here, just consumed differently.
 
 ---
 
@@ -171,13 +172,15 @@ flowchart TD
 
 ## 6. Lume receive pipeline
 
-Every ESP-NOW frame goes through these steps. The class-and-group routing is unpacked separately in section 7.
+Every ESP-NOW frame arriving on the channel goes through these checks in order. The magic-prefix check fires first as the cheapest reject for non-NocturNation ESP-NOW traffic sharing the band. Class-and-group routing is unpacked separately in section 7.
 
 ```mermaid
 flowchart TD
     Recv[ESP-NOW frame arrives]
-    Recv --> Ver{protocol_version<br/>== 0x01?}
-    Ver -- "no" --> DropV[Drop silently]
+    Recv --> Magic{magic[0..1]<br/>== 0x4E 0x4E?}
+    Magic -- "no" --> DropM[Drop silently<br/>foreign vendor traffic]
+    Magic -- "yes" --> Ver{protocol_version<br/>== 0x02?}
+    Ver -- "no" --> DropV[Drop silently<br/>wrong NocturNation version]
     Ver -- "yes" --> Dedup{seq in 16-deep<br/>dedup ring?}
     Dedup -- "yes" --> DropD[Drop silently]
     Dedup -- "no" --> Hop{hop_count > 3?}
@@ -273,12 +276,72 @@ Top-level cycle order is `Group → Show → Display → Connectivity → Utilit
 
 ---
 
+## 9. Channel discovery and re-scan
+
+Two related flows: how a fresh Lume finds the Director's channel from cold (auto-scan), and how a locked Lume decides whether to abandon a channel after signal loss (re-scan).
+
+### 9.1 Auto-scan from cold
+
+```mermaid
+flowchart TD
+    Boot[Lume boots<br/>slv_chan loaded from NVS]
+    Boot --> ChanCheck{slv_chan == 0?}
+    ChanCheck -- "no (1, 6, or 11)" --> Lock["Lock to slv_chan<br/>(operator chose this channel)"]
+    ChanCheck -- "yes (auto-scan)" --> Scan11[Set channel 11<br/>listen 2 s]
+
+    Scan11 --> Got11{frame received?}
+    Got11 -- "yes" --> Lock11[Lock to channel 11]
+    Got11 -- "no" --> Scan1[Set channel 1<br/>listen 2 s]
+
+    Scan1 --> Got1{frame received?}
+    Got1 -- "yes" --> Lock1[Lock to channel 1]
+    Got1 -- "no" --> Scan6[Set channel 6<br/>listen 2 s]
+
+    Scan6 --> Got6{frame received?}
+    Got6 -- "yes" --> Lock6[Lock to channel 6]
+    Got6 -- "no" --> Scan11
+
+    Lock --> Receive[Main receive loop]
+    Lock11 --> Receive
+    Lock1 --> Receive
+    Lock6 --> Receive
+```
+
+Channel 11 (show) → 1 (hobby) → 6 (advanced override) → repeat. Worst-case discovery latency from cold is 6 seconds. The order is priority-by-likelihood: channel 11 is most likely to carry a show, channel 6 is least likely.
+
+### 9.2 Re-scan on signal loss
+
+```mermaid
+flowchart TD
+    Receive[Main receive loop<br/>frame just arrived]
+    Receive --> Tick[Tick: check age_since_rx]
+    Tick --> NoSig{age > 3 s<br/>kNoSignalMs?}
+    NoSig -- "no" --> Receive
+    NoSig -- "yes" --> Display[Display NO SIGNAL<br/>on LCD]
+    Display --> Rescan{age > 10 s<br/>kRescanMs?}
+    Rescan -- "no" --> Tick
+    Rescan -- "yes" --> Mode{slv_chan == 0<br/>originally?}
+    Mode -- "no (operator-locked)" --> StayPut[Stay on channel<br/>NO SIGNAL keeps showing<br/>operator must intervene]
+    Mode -- "yes (auto-mode)" --> Resume[Resume auto-scan<br/>see §9.1]
+    StayPut --> Tick
+    Resume --> Receive
+```
+
+Two thresholds, deliberately decoupled:
+- `kNoSignalMs = 3 s` — display NO SIGNAL for operator awareness. Fires fast because operators want to know quickly that something's wrong.
+- `kRescanMs = 10 s` — give up on the current channel and start hunting. Fires slow because most signal losses are transient (Director reboot, brief congestion, line of sight blocked). A ~7-second window of "stay on this channel" usually catches recovery faster than a full multi-channel rescan would.
+
+**Operator-locked Lumes never re-scan.** If the operator set `slv_chan ∈ {1, 6, 11}`, the Lume respects that choice indefinitely — NO SIGNAL still displays so the operator notices the outage, but no channel change follows. Only auto-mode Lumes (`slv_chan == 0`) ever re-enter the scan loop.
+
+---
+
 ## Maintaining these diagrams
 
 These diagrams are hand-derived from the firmware code. When the firmware changes any of these flows, update the corresponding diagram in this file. The diagrams are deliberately schematic - they exist to support a reader's mental model, not to be a substitute for reading the code. Specific anchors:
 
 - [src/dal/dal.cpp](../../src/dal/dal.cpp) - dispatch fan-out (section 5).
-- [src/modes/lume_mode.cpp](../../src/modes/lume_mode.cpp) - receive pipeline and class-and-group routing (sections 6 and 7).
+- [src/transport/espnow/frame.cpp](../../src/transport/espnow/frame.cpp) - magic + version + dedup gate at the very top of receive (section 6).
+- [src/modes/lume_mode.cpp](../../src/modes/lume_mode.cpp) - receive pipeline, class-and-group routing, channel scan + re-scan (sections 6, 7, 9).
 - [src/modes/mode_machine.cpp](../../src/modes/mode_machine.cpp) - mode finite-state-machine (section 3).
 - [src/modes/config_mode.cpp](../../src/modes/config_mode.cpp) - configuration tree (section 8).
 - [src/modes/persistence.cpp](../../src/modes/persistence.cpp) - first-boot slv_group assignment (section 2).
