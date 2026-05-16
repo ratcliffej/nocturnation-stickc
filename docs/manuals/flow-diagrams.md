@@ -50,16 +50,26 @@ flowchart LR
         MShow --> MLCD
     end
 
-    subgraph Lume1["Lume Stick"]
+    subgraph Lume1["Lume Device A"]
         L1Recv[ESP-NOW receive]
+        L1LED[Perimeter LEDs]
         L1IR[IR transmitter]
+        L1Recv --> L1LED
         L1Recv --> L1IR
     end
 
-    subgraph Lume2["Lume Tildagon"]
+    subgraph Lume2["Lume Device B"]
         L2Recv[ESP-NOW receive]
-        L2Out[Perimeter LEDs<br/>+ LCD]
-        L2Recv --> L2Out
+        L2LED[Perimeter LEDs]
+        L2Recv --> L2LED
+    end
+
+    subgraph Lume3["Lume Tildagon"]
+        L3Recv[ESP-NOW receive]
+        L3LED[Perimeter LEDs]
+        L3LCD[LCD]
+        L3Recv --> L3LED
+        L3Recv --> L3LCD
     end
 
     Receivers[(Bracelets /<br/>IR receivers)]
@@ -68,6 +78,7 @@ flowchart LR
     DMX -. DMX-512 .-> MDMX
     MShow -- "ESP-NOW LIGHT_COMMAND<br/>3× redundant TX" --> L1Recv
     MShow -- "ESP-NOW LIGHT_COMMAND<br/>3× redundant TX" --> L2Recv
+    MShow -- "ESP-NOW LIGHT_COMMAND<br/>3× redundant TX" --> L3Recv
 
     MIR -- "IR (PixMob today,<br/>protocol-pluggable)" --> Receivers
     L1IR -- IR --> Receivers
@@ -77,8 +88,8 @@ Notes:
 - The Director is treated as one of its own Lumes for output purposes (the "loopback"): every `render_fx` call also fires the Director's own IR transmitter and LCD pulse.
 - IR transmission is gated by the `ir_en` config — a Show can run without IR at all (LCD + ESP-NOW only).
 - The IR encoder is protocol-pluggable. PixMob is the reference implementation today; future Lumes can carry different IR encoders without a wire-protocol change.
-- A Lume's outputs depend on its hardware. A Lume Stick has an IR transmitter and an LCD; a Lume Tildagon drives its own perimeter LEDs and LCD but has no IR transmitter at all — it terminates the chain rather than relaying onward. The frame still arrives and renders locally; the IR fan-out from that Lume is simply absent.
-- Lumes are receive-only by default. The Lume-as-repeater toggle re-broadcasts accepted frames at hop_count + 1, capped at 3 hops (only Lumes with an ESP-NOW transmitter — i.e. the Stick — can act as a repeater).
+- A Lume's outputs depend on its hardware. The three example Lumes span the range: Device A renders to its own perimeter LEDs **and** re-fires the command over IR to bracelets; Device B renders to its own perimeter LEDs and terminates there (no IR, no ESP-NOW out); the Lume Tildagon renders to its own perimeter LEDs and LCD but has no IR transmitter. The ESP-NOW frame arrives and renders locally in every case; what differs is what flows onward.
+- Lumes are receive-only by default. The Lume-as-repeater toggle re-broadcasts accepted frames at hop_count + 1, capped at 3 hops, where the Lume's hardware and firmware support it. Device B in the diagram has no transmission at all and so cannot relay.
 - Bracelets are passive: they wake on an IR command, render the envelope, then return to standby.
 
 ---
