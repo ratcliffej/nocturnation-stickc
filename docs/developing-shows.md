@@ -1,3 +1,12 @@
+---
+title: "Developing a Show"
+status: Draft
+notion_url: https://www.notion.so/362bd0677405812393d7c0f9eee52788
+notion_id: 362bd0677405812393d7c0f9eee52788
+last_synced: 2026-05-16
+sync_direction: bidirectional
+---
+
 # Developing a Show
 
 Reference for adding a new Show plug-in to the NocturNation firmware.
