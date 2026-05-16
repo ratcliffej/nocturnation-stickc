@@ -9,7 +9,7 @@ sync_direction: bidirectional
 
 # Developing a Show
 
-Reference for adding a new Show plug-in to the NocturNation firmware. A Show is the Director-side performance unit — it consumes audio analyser events and decides what to send to bracelets, what to paint on the Director screen, and how to respond to operator input.
+Reference for adding a new Show plug-in to the NocturNation firmware. A Show is the Director-side performance unit — it consumes events from the audio analyser and other sources (e.g. DMX) and decides what to send to bracelets, what to paint on the Director screen, and how to respond to operator input.
 
 This guide covers the API surface, the conventions, and a worked example. Read it once before you write your first Show; reach for the section index when you need to look something up later.
 
@@ -41,13 +41,17 @@ A **Show** is a class derived from `nocturnation::shows::Show` that runs on the 
 Where the Show sits in the bigger picture:
 
 ```
-HAL (mic, display, buttons)
-  v
-DAL (FFT, BeatDetector, SnareDetector, HihatDetector,
-     MusicDescriptors, SectionDetector, AudioFrameEvent)
-  v
+Event sources (parallel; DirectorMode fans them to Show)
+─ HAL: microphone → DAL audio analyser → AudioFrameEvent
+                    (FFT, BeatDetector, SnareDetector,
+                     HihatDetector, MusicDescriptors,
+                     SectionDetector)
+─ HAL: buttons    → InputActionMapper  → InputAction
+─ DMX input       → DMX decoder        → (Epic 7, planned)
+─ Network         → listener + decoder → (future, e.g. OSC / MQTT cues)
+       v
 DirectorMode (the host)
-  v
+       v
 Show (your code) ---> DAL::render_fx ---> EspNowBroadcastDriver
                                           + Director's PixMobIrBinding
                                           + local screen
