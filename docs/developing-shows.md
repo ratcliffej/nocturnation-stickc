@@ -216,17 +216,41 @@ first (currently `SimpleBeatShow`).
 
 ## Analyser hooks
 
-The host fans audio frames out as follows:
+The DAL runs one analyser pass per microphone frame and stamps the
+results onto a single `AudioFrameEvent`. The host then fans the event
+out to the active Show's hooks. **The DAL is the producer; Shows are
+pure consumers** — your Show never runs an FFT or a detector itself,
+it just reads the fields it cares about from the event and composes
+the response.
 
 | Hook                       | Fires when                            | Rate         | Notes |
 |----------------------------|---------------------------------------|--------------|-------|
-| `on_audio_frame`           | Every FFT cycle                       | ~30-40 Hz    | Carries `bass_energy`, 8-band perceptual sums, RMS, and the analyser stamps in one struct. |
+| `on_audio_frame`           | Every FFT cycle                       | ~30-40 Hz    | Carries the full analyser snapshot in one struct — see [`AudioFrameEvent` fields](#audioframeevent-fields) below. |
 | `on_spectrum_frame`        | Every FFT cycle                       | ~30-40 Hz    | 32-band log-spaced spectrum. Only delivered if your `power().needs_spectrum_frame = true`. |
 | `on_beat_detected(strength)`  | Kick onset (BeatDetector, ~30-150 Hz watch) | beat-driven | `strength` 1-255; saturates at 255 for hits >= 3× the adaptive threshold. |
 | `on_snare_detected(strength)` | Snare onset (~200-2000 Hz)         | beat-driven | Same shape as kick. |
 | `on_hihat_detected(strength)` | Hi-hat onset (~4-8 kHz)            | beat-driven | Same shape, shorter refractory so 16th-note hi-hats fire cleanly. |
 | `on_music_descriptor(c, e, d)` | Centroid / energy / density change | ≤ FFT rate, rate-limited | Host fires only on >= 5 % change in any component, so you don't churn at 30 Hz. |
 | `on_section_change(section)`  | Section state transitions          | event-driven | `section` is a `SectionType` value (see below). |
+
+### `AudioFrameEvent` fields
+
+The single event the DAL hands you on `on_audio_frame`. Read the fields
+you need; ignore the rest. All values are Director-internal — none of
+them go on the wire unless your Show composes them into a
+`render_fx()` call.
+
+| Field                              | Type      | Meaning |
+|------------------------------------|-----------|---------|
+| `bass_energy`, `mid_energy`, `treble_energy` | `float` | Classic 3-band roll-up; sums of FFT bin magnitudes. |
+| `sub_bass`, `bass`, `low_mids`, `midrange`, `high_mids`, `presence`, `air`, `mud` | `float` | 8-band perceptual roll-up (Audible Genius split-points). |
+| `overall_rms`                      | `float`   | Frame RMS; usable as a volume gate. |
+| `is_beat`                          | `bool`    | True on this frame if `BeatDetector` fired. Mirrors what `on_beat_detected` delivers; useful when you want a single hook. |
+| `beat_strength`, `snare_strength`, `hihat_strength` | `uint8_t` | Per-onset strength (0 when the corresponding detector didn't fire this frame). |
+| `centroid`, `energy`, `density`    | `uint8_t` | `MusicDescriptors` outputs — same values `on_music_descriptor` delivers. |
+| `section`                          | `uint8_t` | Latest `SectionType` from `SectionDetector` (see table below). |
+| `music_event`                      | `uint8_t` | Latest `DropDetector` output: `0` = none, `1` = DROP, `2` = BREAKDOWN, `3` = BUILD (reserved). Use to gate one-shot peak-moment responses. **Director-internal only** — the spec v0.29 protocol trim removed the wire `MUSIC_EVENT (0x06)` frame, but the field stays here as part of the Show toolset; if you want a DROP to fire white across the room, your Show composes that as a `render_fx("00:00", whiteout)` call. |
+| `timestamp_ms`                     | `uint32_t` | Frame timestamp (Director clock, monotonic since boot). |
 
 ### Analyser timing characteristics
 
