@@ -134,7 +134,7 @@ flowchart TD
 
     BeatDet -- on_beat_detected --> Show
     Desc -- on_music_descriptor --> Show
-    DropDet -- "MUSIC_EVENT 0x06" --> ESPNow
+    DropDet -. "drop / breakdown<br/>Director-internal only" .-> Show
 
     Show[Active Show plug-in<br/>SimpleBeat / Dynamic]
     Show -- render_fx --> Dispatch[dispatch_output_class_group]
@@ -143,7 +143,7 @@ flowchart TD
     Dispatch -. screen loopback .-> MasterLCD
 ```
 
-The analyser primitives are Director-internal events. They do not appear on the ESP-NOW wire other than `MUSIC_EVENT` (drop / breakdown / build). The Show plug-in consumes the events, computes colour and envelope, and dispatches `LIGHT_COMMAND` frames.
+The analyser primitives are all Director-internal events. None of them are broadcast on the wire under spec v0.29 — the only Director-emitted frame types are `HEARTBEAT` (1 Hz, skip-if-recent) and `LIGHT_COMMAND` (per Show render). The DropDetector still runs internally (it stamps `AudioFrameEvent::music_event`), but its output has no consumer in the v0.29 reference firmware; the pre-v0.29 `MUSIC_EVENT` (0x06) broadcast was removed in the protocol trim along with the DROP / BREAKDOWN effect rendering. The Show plug-in consumes the events it cares about, computes colour and envelope, and dispatches `LIGHT_COMMAND` frames.
 
 ---
 
@@ -187,8 +187,7 @@ flowchart TD
 
     Type -- "0x00 HEARTBEAT" --> NoOp[No further action<br/>liveness already updated]
     Type -- "0x03 LIGHT_COMMAND" --> ForEach[For each registered<br/>OutputBinding]
-    Type -- "0x06 MUSIC_EVENT" --> MusicH[Optional handler<br/>e.g. palette swap]
-    Type -- "other / 0xFF" --> Optional[Skip or optional handler]
+    Type -- "other / 0xFF / reserved" --> DropU[Drop silently<br/>forward-compatible]
 
     ForEach --> Route[See class-and-group<br/>routing diagram]
 

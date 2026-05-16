@@ -225,7 +225,7 @@ The system is a single conceptual pipeline: events flow in, light commands flow 
 </tr>
 </table>
 ### 4.3 Custom ESP-NOW frame format (v1)
-Fixed-size 6-byte header plus optional payload. Following Art-Net's precedent, sequence numbers and time anchoring are separate concerns - the header carries a small sequence number for deduplication and ordering, and time information (when needed) is carried in a separate `TIME_SYNC` message type broadcast periodically by Tier 3 Directors.
+Fixed-size 6-byte header plus optional payload. Following Art-Net's precedent, sequence numbers and time anchoring are separate concerns - the header carries a small sequence number for deduplication and ordering, and wall-clock time (when needed) is piggybacked onto the `HEARTBEAT` payload (`days_since_2026`, `centiseconds_today`) so Tier 3 receivers can validate cert windows without a separate dedicated frame type. Earlier spec revisions carried wall-clock in a standalone `TIME_SYNC` (0x05) message; the v0.29 trim folded it into `HEARTBEAT` and reserved 0x05 do-not-reuse.
 ```plain text
 Offset  Field             Size  Notes
 ─────────────────────────────────────────────────────────
@@ -239,7 +239,7 @@ Offset  Field             Size  Notes
 6+      payload           N     Type-specific
 ```
 **Note on sequence_number sizing.** A 1-byte field wraps every 255 frames. At our 4 Hz hard cap (§15.1), that's a wrap window of ~64 seconds, comfortably longer than any plausible reordering window in ESP-NOW broadcast. This matches Art-Net's choice of a 1-byte sequence field at 44 Hz refresh rate (5.8s wrap window). The cost of being wrong about this is benign: a duplicate frame from across a wrap boundary is detected by other means (identical payload + same source_id + within ESP-NOW's natural latency window).
-**Time anchoring.** Wall-clock time is needed only by Tier 3 (signed-cert) receivers for validating cert validity windows. To avoid imposing this cost on Tier 0/1/2 deployments, time is carried in a dedicated `TIME_SYNC` message type rather than the frame header. Tier 3 Directors broadcast `TIME_SYNC` at the heartbeat rate (4 Hz); lower-tier receivers ignore it. See message types table.
+**Time anchoring.** Wall-clock time is needed only by Tier 3 (signed-cert) receivers for validating cert validity windows. To avoid imposing this cost on Tier 0/1/2 deployments and to avoid a dedicated message type for what is fundamentally a piggyback signal, wall-clock time travels inside the `HEARTBEAT` payload as `days_since_2026` (`u16`) and `centiseconds_today` (`u24`). A Director without a wall-clock source MUST set both fields to zero; Tier 0/1/2 receivers simply ignore them. Tier 3 receivers treat all-zero as "unknown" and reject cert validity checks accordingly. See message types table.
 ### Message types (v1)
 <table header-row="true">
 <tr>
@@ -250,17 +250,7 @@ Offset  Field             Size  Notes
 <tr>
 <td>0x00</td>
 <td>HEARTBEAT</td>
-<td>Empty. Sent at 4-10 Hz so Lumes know Director is alive.</td>
-</tr>
-<tr>
-<td>0x01</td>
-<td>BEAT_DETECTED</td>
-<td>`strength: u8` (0-255), `bpm_x10: u16`. **Wire format defined but no longer broadcast by Epic 4.5 Directors**: Lumes consume LIGHT_COMMAND for visual rendering and BEAT_DETECTED's BPM/strength metadata had no current consumer, so doubling per-beat airtime to broadcast it was net negative. The 0x01 type and payload shape stay reserved here so a future Epic with a real BPM-display consumer (e.g. a Lume showing tempo on its screen) can re-enable the broadcast without protocol churn.</td>
-</tr>
-<tr>
-<td>0x02</td>
-<td>MODE_CHANGE</td>
-<td>`new_mode: u8`, `palette_id: u8`</td>
+<td>9 bytes: `tick: u32` (monotonic Director uptime tick, units implementation-defined) • `days_since_2026: u16` • `centiseconds_today: u24` (all little-endian). Sent at 1 Hz with skip-if-recent so Lumes know the Director is alive; the `tick` field is the canonical liveness/ordering signal and the date/time fields piggyback Tier 3 wall-clock anchoring. A Director without a wall-clock source sets both date/time fields to zero. Pre-v0.29 spec carried a zero-byte HEARTBEAT and a separate `TIME_SYNC` (0x05) frame; the v0.29 trim merged the two.</td>
 </tr>
 <tr>
 <td>0x03</td>
@@ -268,26 +258,19 @@ Offset  Field             Size  Notes
 <td>9 bytes: `target_class: u8` (0=all classes, 0x01=light, 0x02=screen, 0x03=multi-LED+screen, 0x04+ reserved; see §7.6 plug-in surfaces for the OutputBinding::class() taxonomy), `target_group: u8` (0=all groups, 1-255 specific), `r: u8`, `g: u8`, `b: u8`, `attack: u8` (pixmob::Time index), `sustain: u8` (pixmob::Time index), `release: u8` (pixmob::Time index), `chance: u8` (pixmob::Chance index). Lumes filter inbound LIGHT_COMMAND on `(target_class, target_group)` against each active `OutputBinding`'s `(class(), configured group)` pair and only render where both axes match (`0x00` matches anything on either axis). Pre-Epic-4.65 shape was 8 bytes without `target_class`.</td>
 </tr>
 <tr>
-<td>0x04</td>
-<td>CLOCK_SYNC</td>
-<td>`phase_in_bar: u16` (0-65535 = 0-1.0), `bpm_x10: u16`. Musical timing only - not wall-clock.</td>
-</tr>
-<tr>
-<td>0x05</td>
-<td>TIME_SYNC</td>
-<td>5 bytes: `days_since_2026: u16`  • `centiseconds_today: u24` (both little-endian). Broadcast by Tier 3 Directors at heartbeat rate; carries wall-clock time for cert validity. Tier 0/1/2 receivers may safely ignore. See Security RFC §6.</td>
-</tr>
-<tr>
-<td>0x06</td>
-<td>MUSIC_EVENT</td>
-<td>1 byte: `event_type: u8` (1=DROP, 2=BREAKDOWN, 3=BUILD reserved). Macro-level musical events fired by the Director's audio analyser - drops into chorus, breakdowns, etc. - on a separate longer-window pass than per-beat detection. Consumed by the effects pipeline to trigger visually distinctive transitions (whiteouts, palette swaps, brief 100% intensity holds). Receivers that don't understand the event_type byte decode it as Unknown and silently drop the frame (forward-compatible). DROP and BREAKDOWN producers shipped in Epic 4.5; BUILD remains reserved for Epic 4.7's section-detection state machine.</td>
-</tr>
-<tr>
 <td>0xFF</td>
 <td>EXTENSION</td>
 <td>Reserved for future use</td>
 </tr>
 </table>
+
+**Reserved (do not reuse).** Five message-type code points were defined in earlier spec revisions but never carried real deployment traffic; the v0.29 protocol trim removed them from the wire. The numeric IDs stay reserved so a future revision MUST NOT silently reassign them, but their former semantics can be revived under fresh code points if a real consumer ever appears:
+
+- `0x01` `BEAT_DETECTED` - wire format defined, but Lumes consume `LIGHT_COMMAND` for rendering and BPM/strength metadata had no consumer; doubling per-beat airtime was net negative.
+- `0x02` `MODE_CHANGE` - never implemented; mode changes are local to each Stick.
+- `0x04` `CLOCK_SYNC` - reserved for bar-locked behaviour that never shipped.
+- `0x05` `TIME_SYNC` - wall-clock time is now piggybacked onto `HEARTBEAT` (see above).
+- `0x06` `MUSIC_EVENT` - DROP/BREAKDOWN producers shipped in Epic 4.5 but had no consumer in the field; removed from the wire alongside the DROP/BREAKDOWN effect rendering itself (§6.3).
 ### Reliability strategy
 - Receivers track `(source_id, sequence_number)` for last 16 frames; deduplicate.
 - Director sends each event 2-3 times with the same sequence number to spread across airtime gaps.
@@ -425,8 +408,8 @@ The analyser is a HAL+DAL capability cluster. Each host's HAL provides FFT magni
 The underlying FFT roll-up that produces `frame.spectrum` still runs unconditionally inside the mic backend because `BeatDetector` consumes the 32-band magnitudes in-pipeline; gating the FFT itself would silently break beat detection. The larger Plus2 CPU savings observed in Epic 4.6 come from Block 12's analyser micro-optimisations (constant hoisting in the spectrum-frame compositor, precomputed bin→Hz LUT, single-pass Welford variance in BeatDetector), not from this gate.
 ### 5.2 Capability surface
 A host's analyser declares a flat set of feature flags from the `Capability` enum (see [`include/hal/hal.h`](https://github.com/ratcliffej/nocturnation-m5/blob/main/include/hal/hal.h)). Lit by Epic 4.5:
-- `AnalyserBeatDetection` - produces BEAT_DETECTED events
-- `AnalyserDropDetection` - produces MUSIC_EVENT (DROP/BREAKDOWN) events
+- `AnalyserBeatDetection` - produces beat events for the Show layer to consume; under v0.29 these stay Director-local and drive `LIGHT_COMMAND` fires rather than a dedicated wire frame (the pre-v0.29 `BEAT_DETECTED` wire type was retired).
+- `AnalyserDropDetection` - DropDetector continues to run internally and stamp `AudioFrameEvent::music_event`, but its output is no longer broadcast on the wire. The pre-v0.29 `MUSIC_EVENT` (0x06) wire frame and the DROP/BREAKDOWN effect rendering were both removed in the v0.29 trim. The detector is kept against a future Epic that finds a real local consumer (e.g. a Director-side palette switch); on-the-wire revival would need a fresh code point per §4.3.
 - `AnalyserSpectrumFrame` - emits 32-band log-spaced SpectrumFrameEvent (Director-local)
 - `AnalyserBandSummary` - emits 3-band B/M/T + 8-band perceptual summary
 
@@ -568,12 +551,12 @@ A reasonable default mapping for the orchestration layer:
 <td>Hue Cycle accelerating, brightness rising</td>
 </tr>
 <tr>
-<td>Drop (MUSIC_EVENT 0x06 event_type 1; bass-energy ratio crossing)</td>
-<td>Strobe Burst + palette switch. Producer ships in Epic 4.5; consumer-side effect binding is Epic 4.7 territory.</td>
+<td>Drop (bass-energy ratio crossing; Director-internal only as of v0.29)</td>
+<td>No on-the-wire effect. DropDetector still flags drops on `AudioFrameEvent::music_event`, but Epic 4.5's `MUSIC_EVENT` (0x06) broadcast and the Strobe Burst rendering it drove were both removed in the v0.29 protocol trim. A future Epic that finds a real consumer would need to define a fresh wire code point and a corresponding effect.</td>
 </tr>
 <tr>
-<td>Breakdown (MUSIC_EVENT 0x06 event_type 2; sustained low-energy section)</td>
-<td>Fade to dim ambient palette. Same producer/consumer split as Drop.</td>
+<td>Breakdown (sustained low-energy section; Director-internal only as of v0.29)</td>
+<td>No on-the-wire effect. Same producer/consumer status as Drop.</td>
 </tr>
 <tr>
 <td>Chorus (sustained higher energy, future)</td>

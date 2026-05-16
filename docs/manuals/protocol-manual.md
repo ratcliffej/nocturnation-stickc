@@ -130,44 +130,39 @@ A receiver MUST verify that `payload_len` matches the expected length for the gi
 
 | Code | Name | Payload size | Direction |
 |---:|---|---:|---|
-| `0x00` | `HEARTBEAT` | 0 | Director to all |
-| `0x01` | `BEAT_DETECTED` | 3 | Director to all (currently not emitted by reference firmware) |
-| `0x02` | `MODE_CHANGE` | 2 | Director to all |
+| `0x00` | `HEARTBEAT` | 9 | Director to all |
 | `0x03` | `LIGHT_COMMAND` | 9 | Director to all |
-| `0x04` | `CLOCK_SYNC` | 4 | Director to all |
-| `0x05` | `TIME_SYNC` | 5 | Director to all |
-| `0x06` | `MUSIC_EVENT` | 1 | Director to all |
 | `0xFF` | `EXTENSION` | variable | Reserved for future use |
 
-Codes `0x07..0xFE` are reserved. A receiver MUST treat any reserved or unrecognised code as a request to silently discard the frame.
+Codes `0x01`, `0x02`, `0x04`, `0x05`, `0x06` are **reserved (do not reuse)**. They were defined in earlier revisions of this spec but never carried real traffic in deployment; the v0.29 protocol trim removed them from the wire. A future revision MAY re-introduce equivalent semantics under fresh code points, but MUST NOT reassign these specific codes:
 
-A receiver MUST honour at minimum: `HEARTBEAT`, `LIGHT_COMMAND`. A receiver SHOULD honour `MODE_CHANGE` and `MUSIC_EVENT` if it has any locally interpretable behaviour for them. A receiver MAY honour the remaining types.
+| Code | Former name | Reason for reservation |
+|---:|---|---|
+| `0x01` | `BEAT_DETECTED` | Wire format was defined but reference Directors stopped broadcasting it in Epic 4.5; `LIGHT_COMMAND` carries the visual fire, and BPM/strength metadata had no consumer. |
+| `0x02` | `MODE_CHANGE` | Designed but never implemented; mode changes are local to each Stick. |
+| `0x04` | `CLOCK_SYNC` | Reserved for bar-locked behaviour; never emitted by reference firmware. |
+| `0x05` | `TIME_SYNC` | Wall-clock time is now carried in the `HEARTBEAT` payload (see [section 3.3.1](#331-heartbeat-0x00)), removing the need for a separate type. |
+| `0x06` | `MUSIC_EVENT` | DROP/BREAKDOWN broadcasts shipped in Epic 4.5 but had no consumer in the field; removed in the v0.29 trim along with the DROP / BREAKDOWN effect rendering itself. |
+
+Codes `0x07..0xFE` are reserved for future use. A receiver MUST treat any reserved or unrecognised code as a request to silently discard the frame (forward-compatible).
+
+A receiver MUST honour at minimum: `HEARTBEAT`, `LIGHT_COMMAND`. A receiver MAY honour `EXTENSION` and future code points when defined.
 
 ### 3.3 Payloads
 
 #### 3.3.1 `HEARTBEAT` (`0x00`)
 
-Zero-byte payload. See [section 6](#6-heartbeat-and-liveness) for semantics.
-
-#### 3.3.2 `BEAT_DETECTED` (`0x01`)
+The Director's nine-byte liveness frame. Carries a monotonic tick plus a wall-clock anchor so Tier 3 receivers (signed-cert validity windows) can read time without a separate `TIME_SYNC` type.
 
 | Offset | Field | Size | Description |
 |---:|---|---:|---|
-| 0 | `strength` | 1 | 0..255, monotonic-ish measure of beat strength |
-| 1 | `bpm_x10` | 2 LE | Instantaneous tempo in BPM × 10 (e.g. 1280 = 128.0 BPM) |
+| 0 | `tick` | 4 LE | Monotonic Director uptime tick, units implementation-defined; wraps on `u32` overflow. Receivers MUST NOT assume a fixed unit and SHOULD use it only for ordering and liveness, not absolute time. |
+| 4 | `days_since_2026` | 2 LE | Day count since 2026-01-01. Director sets to `0x0000` if it has no wall-clock source. |
+| 6 | `centiseconds_today` | 3 LE | Centiseconds since local midnight, range 0..8,639,999. Director sets to `0x000000` if it has no wall-clock source. |
 
-Reserved for future use. The reference firmware does not currently emit this type (the `BEAT_DETECTED` broadcast was removed in Epic 4.5 once `LIGHT_COMMAND` became the canonical fire); the wire format is retained against future re-enabling.
+`payload_len == 9`. The authoritative byte-for-byte layout is enforced by `test_heartbeat_wire_format_byte_for_byte` in [`test/test_espnow_frame/test_main.cpp`](../../test/test_espnow_frame/test_main.cpp). See [section 6](#6-heartbeat-and-liveness) for emission cadence and liveness semantics; see [annex C.2](#c2-esp-now-heartbeat-frame) for a worked frame.
 
-#### 3.3.3 `MODE_CHANGE` (`0x02`)
-
-| Offset | Field | Size | Description |
-|---:|---|---:|---|
-| 0 | `new_mode` | 1 | Target runtime-mode id (see firmware-internal `ModeId` enum) |
-| 1 | `palette_id` | 1 | Reserved; carries 0 in reference firmware |
-
-A receiver MAY use this to follow the Director into a coordinated mode change.
-
-#### 3.3.4 `LIGHT_COMMAND` (`0x03`)
+#### 3.3.2 `LIGHT_COMMAND` (`0x03`)
 
 The most-emitted message type; carries every render fire on the system.
 
@@ -185,33 +180,7 @@ The most-emitted message type; carries every render fire on the system.
 
 A receiver whose configured `device_class` matches `target_class` (or `target_class == 0x00`), and whose configured `group` matches `target_group` (or `target_group == 0x00`), MUST render this command according to its own device class. See [section 4](#4-class-and-group-addressing) for the full routing semantics.
 
-#### 3.3.5 `CLOCK_SYNC` (`0x04`)
-
-| Offset | Field | Size | Description |
-|---:|---|---:|---|
-| 0 | `phase_in_bar` | 2 LE | Current phase in the bar, in milliseconds since the most recent down-beat |
-| 2 | `bpm_x10` | 2 LE | Tempo in BPM × 10 |
-
-Reserved for future bar-locked behaviour. Reference firmware does not currently emit.
-
-#### 3.3.6 `TIME_SYNC` (`0x05`)
-
-| Offset | Field | Size | Description |
-|---:|---|---:|---|
-| 0 | `days_since_2026` | 2 LE | Day count since 2026-01-01 |
-| 2 | `centiseconds_today` | 3 LE | Centiseconds since local midnight (0..8639999) |
-
-Reserved for future time-of-day-aware behaviour. Reference firmware does not currently emit.
-
-#### 3.3.7 `MUSIC_EVENT` (`0x06`)
-
-| Offset | Field | Size | Description |
-|---:|---|---:|---|
-| 0 | `event_type` | 1 | 0 = Unknown, 1 = Drop, 2 = Breakdown, 3 = Build (reserved) |
-
-Emitted by the Director's DropDetector. A receiver MAY interpret this to alter local behaviour (e.g. a different palette during a breakdown).
-
-#### 3.3.8 `EXTENSION` (`0xFF`)
+#### 3.3.3 `EXTENSION` (`0xFF`)
 
 Reserved for future use. A receiver MUST silently discard frames of this type at protocol version `0x01`.
 
@@ -303,7 +272,7 @@ A Lume that has locked to a channel SHOULD re-enter auto-scan if it loses traffi
 
 The Director MUST emit `HEARTBEAT` frames at no slower than 1 Hz when there is no other traffic. The Director MAY suppress a heartbeat if it has transmitted any other frame within the heartbeat period; this is the "skip-if-recent" rule and minimises duty cycle during active music.
 
-The heartbeat carries no payload (`payload_len == 0`). It serves only to demonstrate Director liveness on the wire.
+The heartbeat carries a nine-byte payload (`payload_len == 9`) per [section 3.3.1](#331-heartbeat-0x00): a monotonic `tick` plus an optional wall-clock anchor in `days_since_2026` and `centiseconds_today`. Directors without a wall-clock source MUST set the two date/time fields to zero; receivers that need wall-clock validity (Tier 3) MUST treat all-zero date/time as "unknown" and reject cert checks accordingly. The frame's primary on-wire purpose is liveness; the wall-clock anchor is a piggyback.
 
 ### 6.2 Receiver liveness check
 
@@ -338,15 +307,15 @@ A conforming receiver SHOULD honour:
 
 - The NO SIGNAL liveness behaviour in [section 6.2](#62-receiver-liveness-check).
 - Channel auto-scan if it offers the capability ([section 5.3](#53-lume-auto-scan-mode)).
-- The `MUSIC_EVENT` payload (DROP / BREAKDOWN / BUILD) if it has any locally interpretable behaviour for it.
+- The `HEARTBEAT` wall-clock fields if it needs wall-clock time (Tier 3 cert validity); otherwise the date/time fields MAY be ignored.
 
 ### 7.3 Receiver MAY honour
 
 A conforming receiver MAY:
 
 - Operate as a repeater ([section 2.4](#24-repeater-behaviour)).
-- Honour `BEAT_DETECTED`, `MODE_CHANGE`, `CLOCK_SYNC`, `TIME_SYNC` if it has locally interpretable behaviour.
 - Implement screen-class rendering for `target_class == 0x02` frames.
+- Decode the `HEARTBEAT.tick` field for liveness diagnostics beyond the binary "received within window" check.
 
 ### 7.4 Receiver MUST NOT
 
@@ -514,38 +483,30 @@ Total frame length: fifteen bytes.
 
 ### C.2 ESP-NOW `HEARTBEAT` frame
 
-A `HEARTBEAT` from source_id 1, sequence 43:
+A `HEARTBEAT` from source_id `0x21`, sequence `0x07`, hop_count 2, carrying tick `0x12345678`, days-since-2026 `0x0123`, centiseconds-today `0xABCDEF`. This matches the byte-for-byte test vector in `test/test_espnow_frame/test_main.cpp::test_heartbeat_wire_format_byte_for_byte`:
 
 ```
 Offset  Byte    Field
 0x00    0x01    protocol_version
-0x01    0x01    source_id
-0x02    0x2B    sequence_number (43)
-0x03    0x00    hop_count
+0x01    0x21    source_id
+0x02    0x07    sequence_number (7)
+0x03    0x02    hop_count
 0x04    0x00    message_type (HEARTBEAT)
-0x05    0x00    payload_len
+0x05    0x09    payload_len (9)
+0x06    0x78    tick LE byte 0
+0x07    0x56    tick LE byte 1
+0x08    0x34    tick LE byte 2
+0x09    0x12    tick LE byte 3
+0x0A    0x23    days_since_2026 LE byte 0
+0x0B    0x01    days_since_2026 LE byte 1
+0x0C    0xEF    centiseconds_today LE byte 0
+0x0D    0xCD    centiseconds_today LE byte 1
+0x0E    0xAB    centiseconds_today LE byte 2
 ```
 
-Total frame length: six bytes. No payload.
+Total frame length: fifteen bytes (six header + nine payload).
 
-### C.3 ESP-NOW `MUSIC_EVENT` frame (DROP)
-
-A `MUSIC_EVENT` carrying DROP from source_id 1, sequence 44:
-
-```
-Offset  Byte    Field
-0x00    0x01    protocol_version
-0x01    0x01    source_id
-0x02    0x2C    sequence_number (44)
-0x03    0x00    hop_count
-0x04    0x06    message_type (MUSIC_EVENT)
-0x05    0x01    payload_len
-0x06    0x01    event_type (DROP)
-```
-
-Total frame length: seven bytes.
-
-### C.4 PixMob infra-red frame
+### C.3 PixMob infra-red frame
 
 Single-colour red `(255, 0, 0)` to group 0 (broadcast), envelope (attack=`T_96_MS`, sustain=`T_0_MS`, release=`T_480_MS`), chance `CHANCE_100`:
 
@@ -566,7 +527,7 @@ Offset  Byte    Field
 
 The checksum at offset 1 is the sum `0x00 + 0x00 + 0x3F + 0x00 + 0x10 + 0x20 + 0x00 = 0x6F`, then `(0x6F >> 2) & 0x3F = 0x1B`, then `ENCODING_MAP[0x1B]` (consult upstream `jamesw343/PixMob_IR` for the encoding map).
 
-### C.5 Authoritative source
+### C.4 Authoritative source
 
 These hand-derived vectors are illustrative. The authoritative reference vectors are generated by running `python3 tools/pixmob_reference_encoder.py` (against the upstream Python encoder) and recorded in `test/test_pixmob_parity/`. Implementers MUST verify against the in-tree test fixtures rather than the inline vectors above.
 
@@ -576,7 +537,7 @@ These hand-derived vectors are illustrative. The authoritative reference vectors
 
 | Version | Date | Spec doc | Notable changes |
 |---:|---|---|---|
-| 0x01 | 2026 | This document | Initial public protocol. ESP-NOW transport, 6-byte header, 7 message types, class-and-group addressing, PixMob IR annex. |
+| 0x01 | 2026 | This document | Initial public protocol. ESP-NOW transport, 6-byte header, two active message types (`HEARTBEAT`, `LIGHT_COMMAND`) plus `EXTENSION` reserved, class-and-group addressing, PixMob IR annex. Five additional message types (`0x01` `BEAT_DETECTED`, `0x02` `MODE_CHANGE`, `0x04` `CLOCK_SYNC`, `0x05` `TIME_SYNC`, `0x06` `MUSIC_EVENT`) were defined in earlier spec revisions but never carried real deployment traffic; the v0.29 trim removed them from the wire and their code points are reserved-do-not-reuse. |
 
 Future revisions will be appended to this table.
 

@@ -472,13 +472,11 @@ If Director is running but no `[espnow TX LIGHT]` lines appear on the serial con
 
 **HSV** - Hue, Saturation, Value colour model. The Dynamic show works in HSV internally and converts to RGB at the wire.
 
-**LIGHT_COMMAND** - one of the seven ESP-NOW message types. Nine-byte payload: class, group, RGB, attack/sustain/release/chance. See the [protocol manual](protocol-manual.md).
+**LIGHT_COMMAND** - one of the two active ESP-NOW message types (alongside `HEARTBEAT`). Nine-byte payload: class, group, RGB, attack/sustain/release/chance. See the [protocol manual](protocol-manual.md).
 
 **Loopback** - the Director's habit of treating itself as one of its own Lumes. The dispatch path routes every light command back through the Director's own infra-red transmitter and screen pulse, so the Director can illuminate nearby bracelets and show a pulse on its own LCD.
 
 **Director** - the Stick that listens to audio and decides what lights should do. Exactly one Director per deployment. See [section 1.1](#11-what-nocturnation-is).
-
-**MUSIC_EVENT** - one of the seven ESP-NOW message types. Carries DROP (1), BREAKDOWN (2), or BUILD (3, reserved). See the [protocol manual](protocol-manual.md).
 
 **M5StickC Plus2** - the first-generation reference Stick. ESP32-PICO-V3-02, PDM microphone, omnidirectional IR. End-of-life from M5Stack but fully supported.
 

@@ -2,6 +2,38 @@
 
 Notable changes to the NocturNation M5 firmware. Newest first.
 
+## 2026-05-16 — Protocol trim and Lume power optimisation
+
+ESP-NOW protocol surface trimmed to the two message types the
+deployed firmware actually uses, per architecture specification
+v0.29 §4.3. `HEARTBEAT` (0x00) gains a 9-byte payload — `tick: u32`
+(monotonic Director uptime), `days_since_2026: u16`, and
+`centiseconds_today: u24`, all little-endian — folding the
+former `TIME_SYNC` Tier 3 wall-clock anchor into the
+already-broadcast liveness frame. Five message types that were
+defined in earlier spec revisions but never carried real deployment
+traffic are removed from the wire: `BEAT_DETECTED` (0x01),
+`MODE_CHANGE` (0x02), `CLOCK_SYNC` (0x04), `TIME_SYNC` (0x05) and
+`MUSIC_EVENT` (0x06). Their numeric code points stay
+**reserved (do not reuse)** so a future revision can revive
+equivalent semantics under fresh IDs without colliding with
+historical wire traces. Directors no longer emit the removed types;
+Lumes silently discard unknown types per the spec forward-compat
+rule.
+
+Alongside the wire-level trim, DROP / BREAKDOWN effect rendering
+is removed entirely — there is no `LIGHT_COMMAND`-based replacement
+in v0.29. `DropDetector` continues to run inside the Director's
+analyser (it still stamps `AudioFrameEvent::music_event`) but its
+output has no consumer in the reference firmware; revival would
+need a real local consumer or a fresh wire code point.
+
+Lume power optimisation: the main loop now yields with `delay(1)`
+once per pass when there is no inbound frame to process, which
+lets the ESP32 enter modem-sleep between WiFi-rx callbacks and
+measurably reduces battery draw on backgrounded Lumes during quiet
+passages.
+
 ## 2026-05-16 — Director / Lume vocabulary rename
 
 Codebase, comments, log strings, UI labels, tests, and repo

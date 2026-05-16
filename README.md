@@ -116,7 +116,7 @@ Closed Epics:
 - **Epic 2** - Hardware abstraction layer + Device abstraction layer + Effect classes + Mode FSM + TestDevice extensibility.
 - **Epic 3** - Boot countdown, mode menu, Test Mode, Config tree, status display.
 - **Epic 4** - ESP-NOW transport on Plus2 + S3, redundant TX, dedup ring, signal-quality bars, Lume-as-repeater, two-channel architecture.
-- **Epic 4.5** - Capability-aware audio analyser. Sub-band adaptive BeatDetector, DropDetector with arm/disarm gate, `MUSIC_EVENT` wire format.
+- **Epic 4.5** - Capability-aware audio analyser. Sub-band adaptive BeatDetector, DropDetector with arm/disarm gate, `MUSIC_EVENT` wire format (the wire frame and the DROP/BREAKDOWN effect rendering were both removed in the v0.29 spec protocol trim; the detectors remain internal).
 - **Epic 4.6** - Clean plug-in architecture. `Visualisation` and `OutputBinding` plug-in surfaces, semantic `InputAction` layer, per-plug-in NVS namespaces.
 - **Epic 4.65** - Class+group device addressing. `render_fx("<class>:<group>")` structured targets; `LightCommandPayload` carries both bytes on the wire.
 - **Epic 4.7** - Show plug-in framework + DynamicShow. `Show` base class atop `Plugin`; widget library (BeatBarWidget, SpectrumBarsWidget); analyser primitives (snare/hi-hat onset, music descriptors, section detection); Director-IR loopback in dispatch. (The Epic-4.7 IR reset primer was rolled back in Epic 4.8 after bench testing — see [user manual §1.5](docs/manuals/user-manual.md#15-bracelet-timing-and-residual-state).)
