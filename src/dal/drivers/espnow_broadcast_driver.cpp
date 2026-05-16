@@ -118,21 +118,6 @@ void EspNowBroadcastDriver::stop_broadcast() {
     active_ = false;
 }
 
-bool EspNowBroadcastDriver::send_music_event(transport::espnow::MusicEventType event_type) {
-    if (!active_) return false;
-    using namespace transport::espnow;
-    Header h{};
-    h.source_id       = source_id_;
-    h.sequence_number = next_seq();
-    h.hop_count       = 0;
-    MusicEventPayload p{ event_type };
-    uint8_t buf[kHeaderSize + kMusicEventPayloadLen];
-    const size_t n = encode_music_event(buf, sizeof(buf), h, p);
-    if (n == 0) return false;
-    send_frame_bytes(buf, n, "MUSIC");
-    return true;
-}
-
 // -----------------------------------------------------------------------------
 // Internal helpers (verbatim from EspNowBroadcaster)
 // -----------------------------------------------------------------------------

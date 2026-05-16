@@ -64,14 +64,14 @@ void write_header(uint8_t* buf, const Header& hdr,
 }
 
 bool is_known_message_type(uint8_t raw) {
+    // Spec v0.29 §4.3 - two active message types plus the EXTENSION
+    // slot. IDs 0x01, 0x02, 0x04, 0x05, 0x06 are reserved (do not
+    // reuse) but are not recognised by current receivers; spec
+    // forward-compatibility note says inbound frames with unknown
+    // types should be silently discarded.
     switch (raw) {
         case static_cast<uint8_t>(MessageType::Heartbeat):
-        case static_cast<uint8_t>(MessageType::BeatDetected):
-        case static_cast<uint8_t>(MessageType::ModeChange):
         case static_cast<uint8_t>(MessageType::LightCommand):
-        case static_cast<uint8_t>(MessageType::ClockSync):
-        case static_cast<uint8_t>(MessageType::TimeSync):
-        case static_cast<uint8_t>(MessageType::MusicEvent):
         case static_cast<uint8_t>(MessageType::Extension):
             return true;
         default:
@@ -96,26 +96,6 @@ size_t encode_heartbeat(uint8_t* buf, size_t buf_len, const Header& hdr,
     return total;
 }
 
-size_t encode_beat_detected(uint8_t* buf, size_t buf_len, const Header& hdr,
-                            const BeatDetectedPayload& p) {
-    constexpr size_t total = kHeaderSize + kBeatDetectedPayloadLen;
-    if (buf_len < total) return 0;
-    write_header(buf, hdr, MessageType::BeatDetected, kBeatDetectedPayloadLen);
-    buf[kHeaderSize + 0] = p.strength;
-    write_u16_le(buf + kHeaderSize + 1, p.bpm_x10);
-    return total;
-}
-
-size_t encode_mode_change(uint8_t* buf, size_t buf_len, const Header& hdr,
-                          const ModeChangePayload& p) {
-    constexpr size_t total = kHeaderSize + kModeChangePayloadLen;
-    if (buf_len < total) return 0;
-    write_header(buf, hdr, MessageType::ModeChange, kModeChangePayloadLen);
-    buf[kHeaderSize + 0] = p.new_mode;
-    buf[kHeaderSize + 1] = p.palette_id;
-    return total;
-}
-
 size_t encode_light_command(uint8_t* buf, size_t buf_len, const Header& hdr,
                             const LightCommandPayload& p) {
     constexpr size_t total = kHeaderSize + kLightCommandPayloadLen;
@@ -130,35 +110,6 @@ size_t encode_light_command(uint8_t* buf, size_t buf_len, const Header& hdr,
     buf[kHeaderSize + 6] = p.sustain;
     buf[kHeaderSize + 7] = p.release;
     buf[kHeaderSize + 8] = p.chance;
-    return total;
-}
-
-size_t encode_clock_sync(uint8_t* buf, size_t buf_len, const Header& hdr,
-                         const ClockSyncPayload& p) {
-    constexpr size_t total = kHeaderSize + kClockSyncPayloadLen;
-    if (buf_len < total) return 0;
-    write_header(buf, hdr, MessageType::ClockSync, kClockSyncPayloadLen);
-    write_u16_le(buf + kHeaderSize + 0, p.phase_in_bar);
-    write_u16_le(buf + kHeaderSize + 2, p.bpm_x10);
-    return total;
-}
-
-size_t encode_time_sync(uint8_t* buf, size_t buf_len, const Header& hdr,
-                        const TimeSyncPayload& p) {
-    constexpr size_t total = kHeaderSize + kTimeSyncPayloadLen;
-    if (buf_len < total) return 0;
-    write_header(buf, hdr, MessageType::TimeSync, kTimeSyncPayloadLen);
-    write_u16_le(buf + kHeaderSize + 0, p.days_since_2026);
-    write_u24_le(buf + kHeaderSize + 2, p.centiseconds_today);
-    return total;
-}
-
-size_t encode_music_event(uint8_t* buf, size_t buf_len, const Header& hdr,
-                          const MusicEventPayload& p) {
-    constexpr size_t total = kHeaderSize + kMusicEventPayloadLen;
-    if (buf_len < total) return 0;
-    write_header(buf, hdr, MessageType::MusicEvent, kMusicEventPayloadLen);
-    buf[kHeaderSize + 0] = static_cast<uint8_t>(p.event_type);
     return total;
 }
 
@@ -206,36 +157,6 @@ DecodeResult decode_heartbeat(const Header& hdr,
     return DecodeResult::Ok;
 }
 
-DecodeResult decode_beat_detected(const Header& hdr,
-                                  const uint8_t* payload, size_t payload_len,
-                                  BeatDetectedPayload& out) {
-    if (hdr.message_type != MessageType::BeatDetected) {
-        return DecodeResult::InvalidMessageType;
-    }
-    if (hdr.payload_len != kBeatDetectedPayloadLen ||
-        payload_len    != kBeatDetectedPayloadLen) {
-        return DecodeResult::PayloadLenMismatch;
-    }
-    out.strength = payload[0];
-    out.bpm_x10  = read_u16_le(payload + 1);
-    return DecodeResult::Ok;
-}
-
-DecodeResult decode_mode_change(const Header& hdr,
-                                const uint8_t* payload, size_t payload_len,
-                                ModeChangePayload& out) {
-    if (hdr.message_type != MessageType::ModeChange) {
-        return DecodeResult::InvalidMessageType;
-    }
-    if (hdr.payload_len != kModeChangePayloadLen ||
-        payload_len    != kModeChangePayloadLen) {
-        return DecodeResult::PayloadLenMismatch;
-    }
-    out.new_mode   = payload[0];
-    out.palette_id = payload[1];
-    return DecodeResult::Ok;
-}
-
 DecodeResult decode_light_command(const Header& hdr,
                                   const uint8_t* payload, size_t payload_len,
                                   LightCommandPayload& out) {
@@ -255,63 +176,6 @@ DecodeResult decode_light_command(const Header& hdr,
     out.sustain      = payload[6];
     out.release      = payload[7];
     out.chance       = payload[8];
-    return DecodeResult::Ok;
-}
-
-DecodeResult decode_clock_sync(const Header& hdr,
-                               const uint8_t* payload, size_t payload_len,
-                               ClockSyncPayload& out) {
-    if (hdr.message_type != MessageType::ClockSync) {
-        return DecodeResult::InvalidMessageType;
-    }
-    if (hdr.payload_len != kClockSyncPayloadLen ||
-        payload_len    != kClockSyncPayloadLen) {
-        return DecodeResult::PayloadLenMismatch;
-    }
-    out.phase_in_bar = read_u16_le(payload + 0);
-    out.bpm_x10      = read_u16_le(payload + 2);
-    return DecodeResult::Ok;
-}
-
-DecodeResult decode_time_sync(const Header& hdr,
-                              const uint8_t* payload, size_t payload_len,
-                              TimeSyncPayload& out) {
-    if (hdr.message_type != MessageType::TimeSync) {
-        return DecodeResult::InvalidMessageType;
-    }
-    if (hdr.payload_len != kTimeSyncPayloadLen ||
-        payload_len    != kTimeSyncPayloadLen) {
-        return DecodeResult::PayloadLenMismatch;
-    }
-    out.days_since_2026     = read_u16_le(payload + 0);
-    out.centiseconds_today  = read_u24_le(payload + 2);
-    return DecodeResult::Ok;
-}
-
-DecodeResult decode_music_event(const Header& hdr,
-                                const uint8_t* payload, size_t payload_len,
-                                MusicEventPayload& out) {
-    if (hdr.message_type != MessageType::MusicEvent) {
-        return DecodeResult::InvalidMessageType;
-    }
-    if (hdr.payload_len != kMusicEventPayloadLen ||
-        payload_len    != kMusicEventPayloadLen) {
-        return DecodeResult::PayloadLenMismatch;
-    }
-    // Map raw byte to enum. Unknown raw values land as Unknown so
-    // receivers can drop the frame without misinterpreting future-
-    // protocol additions (forward-compatible per spec §4.3).
-    const uint8_t raw = payload[0];
-    switch (raw) {
-        case static_cast<uint8_t>(MusicEventType::Drop):
-            out.event_type = MusicEventType::Drop; break;
-        case static_cast<uint8_t>(MusicEventType::Breakdown):
-            out.event_type = MusicEventType::Breakdown; break;
-        case static_cast<uint8_t>(MusicEventType::Build):
-            out.event_type = MusicEventType::Build; break;
-        default:
-            out.event_type = MusicEventType::Unknown; break;
-    }
     return DecodeResult::Ok;
 }
 

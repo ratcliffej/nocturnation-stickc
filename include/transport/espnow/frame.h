@@ -37,26 +37,22 @@ constexpr uint8_t kMaxHopCount       = 3;
 constexpr uint8_t kMaxFrameSize   = 32;
 constexpr uint8_t kMaxPayloadSize = kMaxFrameSize - kHeaderSize;
 
+// Per spec v0.29 §4.3, the protocol has exactly two active message
+// types: HEARTBEAT and LIGHT_COMMAND. Numeric IDs 0x01, 0x02, 0x04,
+// 0x05, 0x06 are RESERVED (do not reuse) - they were assigned to
+// earlier-draft message types that never had a real consumer or
+// were folded into HEARTBEAT's payload. See spec §4.3 "Messages
+// removed from earlier drafts" for the per-ID rationale. 0x07-0xFE
+// are unassigned; 0xFF is the Extension slot for v2.
 enum class MessageType : uint8_t {
     Heartbeat    = 0x00,
-    BeatDetected = 0x01,
-    ModeChange   = 0x02,
+    // 0x01 reserved - was BEAT_DETECTED (no Lume-side consumer ever existed)
+    // 0x02 reserved - was MODE_CHANGE (mode transitions are implicit in LIGHT_COMMAND traffic)
     LightCommand = 0x03,
-    ClockSync    = 0x04,
-    TimeSync     = 0x05,
-    MusicEvent   = 0x06,   // DROP / BREAKDOWN / BUILD; Epic 4.5 Block 4
+    // 0x04 reserved - was CLOCK_SYNC (folded into HEARTBEAT.tick)
+    // 0x05 reserved - was TIME_SYNC (folded into HEARTBEAT.days_since_2026 + .centiseconds_today)
+    // 0x06 reserved - was MUSIC_EVENT (Director no longer emits DROP/BREAKDOWN/BUILD)
     Extension    = 0xFF,
-};
-
-// MusicEvent payload's event_type field. Wire-stable values; see
-// architecture spec §4.3 MUSIC_EVENT row. Receivers that don't
-// understand a given event type should leave it as Unknown and
-// silently drop the frame (forward-compatible).
-enum class MusicEventType : uint8_t {
-    Unknown   = 0,
-    Drop      = 1,
-    Breakdown = 2,
-    Build     = 3,   // reserved by spec; not fired by Epic 4.5 producers
 };
 
 struct Header {
@@ -85,18 +81,6 @@ struct HeartbeatPayload {
 };
 constexpr uint8_t kHeartbeatPayloadLen = 9;   // 4 + 2 + 3
 
-struct BeatDetectedPayload {
-    uint8_t  strength;             // 0-255
-    uint16_t bpm_x10;              // BPM * 10, little-endian on the wire
-};
-constexpr uint8_t kBeatDetectedPayloadLen = 3;
-
-struct ModeChangePayload {
-    uint8_t new_mode;
-    uint8_t palette_id;
-};
-constexpr uint8_t kModeChangePayloadLen = 2;
-
 struct LightCommandPayload {
     uint8_t target_class;          // 0 = all classes; see hal::DeviceClass enum (Epic 4.65)
     uint8_t target_group;          // 0 = all groups; 1-255 specific (PixMob enforces its own 0-31 cap)
@@ -109,23 +93,6 @@ struct LightCommandPayload {
     uint8_t chance;                // pixmob::Chance index
 };
 constexpr uint8_t kLightCommandPayloadLen = 9;
-
-struct ClockSyncPayload {
-    uint16_t phase_in_bar;         // 0-65535 represents 0.0-1.0 of bar
-    uint16_t bpm_x10;
-};
-constexpr uint8_t kClockSyncPayloadLen = 4;
-
-struct TimeSyncPayload {
-    uint16_t days_since_2026;      // u16 little-endian
-    uint32_t centiseconds_today;   // u24 little-endian; high byte of u32 ignored on encode
-};
-constexpr uint8_t kTimeSyncPayloadLen = 5;
-
-struct MusicEventPayload {
-    MusicEventType event_type;     // 1-byte enum; see MusicEventType comment
-};
-constexpr uint8_t kMusicEventPayloadLen = 1;
 
 // =============================================================================
 // Result codes
@@ -152,18 +119,8 @@ enum class DecodeResult : uint8_t {
 
 size_t encode_heartbeat    (uint8_t* buf, size_t buf_len, const Header& hdr,
                             const HeartbeatPayload& p);
-size_t encode_beat_detected(uint8_t* buf, size_t buf_len, const Header& hdr,
-                            const BeatDetectedPayload& p);
-size_t encode_mode_change  (uint8_t* buf, size_t buf_len, const Header& hdr,
-                            const ModeChangePayload& p);
 size_t encode_light_command(uint8_t* buf, size_t buf_len, const Header& hdr,
                             const LightCommandPayload& p);
-size_t encode_clock_sync   (uint8_t* buf, size_t buf_len, const Header& hdr,
-                            const ClockSyncPayload& p);
-size_t encode_time_sync    (uint8_t* buf, size_t buf_len, const Header& hdr,
-                            const TimeSyncPayload& p);
-size_t encode_music_event  (uint8_t* buf, size_t buf_len, const Header& hdr,
-                            const MusicEventPayload& p);
 
 // =============================================================================
 // Decoders
@@ -182,24 +139,9 @@ DecodeResult decode_header(const uint8_t* buf, size_t buf_len, Header& out_hdr);
 DecodeResult decode_heartbeat   (const Header& hdr,
                                  const uint8_t* payload, size_t payload_len,
                                  HeartbeatPayload& out);
-DecodeResult decode_beat_detected(const Header& hdr,
-                                  const uint8_t* payload, size_t payload_len,
-                                  BeatDetectedPayload& out);
-DecodeResult decode_mode_change (const Header& hdr,
-                                 const uint8_t* payload, size_t payload_len,
-                                 ModeChangePayload& out);
 DecodeResult decode_light_command(const Header& hdr,
                                   const uint8_t* payload, size_t payload_len,
                                   LightCommandPayload& out);
-DecodeResult decode_clock_sync  (const Header& hdr,
-                                 const uint8_t* payload, size_t payload_len,
-                                 ClockSyncPayload& out);
-DecodeResult decode_time_sync   (const Header& hdr,
-                                 const uint8_t* payload, size_t payload_len,
-                                 TimeSyncPayload& out);
-DecodeResult decode_music_event (const Header& hdr,
-                                 const uint8_t* payload, size_t payload_len,
-                                 MusicEventPayload& out);
 
 }  // namespace espnow
 }  // namespace transport

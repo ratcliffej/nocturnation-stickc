@@ -78,12 +78,6 @@ public:
     bool start_broadcast(uint8_t channel);
     void stop_broadcast();
 
-    // MUSIC_EVENT (0x06): macro-level musical events fired by the
-    // Director's drop detector (Epic 4.5 Block 4). Wire-byte values
-    // match analyser::DropEvent and transport::espnow::MusicEventType,
-    // so callers can pass the analyser's enum directly.
-    bool send_music_event(transport::espnow::MusicEventType event_type);
-
     bool active() const { return active_; }
 
 private:

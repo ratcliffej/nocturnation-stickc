@@ -100,56 +100,6 @@ static void test_heartbeat_round_trip(void) {
     TEST_ASSERT_EQUAL_UINT32(p_in.centiseconds_today, p_out.centiseconds_today);
 }
 
-static void test_beat_detected_round_trip(void) {
-    uint8_t buf[kMaxFrameSize] = {};
-    const Header in = make_header();
-    const BeatDetectedPayload p_in{ /*strength=*/200, /*bpm_x10=*/1380 };
-
-    const size_t n = encode_beat_detected(buf, sizeof(buf), in, p_in);
-    TEST_ASSERT_EQUAL_size_t(kHeaderSize + kBeatDetectedPayloadLen, n);
-    assert_header_bytes(buf, MessageType::BeatDetected, kBeatDetectedPayloadLen);
-    // Spot-check little-endian payload bytes: bpm_x10 = 1380 = 0x0564
-    TEST_ASSERT_EQUAL_UINT8(200,  buf[kHeaderSize + 0]);  // strength
-    TEST_ASSERT_EQUAL_UINT8(0x64, buf[kHeaderSize + 1]);  // bpm_x10 LSB
-    TEST_ASSERT_EQUAL_UINT8(0x05, buf[kHeaderSize + 2]);  // bpm_x10 MSB
-
-    Header decoded{};
-    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
-                      static_cast<int>(decode_header(buf, n, decoded)));
-    BeatDetectedPayload p_out{};
-    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
-                      static_cast<int>(decode_beat_detected(decoded,
-                                                            buf + kHeaderSize,
-                                                            decoded.payload_len,
-                                                            p_out)));
-    TEST_ASSERT_EQUAL_UINT8(p_in.strength, p_out.strength);
-    TEST_ASSERT_EQUAL_UINT16(p_in.bpm_x10, p_out.bpm_x10);
-}
-
-static void test_mode_change_round_trip(void) {
-    uint8_t buf[kMaxFrameSize] = {};
-    const Header in = make_header();
-    const ModeChangePayload p_in{ /*new_mode=*/3, /*palette_id=*/9 };
-
-    const size_t n = encode_mode_change(buf, sizeof(buf), in, p_in);
-    TEST_ASSERT_EQUAL_size_t(kHeaderSize + kModeChangePayloadLen, n);
-    assert_header_bytes(buf, MessageType::ModeChange, kModeChangePayloadLen);
-    TEST_ASSERT_EQUAL_UINT8(3, buf[kHeaderSize + 0]);
-    TEST_ASSERT_EQUAL_UINT8(9, buf[kHeaderSize + 1]);
-
-    Header decoded{};
-    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
-                      static_cast<int>(decode_header(buf, n, decoded)));
-    ModeChangePayload p_out{};
-    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
-                      static_cast<int>(decode_mode_change(decoded,
-                                                          buf + kHeaderSize,
-                                                          decoded.payload_len,
-                                                          p_out)));
-    TEST_ASSERT_EQUAL_UINT8(p_in.new_mode,   p_out.new_mode);
-    TEST_ASSERT_EQUAL_UINT8(p_in.palette_id, p_out.palette_id);
-}
-
 static void test_light_command_round_trip(void) {
     uint8_t buf[kMaxFrameSize] = {};
     const Header in = make_header();
@@ -194,155 +144,6 @@ static void test_light_command_round_trip(void) {
     TEST_ASSERT_EQUAL_UINT8(p_in.chance,       p_out.chance);
 }
 
-static void test_clock_sync_round_trip(void) {
-    uint8_t buf[kMaxFrameSize] = {};
-    const Header in = make_header();
-    const ClockSyncPayload p_in{
-        /*phase_in_bar=*/0xBEEF,  // 48879
-        /*bpm_x10=*/1380,
-    };
-
-    const size_t n = encode_clock_sync(buf, sizeof(buf), in, p_in);
-    TEST_ASSERT_EQUAL_size_t(kHeaderSize + kClockSyncPayloadLen, n);
-    assert_header_bytes(buf, MessageType::ClockSync, kClockSyncPayloadLen);
-    // 0xBEEF little-endian: 0xEF, 0xBE
-    TEST_ASSERT_EQUAL_UINT8(0xEF, buf[kHeaderSize + 0]);
-    TEST_ASSERT_EQUAL_UINT8(0xBE, buf[kHeaderSize + 1]);
-    TEST_ASSERT_EQUAL_UINT8(0x64, buf[kHeaderSize + 2]);
-    TEST_ASSERT_EQUAL_UINT8(0x05, buf[kHeaderSize + 3]);
-
-    Header decoded{};
-    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
-                      static_cast<int>(decode_header(buf, n, decoded)));
-    ClockSyncPayload p_out{};
-    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
-                      static_cast<int>(decode_clock_sync(decoded,
-                                                         buf + kHeaderSize,
-                                                         decoded.payload_len,
-                                                         p_out)));
-    TEST_ASSERT_EQUAL_UINT16(p_in.phase_in_bar, p_out.phase_in_bar);
-    TEST_ASSERT_EQUAL_UINT16(p_in.bpm_x10,      p_out.bpm_x10);
-}
-
-static void test_time_sync_round_trip(void) {
-    uint8_t buf[kMaxFrameSize] = {};
-    const Header in = make_header();
-    const TimeSyncPayload p_in{
-        /*days_since_2026=*/128,            // 0x0080
-        /*centiseconds_today=*/0x123456,    // u24 within u32
-    };
-
-    const size_t n = encode_time_sync(buf, sizeof(buf), in, p_in);
-    TEST_ASSERT_EQUAL_size_t(kHeaderSize + kTimeSyncPayloadLen, n);
-    assert_header_bytes(buf, MessageType::TimeSync, kTimeSyncPayloadLen);
-    TEST_ASSERT_EQUAL_UINT8(0x80, buf[kHeaderSize + 0]);
-    TEST_ASSERT_EQUAL_UINT8(0x00, buf[kHeaderSize + 1]);
-    TEST_ASSERT_EQUAL_UINT8(0x56, buf[kHeaderSize + 2]);
-    TEST_ASSERT_EQUAL_UINT8(0x34, buf[kHeaderSize + 3]);
-    TEST_ASSERT_EQUAL_UINT8(0x12, buf[kHeaderSize + 4]);
-
-    Header decoded{};
-    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
-                      static_cast<int>(decode_header(buf, n, decoded)));
-    TimeSyncPayload p_out{};
-    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
-                      static_cast<int>(decode_time_sync(decoded,
-                                                        buf + kHeaderSize,
-                                                        decoded.payload_len,
-                                                        p_out)));
-    TEST_ASSERT_EQUAL_UINT16(p_in.days_since_2026,    p_out.days_since_2026);
-    TEST_ASSERT_EQUAL_UINT32(p_in.centiseconds_today, p_out.centiseconds_today);
-}
-
-// ---------------------------------------------------------------------------
-// MUSIC_EVENT (0x06): roundtrip Drop / Breakdown / Build, plus the
-// forward-compatible Unknown handling for unrecognised event_type bytes.
-// ---------------------------------------------------------------------------
-
-static void test_music_event_round_trip(void) {
-    uint8_t buf[kMaxFrameSize] = {};
-    const Header in = make_header();
-    const MusicEventPayload p_in{ MusicEventType::Drop };
-
-    const size_t n = encode_music_event(buf, sizeof(buf), in, p_in);
-    TEST_ASSERT_EQUAL_size_t(kHeaderSize + kMusicEventPayloadLen, n);
-    assert_header_bytes(buf, MessageType::MusicEvent, kMusicEventPayloadLen);
-    TEST_ASSERT_EQUAL_UINT8(0x01, buf[kHeaderSize + 0]);  // 1 = Drop, wire-stable
-
-    Header decoded{};
-    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
-                      static_cast<int>(decode_header(buf, n, decoded)));
-    MusicEventPayload p_out{};
-    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
-                      static_cast<int>(decode_music_event(decoded,
-                                                          buf + kHeaderSize,
-                                                          decoded.payload_len,
-                                                          p_out)));
-    TEST_ASSERT_EQUAL_INT(static_cast<int>(MusicEventType::Drop),
-                          static_cast<int>(p_out.event_type));
-}
-
-static void test_music_event_breakdown_and_build_round_trip(void) {
-    // Smaller version of the above that just confirms the other two
-    // currently-defined event types survive the roundtrip too. Keeps
-    // the wire-byte values pinned: 2 = Breakdown, 3 = Build.
-    uint8_t buf[kMaxFrameSize] = {};
-    const Header in = make_header();
-
-    {
-        const MusicEventPayload p_in{ MusicEventType::Breakdown };
-        const size_t n = encode_music_event(buf, sizeof(buf), in, p_in);
-        TEST_ASSERT_EQUAL_UINT8(0x02, buf[kHeaderSize + 0]);
-        Header decoded{};
-        decode_header(buf, n, decoded);
-        MusicEventPayload p_out{};
-        decode_music_event(decoded, buf + kHeaderSize, decoded.payload_len, p_out);
-        TEST_ASSERT_EQUAL_INT(static_cast<int>(MusicEventType::Breakdown),
-                              static_cast<int>(p_out.event_type));
-    }
-    {
-        const MusicEventPayload p_in{ MusicEventType::Build };
-        const size_t n = encode_music_event(buf, sizeof(buf), in, p_in);
-        TEST_ASSERT_EQUAL_UINT8(0x03, buf[kHeaderSize + 0]);
-        Header decoded{};
-        decode_header(buf, n, decoded);
-        MusicEventPayload p_out{};
-        decode_music_event(decoded, buf + kHeaderSize, decoded.payload_len, p_out);
-        TEST_ASSERT_EQUAL_INT(static_cast<int>(MusicEventType::Build),
-                              static_cast<int>(p_out.event_type));
-    }
-}
-
-static void test_music_event_unknown_event_type_decodes_as_unknown(void) {
-    // Forward-compatibility: a byte we don't recognise (e.g. a future
-    // protocol's 0x42) decodes as MusicEventType::Unknown so the
-    // receiver can drop the frame without misinterpreting it.
-    uint8_t buf[kHeaderSize + kMusicEventPayloadLen] = {};
-    Header in = make_header();
-    in.message_type = MessageType::MusicEvent;
-    in.payload_len  = kMusicEventPayloadLen;
-    // Manually write the frame so we can inject an unknown event_type.
-    buf[0] = 0x01;            // protocol version
-    buf[1] = in.source_id;
-    buf[2] = in.sequence_number;
-    buf[3] = in.hop_count;
-    buf[4] = static_cast<uint8_t>(MessageType::MusicEvent);
-    buf[5] = kMusicEventPayloadLen;
-    buf[kHeaderSize + 0] = 0x42;   // not a known MusicEventType
-
-    Header decoded{};
-    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
-                      static_cast<int>(decode_header(buf, sizeof(buf), decoded)));
-    MusicEventPayload p_out{};
-    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
-                      static_cast<int>(decode_music_event(decoded,
-                                                          buf + kHeaderSize,
-                                                          decoded.payload_len,
-                                                          p_out)));
-    TEST_ASSERT_EQUAL_INT(static_cast<int>(MusicEventType::Unknown),
-                          static_cast<int>(p_out.event_type));
-}
-
 // ---------------------------------------------------------------------------
 // Encoder rejects buffer-too-small without writing past the end
 // ---------------------------------------------------------------------------
@@ -354,11 +155,7 @@ static void test_encode_buffer_too_small(void) {
     TEST_ASSERT_EQUAL_size_t(0,
         encode_heartbeat(buf, sizeof(buf), in, HeartbeatPayload{}));
     TEST_ASSERT_EQUAL_size_t(0,
-        encode_beat_detected(buf, sizeof(buf), in, BeatDetectedPayload{0, 0}));
-    TEST_ASSERT_EQUAL_size_t(0,
         encode_light_command(buf, sizeof(buf), in, LightCommandPayload{}));
-    TEST_ASSERT_EQUAL_size_t(0,
-        encode_time_sync(buf, sizeof(buf), in, TimeSyncPayload{0, 0}));
 }
 
 // ---------------------------------------------------------------------------
@@ -388,9 +185,9 @@ static void test_decode_header_unknown_message_type(void) {
 }
 
 static void test_decode_header_payload_len_overruns_buffer(void) {
-    // Header claims 10 bytes of payload but only 0 follow.
+    // Header claims 32 bytes of payload but only 0 follow.
     uint8_t buf[kHeaderSize] = { kProtocolVersion, 1, 2, 0,
-                                 static_cast<uint8_t>(MessageType::BeatDetected), 10 };
+                                 static_cast<uint8_t>(MessageType::LightCommand), 32 };
     Header h{};
     TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::BufferTooShort),
                       static_cast<int>(decode_header(buf, sizeof(buf), h)));
@@ -403,13 +200,13 @@ static void test_decode_header_payload_len_overruns_buffer(void) {
 static void test_payload_decoder_wrong_message_type(void) {
     uint8_t buf[kMaxFrameSize] = {};
     const Header in = make_header();
-    encode_beat_detected(buf, sizeof(buf), in, BeatDetectedPayload{0, 0});
+    encode_heartbeat(buf, sizeof(buf), in, HeartbeatPayload{});
 
     Header h{};
     TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
                       static_cast<int>(decode_header(buf, sizeof(buf), h)));
 
-    // Ask the LightCommand decoder to decode a BeatDetected frame.
+    // Ask the LightCommand decoder to decode a Heartbeat frame.
     LightCommandPayload p{};
     TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::InvalidMessageType),
                       static_cast<int>(decode_light_command(h,
@@ -425,18 +222,18 @@ static void test_payload_decoder_wrong_payload_len_in_header(void) {
     buf[1] = 1;
     buf[2] = 1;
     buf[3] = 0;
-    buf[4] = static_cast<uint8_t>(MessageType::BeatDetected);
-    buf[5] = 5;  // wrong; expected 3
-    // 5 bytes of "payload" (zeros).
-    const size_t total = kHeaderSize + 5;
+    buf[4] = static_cast<uint8_t>(MessageType::LightCommand);
+    buf[5] = 7;  // wrong; expected 9
+    // 7 bytes of "payload" (zeros).
+    const size_t total = kHeaderSize + 7;
 
     Header h{};
     TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
                       static_cast<int>(decode_header(buf, total, h)));
 
-    BeatDetectedPayload p{};
+    LightCommandPayload p{};
     TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::PayloadLenMismatch),
-                      static_cast<int>(decode_beat_detected(h,
+                      static_cast<int>(decode_light_command(h,
                                                             buf + kHeaderSize,
                                                             h.payload_len,
                                                             p)));
@@ -445,19 +242,19 @@ static void test_payload_decoder_wrong_payload_len_in_header(void) {
 static void test_payload_decoder_caller_payload_len_argument_mismatch(void) {
     uint8_t buf[kMaxFrameSize] = {};
     const Header in = make_header();
-    encode_clock_sync(buf, sizeof(buf), in, ClockSyncPayload{0, 0});
+    encode_light_command(buf, sizeof(buf), in, LightCommandPayload{});
 
     Header h{};
     TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
                       static_cast<int>(decode_header(buf, sizeof(buf), h)));
 
-    ClockSyncPayload p{};
+    LightCommandPayload p{};
     // Caller passes a wrong payload_len (e.g. truncated by an outer protocol).
     TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::PayloadLenMismatch),
-                      static_cast<int>(decode_clock_sync(h,
-                                                         buf + kHeaderSize,
-                                                         /*payload_len=*/2,
-                                                         p)));
+                      static_cast<int>(decode_light_command(h,
+                                                            buf + kHeaderSize,
+                                                            /*payload_len=*/5,
+                                                            p)));
 }
 
 // ---------------------------------------------------------------------------
@@ -475,11 +272,12 @@ static void test_decode_header_extension_type_recognised(void) {
 }
 
 // ---------------------------------------------------------------------------
-// Wire-format spot check: a fully hand-encoded BEAT_DETECTED frame matches the
-// spec layout byte-for-byte. Guards against accidental field-order regressions.
+// Wire-format spot check: a fully hand-encoded HEARTBEAT frame matches the
+// spec v0.29 §4.3 layout byte-for-byte. Guards against accidental field-order
+// regressions on the only Director-emitted broadcast besides LIGHT_COMMAND.
 // ---------------------------------------------------------------------------
 
-static void test_beat_detected_wire_format_byte_for_byte(void) {
+static void test_heartbeat_wire_format_byte_for_byte(void) {
     uint8_t buf[kMaxFrameSize] = {};
     Header in{};
     in.protocol_version = kProtocolVersion;  // overwritten by encoder anyway
@@ -487,20 +285,24 @@ static void test_beat_detected_wire_format_byte_for_byte(void) {
     in.sequence_number  = 0x07;
     in.hop_count        = 0x02;
 
-    const BeatDetectedPayload p{ /*strength=*/0xCA, /*bpm_x10=*/0x1234 };
-    const size_t n = encode_beat_detected(buf, sizeof(buf), in, p);
-    TEST_ASSERT_EQUAL_size_t(kHeaderSize + kBeatDetectedPayloadLen, n);
+    const HeartbeatPayload p{
+        /*tick=*/               0x12345678u,
+        /*days_since_2026=*/    0x0123u,
+        /*centiseconds_today=*/ 0xABCDEFu,
+    };
+    const size_t n = encode_heartbeat(buf, sizeof(buf), in, p);
+    TEST_ASSERT_EQUAL_size_t(kHeaderSize + kHeartbeatPayloadLen, n);
 
-    const uint8_t expected[kHeaderSize + kBeatDetectedPayloadLen] = {
+    const uint8_t expected[kHeaderSize + kHeartbeatPayloadLen] = {
         0x01,  // protocol_version
         0x21,  // source_id
         0x07,  // sequence_number
         0x02,  // hop_count
-        0x01,  // message_type = BEAT_DETECTED
-        0x03,  // payload_len = 3
-        0xCA,  // strength
-        0x34,  // bpm_x10 LSB
-        0x12,  // bpm_x10 MSB
+        0x00,  // message_type = HEARTBEAT
+        0x09,  // payload_len = 9
+        0x78, 0x56, 0x34, 0x12,   // tick LE
+        0x23, 0x01,               // days_since_2026 LE
+        0xEF, 0xCD, 0xAB,         // centiseconds_today LE u24
     };
     TEST_ASSERT_EQUAL_INT(0, std::memcmp(buf, expected, sizeof(expected)));
 }
@@ -512,14 +314,7 @@ static void test_beat_detected_wire_format_byte_for_byte(void) {
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_heartbeat_round_trip);
-    RUN_TEST(test_beat_detected_round_trip);
-    RUN_TEST(test_mode_change_round_trip);
     RUN_TEST(test_light_command_round_trip);
-    RUN_TEST(test_clock_sync_round_trip);
-    RUN_TEST(test_time_sync_round_trip);
-    RUN_TEST(test_music_event_round_trip);
-    RUN_TEST(test_music_event_breakdown_and_build_round_trip);
-    RUN_TEST(test_music_event_unknown_event_type_decodes_as_unknown);
     RUN_TEST(test_encode_buffer_too_small);
     RUN_TEST(test_decode_header_buffer_too_short);
     RUN_TEST(test_decode_header_bad_protocol_version);
@@ -529,6 +324,6 @@ int main(int, char**) {
     RUN_TEST(test_payload_decoder_wrong_payload_len_in_header);
     RUN_TEST(test_payload_decoder_caller_payload_len_argument_mismatch);
     RUN_TEST(test_decode_header_extension_type_recognised);
-    RUN_TEST(test_beat_detected_wire_format_byte_for_byte);
+    RUN_TEST(test_heartbeat_wire_format_byte_for_byte);
     return UNITY_END();
 }

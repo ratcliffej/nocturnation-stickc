@@ -138,24 +138,11 @@ const char* DirectorMode::status_label_for_tests() const {
 #endif
 
 void DirectorMode::on_audio_frame(const AudioFrameEvent& ev) {
-    // Broadcast macro-level musical events (DROP / BREAKDOWN / BUILD)
-    // as MUSIC_EVENT (0x06) frames. Mode-level transport concern, not
-    // show concern. Skipped during pause so the entire deployment
-    // stays silent on a single mute press.
-    if (ev.music_event != 0 && !paused_) {
-#ifdef ARDUINO
-        const char* name = (ev.music_event == 1) ? "DROP"
-                         : (ev.music_event == 2) ? "BREAKDOWN"
-                         : (ev.music_event == 3) ? "BUILD"
-                         :                         "?";
-        Serial.printf("[MUSIC] %s at %lu ms (bass_energy=%.1f)\n",
-                      name,
-                      static_cast<unsigned long>(millis()),
-                      ev.bass_energy);
-#endif
-        esp_now_broadcast_driver_instance()->send_music_event(
-            static_cast<transport::espnow::MusicEventType>(ev.music_event));
-    }
+    // MUSIC_EVENT (0x06) broadcasting was removed in the spec v0.29
+    // protocol trim - DROP / BREAKDOWN / BUILD no longer have a wire
+    // message type. The DropDetector still runs internally (Director-
+    // side state for any local UI that wants it) but nothing is sent
+    // to Lumes for these events.
 
     // Render gating: while an overlay is open the Director's local
     // display is taken over by the overlay UI. We skip event dispatch
