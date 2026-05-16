@@ -134,17 +134,7 @@ A receiver MUST verify that `payload_len` matches the expected length for the gi
 | `0x03` | `LIGHT_COMMAND` | 9 | Director to all |
 | `0xFF` | `EXTENSION` | variable | Reserved for future use |
 
-Codes `0x01`, `0x02`, `0x04`, `0x05`, `0x06` are **reserved (do not reuse)**. They were defined in earlier revisions of this spec but never carried real traffic in deployment; the v0.29 protocol trim removed them from the wire. A future revision MAY re-introduce equivalent semantics under fresh code points, but MUST NOT reassign these specific codes:
-
-| Code | Former name | Reason for reservation |
-|---:|---|---|
-| `0x01` | `BEAT_DETECTED` | Wire format was defined but reference Directors stopped broadcasting it in Epic 4.5; `LIGHT_COMMAND` carries the visual fire, and BPM/strength metadata had no consumer. |
-| `0x02` | `MODE_CHANGE` | Designed but never implemented; mode changes are local to each Stick. |
-| `0x04` | `CLOCK_SYNC` | Reserved for bar-locked behaviour; never emitted by reference firmware. |
-| `0x05` | `TIME_SYNC` | Wall-clock time is now carried in the `HEARTBEAT` payload (see [section 3.3.1](#331-heartbeat-0x00)), removing the need for a separate type. |
-| `0x06` | `MUSIC_EVENT` | DROP/BREAKDOWN broadcasts shipped in Epic 4.5 but had no consumer in the field; removed in the v0.29 trim along with the DROP / BREAKDOWN effect rendering itself. |
-
-Codes `0x07..0xFE` are reserved for future use. A receiver MUST treat any reserved or unrecognised code as a request to silently discard the frame (forward-compatible).
+All other code points are reserved. A receiver MUST treat any unrecognised `message_type` as a request to silently discard the frame; this is the forward-compatibility rule that lets a future protocol revision introduce new types without breaking older receivers.
 
 A receiver MUST honour at minimum: `HEARTBEAT`, `LIGHT_COMMAND`. A receiver MAY honour `EXTENSION` and future code points when defined.
 
@@ -152,7 +142,7 @@ A receiver MUST honour at minimum: `HEARTBEAT`, `LIGHT_COMMAND`. A receiver MAY 
 
 #### 3.3.1 `HEARTBEAT` (`0x00`)
 
-The Director's nine-byte liveness frame. Carries a monotonic tick plus a wall-clock anchor so Tier 3 receivers (signed-cert validity windows) can read time without a separate `TIME_SYNC` type.
+The Director's nine-byte liveness frame. Carries a monotonic tick plus an optional wall-clock anchor for Tier 3 receivers (signed-cert validity windows).
 
 | Offset | Field | Size | Description |
 |---:|---|---:|---|
@@ -537,7 +527,7 @@ These hand-derived vectors are illustrative. The authoritative reference vectors
 
 | Version | Date | Spec doc | Notable changes |
 |---:|---|---|---|
-| 0x01 | 2026 | This document | Initial public protocol. ESP-NOW transport, 6-byte header, two active message types (`HEARTBEAT`, `LIGHT_COMMAND`) plus `EXTENSION` reserved, class-and-group addressing, PixMob IR annex. Five additional message types (`0x01` `BEAT_DETECTED`, `0x02` `MODE_CHANGE`, `0x04` `CLOCK_SYNC`, `0x05` `TIME_SYNC`, `0x06` `MUSIC_EVENT`) were defined in earlier spec revisions but never carried real deployment traffic; the v0.29 trim removed them from the wire and their code points are reserved-do-not-reuse. |
+| 0x01 | 2026 | This document | Initial public protocol. ESP-NOW transport, 6-byte header, two active message types (`HEARTBEAT`, `LIGHT_COMMAND`) plus `EXTENSION` reserved, class-and-group addressing, PixMob IR annex. |
 
 Future revisions will be appended to this table.
 
