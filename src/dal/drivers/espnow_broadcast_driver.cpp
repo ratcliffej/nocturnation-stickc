@@ -216,8 +216,15 @@ void EspNowBroadcastDriver::send_heartbeat() {
     h.source_id       = source_id_;
     h.sequence_number = next_seq();
     h.hop_count       = 0;
+    // Spec v0.29 §4.3 HEARTBEAT payload: tick (Director clock) + date
+    // fields (zeroed when no wall clock is configured; date sync is a
+    // Tier 3 concern not implemented yet).
+    HeartbeatPayload p{};
+    p.tick               = now_ms();
+    p.days_since_2026    = 0;
+    p.centiseconds_today = 0;
     uint8_t buf[kHeaderSize + kHeartbeatPayloadLen];
-    const size_t n = encode_heartbeat(buf, sizeof(buf), h);
+    const size_t n = encode_heartbeat(buf, sizeof(buf), h, p);
     send_frame_bytes(buf, n, "HBEAT");
 }
 

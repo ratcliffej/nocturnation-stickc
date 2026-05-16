@@ -72,8 +72,18 @@ struct Header {
 // Per-message-type payload structs
 // =============================================================================
 
-struct HeartbeatPayload {};
-constexpr uint8_t kHeartbeatPayloadLen = 0;
+// HEARTBEAT payload (spec v0.29 §4.3). Director broadcasts at 1 Hz
+// (skipped when other traffic implicitly proves the Director is
+// alive). Tier 0/1/2 Lumes consume only `tick` (for ASR envelope
+// clock anchoring); Tier 3 Lumes additionally consume the date
+// fields for replay-protection. Lumes that do not need a field
+// simply ignore it.
+struct HeartbeatPayload {
+    uint32_t tick;                 // Director clock tick (u32 little-endian)
+    uint16_t days_since_2026;      // u16 little-endian; 0 if Director has no wall clock
+    uint32_t centiseconds_today;   // u24 little-endian; high byte ignored on encode; 0 if no wall clock
+};
+constexpr uint8_t kHeartbeatPayloadLen = 9;   // 4 + 2 + 3
 
 struct BeatDetectedPayload {
     uint8_t  strength;             // 0-255
@@ -140,7 +150,8 @@ enum class DecodeResult : uint8_t {
 // sequence_number, and hop_count on the Header passed in.
 // =============================================================================
 
-size_t encode_heartbeat    (uint8_t* buf, size_t buf_len, const Header& hdr);
+size_t encode_heartbeat    (uint8_t* buf, size_t buf_len, const Header& hdr,
+                            const HeartbeatPayload& p);
 size_t encode_beat_detected(uint8_t* buf, size_t buf_len, const Header& hdr,
                             const BeatDetectedPayload& p);
 size_t encode_mode_change  (uint8_t* buf, size_t buf_len, const Header& hdr,
@@ -169,7 +180,8 @@ size_t encode_music_event  (uint8_t* buf, size_t buf_len, const Header& hdr,
 DecodeResult decode_header(const uint8_t* buf, size_t buf_len, Header& out_hdr);
 
 DecodeResult decode_heartbeat   (const Header& hdr,
-                                 const uint8_t* payload, size_t payload_len);
+                                 const uint8_t* payload, size_t payload_len,
+                                 HeartbeatPayload& out);
 DecodeResult decode_beat_detected(const Header& hdr,
                                   const uint8_t* payload, size_t payload_len,
                                   BeatDetectedPayload& out);

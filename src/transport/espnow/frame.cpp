@@ -26,6 +26,13 @@ inline void write_u24_le(uint8_t* dst, uint32_t v) {
     dst[2] = static_cast<uint8_t>((v >> 16) & 0xFF);
 }
 
+inline void write_u32_le(uint8_t* dst, uint32_t v) {
+    dst[0] = static_cast<uint8_t>(v & 0xFF);
+    dst[1] = static_cast<uint8_t>((v >> 8) & 0xFF);
+    dst[2] = static_cast<uint8_t>((v >> 16) & 0xFF);
+    dst[3] = static_cast<uint8_t>((v >> 24) & 0xFF);
+}
+
 inline uint16_t read_u16_le(const uint8_t* src) {
     return static_cast<uint16_t>(src[0]) |
            (static_cast<uint16_t>(src[1]) << 8);
@@ -35,6 +42,13 @@ inline uint32_t read_u24_le(const uint8_t* src) {
     return static_cast<uint32_t>(src[0]) |
            (static_cast<uint32_t>(src[1]) << 8) |
            (static_cast<uint32_t>(src[2]) << 16);
+}
+
+inline uint32_t read_u32_le(const uint8_t* src) {
+    return static_cast<uint32_t>(src[0]) |
+           (static_cast<uint32_t>(src[1]) << 8) |
+           (static_cast<uint32_t>(src[2]) << 16) |
+           (static_cast<uint32_t>(src[3]) << 24);
 }
 
 // Serialise the fixed 6-byte header. Forces protocol_version and writes
@@ -71,10 +85,14 @@ bool is_known_message_type(uint8_t raw) {
 // Encoders
 // =============================================================================
 
-size_t encode_heartbeat(uint8_t* buf, size_t buf_len, const Header& hdr) {
+size_t encode_heartbeat(uint8_t* buf, size_t buf_len, const Header& hdr,
+                        const HeartbeatPayload& p) {
     constexpr size_t total = kHeaderSize + kHeartbeatPayloadLen;
     if (buf_len < total) return 0;
     write_header(buf, hdr, MessageType::Heartbeat, kHeartbeatPayloadLen);
+    write_u32_le(buf + kHeaderSize + 0, p.tick);
+    write_u16_le(buf + kHeaderSize + 4, p.days_since_2026);
+    write_u24_le(buf + kHeaderSize + 6, p.centiseconds_today);
     return total;
 }
 
@@ -173,7 +191,8 @@ DecodeResult decode_header(const uint8_t* buf, size_t buf_len, Header& out_hdr) 
 }
 
 DecodeResult decode_heartbeat(const Header& hdr,
-                              const uint8_t* /*payload*/, size_t payload_len) {
+                              const uint8_t* payload, size_t payload_len,
+                              HeartbeatPayload& out) {
     if (hdr.message_type != MessageType::Heartbeat) {
         return DecodeResult::InvalidMessageType;
     }
@@ -181,6 +200,9 @@ DecodeResult decode_heartbeat(const Header& hdr,
         payload_len    != kHeartbeatPayloadLen) {
         return DecodeResult::PayloadLenMismatch;
     }
+    out.tick                = read_u32_le(payload + 0);
+    out.days_since_2026     = read_u16_le(payload + 4);
+    out.centiseconds_today  = read_u24_le(payload + 6);
     return DecodeResult::Ok;
 }
 

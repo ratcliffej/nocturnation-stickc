@@ -54,10 +54,30 @@ static void assert_header_bytes(const uint8_t* buf,
 static void test_heartbeat_round_trip(void) {
     uint8_t buf[kMaxFrameSize] = {};
     const Header in = make_header();
+    // Pick values that exercise each field's byte width:
+    //   tick               = 0x12345678
+    //   days_since_2026    = 0x0123
+    //   centiseconds_today = 0xABCDEF (24-bit ceiling)
+    const HeartbeatPayload p_in{
+        /*tick=*/               0x12345678u,
+        /*days_since_2026=*/    0x0123u,
+        /*centiseconds_today=*/ 0xABCDEFu,
+    };
 
-    const size_t n = encode_heartbeat(buf, sizeof(buf), in);
+    const size_t n = encode_heartbeat(buf, sizeof(buf), in, p_in);
     TEST_ASSERT_EQUAL_size_t(kHeaderSize + kHeartbeatPayloadLen, n);
     assert_header_bytes(buf, MessageType::Heartbeat, kHeartbeatPayloadLen);
+
+    // Spot-check little-endian payload bytes.
+    TEST_ASSERT_EQUAL_UINT8(0x78, buf[kHeaderSize + 0]);  // tick LSB
+    TEST_ASSERT_EQUAL_UINT8(0x56, buf[kHeaderSize + 1]);
+    TEST_ASSERT_EQUAL_UINT8(0x34, buf[kHeaderSize + 2]);
+    TEST_ASSERT_EQUAL_UINT8(0x12, buf[kHeaderSize + 3]);  // tick MSB
+    TEST_ASSERT_EQUAL_UINT8(0x23, buf[kHeaderSize + 4]);  // days_since_2026 LSB
+    TEST_ASSERT_EQUAL_UINT8(0x01, buf[kHeaderSize + 5]);  // days_since_2026 MSB
+    TEST_ASSERT_EQUAL_UINT8(0xEF, buf[kHeaderSize + 6]);  // centiseconds LSB
+    TEST_ASSERT_EQUAL_UINT8(0xCD, buf[kHeaderSize + 7]);
+    TEST_ASSERT_EQUAL_UINT8(0xAB, buf[kHeaderSize + 8]);  // centiseconds MSB (u24)
 
     Header decoded{};
     TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
@@ -69,10 +89,15 @@ static void test_heartbeat_round_trip(void) {
     TEST_ASSERT_EQUAL(MessageType::Heartbeat,        decoded.message_type);
     TEST_ASSERT_EQUAL_UINT8(kHeartbeatPayloadLen,    decoded.payload_len);
 
+    HeartbeatPayload p_out{};
     TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
                       static_cast<int>(decode_heartbeat(decoded,
                                                         buf + kHeaderSize,
-                                                        decoded.payload_len)));
+                                                        decoded.payload_len,
+                                                        p_out)));
+    TEST_ASSERT_EQUAL_UINT32(p_in.tick,               p_out.tick);
+    TEST_ASSERT_EQUAL_UINT16(p_in.days_since_2026,    p_out.days_since_2026);
+    TEST_ASSERT_EQUAL_UINT32(p_in.centiseconds_today, p_out.centiseconds_today);
 }
 
 static void test_beat_detected_round_trip(void) {
@@ -327,15 +352,13 @@ static void test_encode_buffer_too_small(void) {
     const Header in = make_header();
 
     TEST_ASSERT_EQUAL_size_t(0,
+        encode_heartbeat(buf, sizeof(buf), in, HeartbeatPayload{}));
+    TEST_ASSERT_EQUAL_size_t(0,
         encode_beat_detected(buf, sizeof(buf), in, BeatDetectedPayload{0, 0}));
     TEST_ASSERT_EQUAL_size_t(0,
         encode_light_command(buf, sizeof(buf), in, LightCommandPayload{}));
     TEST_ASSERT_EQUAL_size_t(0,
         encode_time_sync(buf, sizeof(buf), in, TimeSyncPayload{0, 0}));
-
-    // Heartbeat fits exactly in kHeaderSize (zero payload).
-    TEST_ASSERT_EQUAL_size_t(kHeaderSize,
-        encode_heartbeat(buf, sizeof(buf), in));
 }
 
 // ---------------------------------------------------------------------------
