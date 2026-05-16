@@ -248,15 +248,23 @@ A Lume configured with `slv_chan ∈ {1, 6, 11}` MUST set its Wi-Fi to that chan
 
 A Lume configured with `slv_chan == 0x00` MUST perform an auto-scan, defined as the following sequence:
 
-1. Set channel to 11. Listen for up to two seconds for any NocturNation frame with valid `protocol_version`.
+1. Set channel to 11. Listen for up to two seconds for any NocturNation frame with valid magic and `protocol_version`.
 2. If a frame is received, lock to channel 11 and exit scan.
 3. Otherwise, set channel to 1. Listen for up to two seconds.
 4. If a frame is received, lock to channel 1 and exit scan.
-5. Otherwise, repeat from step 1.
+5. Otherwise, set channel to 6. Listen for up to two seconds.
+6. If a frame is received, lock to channel 6 and exit scan.
+7. Otherwise, repeat from step 1.
 
-Channel 11 is checked first because it is the suggested show channel and is presumed higher priority. Channel 6 is not auto-scanned; a Lume on channel 6 MUST be explicitly locked.
+The scan order is 11 → 1 → 6 → repeat. Channel 11 is checked first because it is the suggested show channel and is presumed higher priority; channel 1 (hobby / open community) is the natural fallback; channel 6 (advanced operator override) is checked last because it is the least likely to carry traffic. Worst-case discovery latency from a cold start is six seconds.
 
-A Lume that has locked to a channel SHOULD re-enter auto-scan if it loses traffic for longer than the NO SIGNAL threshold (see [section 6](#6-heartbeat-and-liveness)) and the Lume was originally configured for auto-scan.
+### 5.4 Lume - re-scan on signal loss
+
+A Lume that was originally configured for auto-scan (`slv_chan == 0x00`) and has subsequently locked to a channel SHOULD re-enter auto-scan if it loses traffic for longer than `kRescanMs` milliseconds. The reference firmware uses `kRescanMs = 10000` (ten seconds).
+
+The re-scan threshold is **deliberately decoupled** from the NO SIGNAL display threshold (`kNoSignalGapMs = 3000`, see [section 6.2](#62-receiver-liveness-check)). NO SIGNAL displays quickly so the operator sees the outage; re-scan waits longer because most signal losses are transient (Director rebooting, brief congestion, a person walking between antennas) and a 7-second window of "stay on the current channel" is much more likely to recover the existing Director than a multi-channel hunt.
+
+A Lume explicitly locked to a channel by operator configuration (`slv_chan ∈ {1, 6, 11}`) MUST NOT re-enter auto-scan on signal loss. The operator chose that channel deliberately; the Lume MUST respect that choice and continue listening on the configured channel indefinitely. NO SIGNAL still displays for the operator's benefit, but no behavioural change follows.
 
 ---
 

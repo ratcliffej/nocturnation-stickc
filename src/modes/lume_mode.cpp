@@ -210,17 +210,30 @@ void LumeMode::loop_tick() {
         return;
     }
 
-    // Dual-channel scan in auto mode. Spec §4.5: alternate channel
-    // 11 (show priority) and channel 1 (hobby), 2 s dwell each.
+    // Three-channel scan in auto mode. Spec §5.3: rotate 11 (show)
+    // -> 1 (hobby) -> 6 (advanced override) -> repeat, 2 s dwell each.
     // Scans on cold start (no frames received yet, Director could be
-    // on either channel) AND on Director-loss (no_signal_). Any
-    // inbound frame in on_recv stops the scan implicitly because
+    // on any of the three channels) AND on Director-loss-past-rescan
+    // threshold. The re-scan trigger uses kRescanMs (10 s), not
+    // kNoSignalMs (3 s): NO SIGNAL displays quickly so the operator
+    // sees the outage, but we wait longer before giving up on the
+    // current channel because most outages are transient (Director
+    // reboot, brief congestion, person blocking line of sight).
+    // Any inbound frame in on_recv stops the scan implicitly because
     // it locks us to whichever channel we were on when the frame
-    // arrived.
-    const bool scanning = (lume_channel_pref_ == 0)
-                       && (rx_count_ == 0 || no_signal_);
+    // arrived. Locked Lumes (lume_channel_pref_ != 0) never re-scan -
+    // the operator picked that channel deliberately.
+    const bool should_rescan = (rx_count_ > 0)
+                            && (age_since_rx > kRescanMs);
+    const bool scanning      = (lume_channel_pref_ == 0)
+                            && (rx_count_ == 0 || should_rescan);
     if (scanning && (now - last_chan_switch_ms_) >= kChannelDwellMs) {
-        current_listen_chan_ = (current_listen_chan_ == 11) ? 1 : 11;
+        size_t idx = 0;
+        for (size_t i = 0; i < kScanOrderCount; ++i) {
+            if (kScanOrder[i] == current_listen_chan_) { idx = i; break; }
+        }
+        idx = (idx + 1) % kScanOrderCount;
+        current_listen_chan_ = kScanOrder[idx];
         last_chan_switch_ms_ = now;
         if (auto* radio = hal::HAL::esp_now()) {
             radio->set_channel(current_listen_chan_);

@@ -2,6 +2,38 @@
 
 Notable changes to the NocturNation M5 firmware. Newest first.
 
+## 2026-05-16 — Auto-scan adds channel 6, re-scan threshold decoupled
+
+Two behavioural changes to the Lume's auto-scan loop (spec v0.29
+§5.3 / §5.4):
+
+- **Scan order is now 11 → 1 → 6 → repeat** (was 11 → 1 → repeat).
+  Channel 6 (advanced operator override) is now a real auto-scan
+  target rather than operator-locked-only. Worst-case discovery
+  latency goes from 4 s to 6 s; in exchange a Lume on a freshly-
+  flashed device with default `slv_chan = 0` will find a Director
+  on any of the three configured channels without operator
+  intervention. Important for simple Lumes (bracelet form factor)
+  that lack a UI to set channel manually.
+
+- **Re-scan threshold is now `kRescanMs = 10000` (10 s)**,
+  decoupled from `kNoSignalMs = 3000` (3 s) which still drives the
+  NO SIGNAL display. NO SIGNAL still fires quickly so the operator
+  sees the outage; re-scan waits longer because most signal losses
+  are transient (Director reboot, brief congestion, person blocks
+  line of sight) and the existing channel is more likely to recover
+  than a new one to appear. Saves a ~6-second multi-channel hunt
+  when the Director is just briefly absent.
+
+- A Lume explicitly locked to a channel by operator configuration
+  (`slv_chan ∈ {1, 6, 11}`) still does **not** re-scan on signal
+  loss. The operator chose that channel; the Lume respects it.
+
+Code: new `kScanOrder[3] = {11, 1, 6}` and `kRescanMs` constants in
+`LumeMode`. Scan-rotation logic walks the order array. Scanning
+condition swapped from `no_signal_` (3 s) to a fresh `should_rescan`
+derived from `age_since_rx > kRescanMs`.
+
 ## 2026-05-16 — Protocol v2: magic prefix for ESP-NOW disambiguation
 
 Wire-incompatible bump from protocol version `0x01` to `0x02`.

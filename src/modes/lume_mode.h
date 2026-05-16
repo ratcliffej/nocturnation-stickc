@@ -98,12 +98,31 @@ private:
     std::array<ActiveBinding, kMaxActiveBindings> active_bindings_{};
     size_t                                        active_binding_count_ = 0;
 
-    // Channel preference: 0 = auto (dual-channel scan with show priority),
+    // Channel preference: 0 = auto (3-channel scan with show priority),
     // 1 / 6 / 11 = locked to that channel. Loaded from NVS on enter().
+    // Auto-scan order is 11 (show) -> 1 (hobby) -> 6 (advanced override) -> repeat,
+    // 2 s dwell per channel; the first channel that produces a valid
+    // NocturNation frame locks the Lume there. Locked Lumes never
+    // re-scan on signal loss (operator picked that channel deliberately;
+    // we respect that). Auto-mode Lumes re-scan after kRescanMs of
+    // no traffic - decoupled from kNoSignalMs so a brief Director
+    // outage doesn't force a full channel hunt.
     uint8_t   lume_channel_pref_   = 0;
     uint8_t   current_listen_chan_  = 1;
     uint32_t  last_chan_switch_ms_  = 0;
     static constexpr uint32_t kChannelDwellMs = 2000;
+    // Auto-scan ordered priority - show channel first, hobby second,
+    // advanced override last. Iterated in the dual-channel scan logic.
+    static constexpr uint8_t  kScanOrder[3]      = {11, 1, 6};
+    static constexpr size_t   kScanOrderCount    = 3;
+    // Re-scan threshold (auto-mode Lumes only). 10 s vs the 3 s NO SIGNAL
+    // display threshold: most signal losses are transient (Director
+    // reboot, brief congestion). Staying on the current channel for
+    // ~7 s past the NO SIGNAL prompt catches transient outages without
+    // forcing a multi-channel hunt; only after 10 s do we genuinely
+    // assume the Director has gone (or has changed channel) and start
+    // looking elsewhere.
+    static constexpr uint32_t kRescanMs           = 10000;
 
     // NocturNation group ID for receive filtering (Epic 4.65 Block 5).
     // Loaded from NVS on enter() via persistence::load_lume_group();
