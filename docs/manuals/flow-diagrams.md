@@ -3,7 +3,7 @@ title: "NocturNation flow diagrams"
 status: Draft
 notion_url: https://www.notion.so/35ebd0677405807cb34cccefa936d4d9
 notion_id: 35ebd0677405807cb34cccefa936d4d9
-last_synced: 2026-05-16
+last_synced: 2026-05-17
 sync_direction: bidirectional
 ---
 
@@ -29,47 +29,55 @@ Diagrams use [Mermaid](https://mermaid.js.org/) notation. GitHub, Notion, and mo
 
 ## 1. System topology
 
-The system has three device tiers and two wireless links. The Director listens to audio and broadcasts decisions; Lumes act as IR range extenders; bracelets are passive receivers worn by the audience.
+The Director runs the active Show, which decides what to send. A Show may consume audio analyser events (microphone), DMX cues (Epic 7), both, or neither. Decisions go out over ESP-NOW to Lumes and locally over IR + LCD; Lumes act as IR range extenders; downstream IR receivers (bracelets) are passive.
 
 ```mermaid
 flowchart LR
     Audio((Music<br/>speaker))
+    DMX[(DMX<br/>controller)]
 
     subgraph Director["Director Stick (Director mode)"]
         MMic[Microphone]
-        MAnalyser[Audio analyser<br/>+ Show plug-in]
-        MIR[IR transmitter<br/>loopback]
+        MAnalyser[Audio analyser]
+        MDMX[DMX input<br/>Epic 7 stub]
+        MShow[Active Show plug-in]
+        MIR["IR transmitter<br/>loopback (if ir_en)"]
         MLCD[Local LCD<br/>pulse]
         MMic --> MAnalyser
-        MAnalyser --> MIR
-        MAnalyser --> MLCD
+        MAnalyser -. on_audio_frame<br/>on_beat_detected .-> MShow
+        MDMX -. cue events .-> MShow
+        MShow --> MIR
+        MShow --> MLCD
     end
 
-    subgraph Slave1["Lume Stick A"]
-        S1Recv[ESP-NOW receive]
-        S1IR[IR transmitter]
-        S1Recv --> S1IR
+    subgraph Lume1["Lume Stick A"]
+        L1Recv[ESP-NOW receive]
+        L1IR[IR transmitter]
+        L1Recv --> L1IR
     end
 
-    subgraph Slave2["Lume Stick B"]
-        S2Recv[ESP-NOW receive]
-        S2IR[IR transmitter]
-        S2Recv --> S2IR
+    subgraph Lume2["Lume Stick B"]
+        L2Recv[ESP-NOW receive]
+        L2IR[IR transmitter]
+        L2Recv --> L2IR
     end
 
-    Bracelets[(PixMob X4<br/>bracelets)]
+    Receivers[(Bracelets /<br/>IR receivers)]
 
     Audio -. acoustic .-> MMic
-    MAnalyser -- "ESP-NOW LIGHT_COMMAND<br/>3× redundant TX" --> S1Recv
-    MAnalyser -- "ESP-NOW LIGHT_COMMAND<br/>3× redundant TX" --> S2Recv
+    DMX -. DMX-512 .-> MDMX
+    MShow -- "ESP-NOW LIGHT_COMMAND<br/>3× redundant TX" --> L1Recv
+    MShow -- "ESP-NOW LIGHT_COMMAND<br/>3× redundant TX" --> L2Recv
 
-    MIR -- "PixMob IR<br/>(omni / focused)" --> Bracelets
-    S1IR -- "PixMob IR" --> Bracelets
-    S2IR -- "PixMob IR" --> Bracelets
+    MIR -- "IR (PixMob today,<br/>protocol-pluggable)" --> Receivers
+    L1IR -- IR --> Receivers
+    L2IR -- IR --> Receivers
 ```
 
 Notes:
 - The Director is treated as one of its own Lumes for output purposes (the "loopback"): every `render_fx` call also fires the Director's own IR transmitter and LCD pulse.
+- IR transmission is gated by the `ir_en` config — a Show can run without IR at all (LCD + ESP-NOW only).
+- The IR encoder is protocol-pluggable. PixMob is the reference implementation today; future Lumes can carry different IR encoders without a wire-protocol change.
 - Lumes are receive-only by default. The Lume-as-repeater toggle re-broadcasts accepted frames at hop_count + 1, capped at 3 hops.
 - Bracelets are passive: they wake on an IR command, render the envelope, then return to standby.
 
@@ -140,8 +148,8 @@ flowchart TD
     Show[Active Show plug-in<br/>SimpleBeat / Dynamic]
     Show -- render_fx --> Dispatch[dispatch_output_class_group]
     Dispatch --> ESPNow[ESP-NOW broadcast]
-    Dispatch -. IR loopback .-> MasterIR
-    Dispatch -. screen loopback .-> MasterLCD
+    Dispatch -. IR loopback .-> DirectorIR
+    Dispatch -. screen loopback .-> DirectorLCD
 ```
 
 The analyser primitives are all Director-internal events. None of them are broadcast on the wire under spec v0.29 — the only Director-emitted frame types are `HEARTBEAT` (1 Hz, skip-if-recent) and `LIGHT_COMMAND` (per Show render). The DropDetector still runs and stamps its output onto `AudioFrameEvent::music_event` (`0` = none, `1` = DROP, `2` = BREAKDOWN, `3` = BUILD reserved). The field is **available as part of the Show toolset** — any Show that wants DROP- or BREAKDOWN-responsive behaviour can read it on `on_audio_frame` and compose a richer `LIGHT_COMMAND` accordingly. No current Show consumes it, but the wiring is intentional. The pre-v0.29 `MUSIC_EVENT` (0x06) standalone-wire broadcast was removed in the protocol trim, but the *Director-internal signal* it once carried is still here, just consumed differently.
@@ -161,7 +169,7 @@ flowchart TD
     Dispatch --> IRGate{target_class == 0 All<br/>or 1 Light?}
     Dispatch --> ScrGate{target_class == 0 All<br/>or 2 Screen?}
 
-    IRGate -- "yes" --> SendMain[Send IR frame<br/>via PixMob driver]
+    IRGate -- "yes" --> SendMain[Send IR frame<br/>via configured IR driver]
     IRGate -- "no" --> IRSkip[Skip IR]
 
     ScrGate -- "yes" --> LCDPulse[Pulse local LCD]
@@ -212,7 +220,7 @@ flowchart TD
     ClassF -- "no" --> Skip1[Skip this binding]
     ClassF -- "yes" --> Relay{binding.is_relay?}
 
-    Relay -- "yes (PixMob IR)" --> RelayFire["Fire binding<br/>(target_group passed through<br/>as PixMob protocol group code)"]
+    Relay -- "yes (IR relay)" --> RelayFire["Fire binding<br/>(target_group passed through<br/>as downstream IR group code)"]
     Relay -- "no (Local Display)" --> GroupF{target_group == 0 broadcast<br/>or<br/>target_group == slv_group?}
 
     GroupF -- "no" --> Skip2[Skip this binding]
@@ -223,7 +231,7 @@ Worth re-stating in prose because it catches people out:
 
 - **Broadcast** is sender-side. `target_group == 0` means "address every receiver in this class, regardless of the receiver's own group". The receiver MUST honour it.
 - **Group 0 receiver** is *not* a receive-side wildcard. A device with `slv_group == 0` is in no specific group and only renders broadcasts.
-- **Relay bindings** (PixMob IR) bypass the receive-side group filter because the downstream protocol (PixMob IR) does its own group filtering at the bracelet. The PixMob's five-bit group field is set from the inbound NocturNation `target_group`.
+- **Relay bindings** (IR relay) bypass the receive-side group filter because the downstream protocol does its own group filtering at the receiver. The downstream group field is set from the inbound NocturNation `target_group` (with PixMob, that's the five-bit group code; other IR encoders carry an equivalent field).
 
 ---
 
