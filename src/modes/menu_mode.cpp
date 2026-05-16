@@ -22,10 +22,10 @@ struct MenuItem {
 };
 
 constexpr MenuItem kMenuItems[] = {
-    { ModeId::Director, "Director" },
-    { ModeId::Lume,            "Lume"             },
-    { ModeId::Test,             "Test"              },
-    { ModeId::Config,           "Config"            },
+    { ModeId::Director, "Director Mode" },
+    { ModeId::Lume,     "Lume Mode"     },
+    { ModeId::Test,     "Test"          },
+    { ModeId::Config,   "Config"        },
 };
 constexpr size_t kMenuItemCount = sizeof(kMenuItems) / sizeof(kMenuItems[0]);
 
