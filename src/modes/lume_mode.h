@@ -10,6 +10,14 @@
 // idle-effect fallback, display-as-light, IR re-fire on the Lume) is
 // Block 4's work. For now LumeMode just shows a counter of received
 // frames and the last source_id / message type seen.
+//
+// **Audio analyser stays dormant in Lume mode** (spec v0.29 §8.2 power
+// optimisation). LumeMode never calls DAL::start_audio_input(); without
+// it the LocalDriver does not enable the mic, no spectrum frames are
+// produced, BeatDetector / DropDetector / SectionDetector never run,
+// and the FFT / energy-roll-up pipeline is dormant. This is the only
+// gate Lumes need - the analyser pipeline is mic-driven, not
+// free-running, so withholding mic capture cuts off the whole chain.
 
 #pragma once
 
