@@ -283,7 +283,7 @@ static void test_groups_2_merges_snare_and_hihat(void) {
 // Director's ir-pixmob driver alongside the ESP-NOW broadcast whenever
 // target_class is 0 or 1. Tests that opt into the loopback see an
 // ir-pixmob send call per render_fx.
-static void test_kick_fires_master_ir_via_loopback(void) {
+static void test_kick_fires_director_ir_via_loopback(void) {
     DynamicShow* d = dynamic_show_instance();
     auto& ctx = dynamic_show_context();
     d->enter(ctx);
@@ -458,7 +458,7 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_groups_3_snare_routes_to_group_2);
     RUN_TEST(test_groups_3_hihat_routes_to_group_3);
     RUN_TEST(test_groups_2_merges_snare_and_hihat);
-    RUN_TEST(test_kick_fires_master_ir_via_loopback);
+    RUN_TEST(test_kick_fires_director_ir_via_loopback);
     RUN_TEST(test_low_centroid_fires_cool_colour);
     RUN_TEST(test_high_centroid_fires_warm_colour);
     RUN_TEST(test_drop_section_fires_white);
