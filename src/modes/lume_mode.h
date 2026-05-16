@@ -30,7 +30,7 @@ namespace modes {
 class LumeMode : public Mode {
 public:
     ModeId id() const override { return ModeId::Lume; }
-    const char* name() const override { return "Slave"; }
+    const char* name() const override { return "Lume"; }
 
     void enter() override;
     void exit() override;

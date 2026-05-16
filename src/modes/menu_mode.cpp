@@ -22,8 +22,8 @@ struct MenuItem {
 };
 
 constexpr MenuItem kMenuItems[] = {
-    { ModeId::Director, "Autonomous Master" },
-    { ModeId::Lume,            "Slave"             },
+    { ModeId::Director, "Director" },
+    { ModeId::Lume,            "Lume"             },
     { ModeId::Test,             "Test"              },
     { ModeId::Config,           "Config"            },
 };

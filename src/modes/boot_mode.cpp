@@ -93,8 +93,8 @@ uint16_t BootMode::pulse_color(uint8_t step) {
 
 const char* BootMode::mode_label(ModeId m) {
     switch (m) {
-        case ModeId::Director: return "Master";
-        case ModeId::Lume:            return "Slave";
+        case ModeId::Director: return "Director";
+        case ModeId::Lume:            return "Lume";
         case ModeId::Config:           return "Config";
         case ModeId::Test:             return "Test";
         default:                       return "?";

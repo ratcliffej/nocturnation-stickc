@@ -902,11 +902,11 @@ void ConfigMode::draw_espnow() {
     char m_line[28];
     char s_line[28];
     char r_line[28];
-    std::snprintf(m_line, sizeof(m_line), "Master: %s",
+    std::snprintf(m_line, sizeof(m_line), "Director: %s",
                   director_channel_label(persistence::load_director_channel()));
-    std::snprintf(s_line, sizeof(s_line), "Slave:  %s",
+    std::snprintf(s_line, sizeof(s_line), "Lume:     %s",
                   lume_channel_label(persistence::load_lume_channel()));
-    std::snprintf(r_line, sizeof(r_line), "Repeat: %s",
+    std::snprintf(r_line, sizeof(r_line), "Repeat:   %s",
                   persistence::load_lume_repeat_enabled() ? "ON" : "OFF");
     const char* lines[kEspNowFunctionalItemCount] = { m_line, s_line, r_line };
 
@@ -1125,8 +1125,8 @@ void ConfigMode::draw_system() {
 
 const char* ConfigMode::mode_label_short(ModeId m) {
     switch (m) {
-        case ModeId::Director: return "Master";
-        case ModeId::Lume:            return "Slave";
+        case ModeId::Director: return "Director";
+        case ModeId::Lume:            return "Lume";
         case ModeId::Config:           return "Config";
         case ModeId::Test:             return "Test";
         default:                       return "?";

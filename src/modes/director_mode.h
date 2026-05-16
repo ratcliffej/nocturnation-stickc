@@ -36,7 +36,7 @@ namespace modes {
 class DirectorMode : public Mode {
 public:
     ModeId id() const override { return ModeId::Director; }
-    const char* name() const override { return "Autonomous Master"; }
+    const char* name() const override { return "Director"; }
 
     DirectorMode() = default;
 
