@@ -1,9 +1,9 @@
 # Developing a Show
 
 Reference for adding a new Show plug-in to the NocturNation firmware.
-A Show is the master-side performance unit — it consumes audio
+A Show is the Director-side performance unit — it consumes audio
 analyser events and decides what to send to bracelets, what to paint
-on the master screen, and how to respond to operator input.
+on the Director screen, and how to respond to operator input.
 
 This guide covers the API surface, the conventions, and a worked
 example. Read it once before you write your first Show; reach for the
@@ -28,9 +28,9 @@ section index when you need to look something up later.
 ## Concept
 
 A **Show** is a class derived from `nocturnation::shows::Show` that
-runs on the master device and produces a performance. The master-mode
-host (`AutonomousMasterMode`) holds exactly one active Show at a time;
-the operator picks which one via the master-mode picker overlay or
+runs on the Director device and produces a performance. The Director-mode
+host (`DirectorMode`) holds exactly one active Show at a time;
+the operator picks which one via the Director-mode picker overlay or
 via `ConfigMode > Show`. The active Show:
 
 - subscribes to analyser events (beat / snare / hi-hat / music
@@ -38,7 +38,7 @@ via `ConfigMode > Show`. The active Show:
 - decides what to send on the wire by calling
   `DAL::render_fx("<class>:<group>", ev)` with the Epic 4.65
   structured-target format;
-- owns the master's screen — the host's `loop_tick` clears + calls
+- owns the Director's screen — the host's `loop_tick` clears + calls
   `on_render()` at ~20 Hz when no overlay is open;
 - handles input that reaches it (the host intercepts Picker / Settings
   / Pause; the Show sees Cycle / Confirm / CyclePrev).
@@ -51,19 +51,19 @@ HAL (mic, display, buttons)
 DAL (FFT, BeatDetector, SnareDetector, HihatDetector,
      MusicDescriptors, SectionDetector, AudioFrameEvent)
   v
-AutonomousMasterMode (the host)
+DirectorMode (the host)
   v
 Show (your code) ---> DAL::render_fx ---> EspNowBroadcastDriver
-                                          + master's PixMobIrBinding
+                                          + Director's PixMobIrBinding
                                           + local screen
-                  ---> DAL::fire_display_* (master screen only)
+                  ---> DAL::fire_display_* (Director screen only)
                   ---> BeatBarWidget / SpectrumBarsWidget (composed
                                             inside `on_render`)
 ```
 
-Slaves receive `LIGHT_COMMAND` over ESP-NOW and run their own
+Lumes receive `LIGHT_COMMAND` over ESP-NOW and run their own
 `OutputBinding` fan-out — they don't run Shows. The Show framework is
-master-only.
+Director-only.
 
 ## File layout
 
@@ -204,7 +204,7 @@ nocturnation::shows::show_registry().register_plugin(
     nocturnation::shows::my_show_instance());
 ```
 
-That's it. The host walks the registry on master-mode entry, resolves
+That's it. The host walks the registry on Director-mode entry, resolves
 `persistence::load_active_show_id()` against `find(id)`, falls back to
 `"simple-beat"` if the saved id no longer registers, and `enter()`s
 the chosen Show.
@@ -332,18 +332,18 @@ chorus.
 
 One `render_fx` call fans out through `dispatch_output_class_group`
 in [src/dal/dal.cpp](../src/dal/dal.cpp) to three sinks. You do not
-need to hand-roll a separate transmission to the master's own IR
-LED or screen; the master is treated as one of its own slaves for
+need to hand-roll a separate transmission to the Director's own IR
+LED or screen; the Director is treated as one of its own Lumes for
 output purposes.
 
 1. **ESP-NOW broadcast**. Always fires, regardless of target_class.
-   Every slave on the channel sees the frame and applies its own
+   Every Lume on the channel sees the frame and applies its own
    class+group routing.
-2. **Master IR loopback**. Fires when `target_class` is `0x00`
-   (All) or `0x01` (Light). Drives the master's own PixMob infra-red
+2. **Director IR loopback**. Fires when `target_class` is `0x00`
+   (All) or `0x01` (Light). Drives the Director's own PixMob infra-red
    transmitter so bracelets near the operator's Stick also light up.
-3. **Master screen loopback**. Fires when `target_class` is `0x00`
-   (All) or `0x02` (Screen). Drives the master's LCD pulse animation
+3. **Director screen loopback**. Fires when `target_class` is `0x00`
+   (All) or `0x02` (Screen). Drives the Director's LCD pulse animation
    so the operator sees the fire on-screen.
 
 **Bracelet residue: pick cadence > envelope**. Bracelets carry brief
@@ -358,14 +358,14 @@ fire cadence. SparkleVis (T_0 + T_480 + T_480 = 960 ms envelope on
 an 1100 ms cadence) is the canonical example.
 
 **The single canonical call**. Pre-Epic-4.7 shows had to fire to
-`"all-pixmobs"` for the slaves *and* `"local"` for the master's own
+`"all-pixmobs"` for the Lumes *and* `"local"` for the Director's own
 LCD - three or more separate calls per beat. From Epic 4.7 onwards
 the single `render_fx("00:00", ev)` call covers everything. The
-master is no longer special.
+Director is no longer special.
 
 ## Drawing to the screen
 
-Your Show owns the master's LCD canvas during normal operation. The
+Your Show owns the Director's LCD canvas during normal operation. The
 host calls `on_render(ctx)` at ~20 Hz when no overlay is open. Your
 override should:
 
@@ -610,10 +610,10 @@ set, add it to the `build_src_filter` or create a new env.
 Native tests cover the math + plumbing; only hardware tests cover
 "does the show feel good". The checklist:
 
-- Master + at least one slave on the same ESP-NOW channel
-- Slave configured into one of your Show's groups (via
+- Director + at least one Lume on the same ESP-NOW channel
+- Lume configured into one of your Show's groups (via
   `Config > Group`)
-- Bracelet paired to the slave's PixMobIrBinding group
+- Bracelet paired to the Lume's PixMobIrBinding group
 - Live music or a known reference playlist
 - Confirm: kick fires, snare fires, hi-hat fires, palette tracks
   song mood, sections transition cleanly
@@ -630,7 +630,7 @@ reference implementation. It demonstrates every Block 1-4 surface:
 - `on_audio_frame` — caches the 8-band perceptual values for its
   on-screen spectrum widget.
 - `on_beat_detected(strength)` — tracks BPM via an IBI buffer, then
-  fires effects to group 1, plus a master-screen flash.
+  fires effects to group 1, plus a Director-screen flash.
 - `on_snare_detected(strength)` — fires to group 2.
 - `on_hihat_detected(strength)` — fires to group 3.
 - `on_music_descriptor(c, e, d)` — caches all three values for the
@@ -643,7 +643,7 @@ reference implementation. It demonstrates every Block 1-4 surface:
 - `render_fx("01:01", ev)` for kicks; `"01:02"` for snares;
   `"01:03"` for hi-hats. Colours, envelopes, and chance come from
   the cached descriptor + section state.
-- `fire_display_clear("local", ...)` on each kick for a master-screen
+- `fire_display_clear("local", ...)` on each kick for a Director-screen
   pulse.
 - Screen layout: title + section label (size 3) + descriptor readout
   + `SpectrumBarsWidget` filling the bottom region.

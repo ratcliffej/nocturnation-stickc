@@ -15,12 +15,12 @@ Diagrams use [Mermaid](https://mermaid.js.org/) notation. GitHub, Notion, and mo
 
 ## Contents
 
-1. [System topology](#1-system-topology) - master, slaves, bracelets, wires
+1. [System topology](#1-system-topology) - Director, Lumes, bracelets, wires
 2. [Boot flow](#2-boot-flow) - power-on through mode resume
 3. [Mode finite-state-machine](#3-mode-finite-state-machine) - the runtime modes
-4. [Master audio analyser pipeline](#4-master-audio-analyser-pipeline) - mic in, events out
-5. [Master render dispatch](#5-master-render-dispatch) - render_fx fan-out
-6. [Slave receive pipeline](#6-slave-receive-pipeline) - frame arrival through binding fire
+4. [Director audio analyser pipeline](#4-director-audio-analyser-pipeline) - mic in, events out
+5. [Director render dispatch](#5-director-render-dispatch) - render_fx fan-out
+6. [Lume receive pipeline](#6-lume-receive-pipeline) - frame arrival through binding fire
 7. [Class-and-group routing](#7-class-and-group-routing) - the addressing decision matrix
 8. [Configuration menu tree](#8-configuration-menu-tree) - operator-reachable settings
 
@@ -28,13 +28,13 @@ Diagrams use [Mermaid](https://mermaid.js.org/) notation. GitHub, Notion, and mo
 
 ## 1. System topology
 
-The system has three device tiers and two wireless links. The master listens to audio and broadcasts decisions; slaves act as IR range extenders; bracelets are passive receivers worn by the audience.
+The system has three device tiers and two wireless links. The Director listens to audio and broadcasts decisions; Lumes act as IR range extenders; bracelets are passive receivers worn by the audience.
 
 ```mermaid
 flowchart LR
     Audio((Music<br/>speaker))
 
-    subgraph Master["Master Stick (AutonomousMaster mode)"]
+    subgraph Director["Director Stick (Director mode)"]
         MMic[Microphone]
         MAnalyser[Audio analyser<br/>+ Show plug-in]
         MIR[IR transmitter<br/>loopback]
@@ -44,13 +44,13 @@ flowchart LR
         MAnalyser --> MLCD
     end
 
-    subgraph Slave1["Slave Stick A"]
+    subgraph Slave1["Lume Stick A"]
         S1Recv[ESP-NOW receive]
         S1IR[IR transmitter]
         S1Recv --> S1IR
     end
 
-    subgraph Slave2["Slave Stick B"]
+    subgraph Slave2["Lume Stick B"]
         S2Recv[ESP-NOW receive]
         S2IR[IR transmitter]
         S2Recv --> S2IR
@@ -68,8 +68,8 @@ flowchart LR
 ```
 
 Notes:
-- The master is treated as one of its own slaves for output purposes (the "loopback"): every `render_fx` call also fires the master's own IR transmitter and LCD pulse.
-- Slaves are receive-only by default. The slave-as-repeater toggle re-broadcasts accepted frames at hop_count + 1, capped at 3 hops.
+- The Director is treated as one of its own Lumes for output purposes (the "loopback"): every `render_fx` call also fires the Director's own IR transmitter and LCD pulse.
+- Lumes are receive-only by default. The Lume-as-repeater toggle re-broadcasts accepted frames at hop_count + 1, capped at 3 hops.
 - Bracelets are passive: they wake on an IR command, render the envelope, then return to standby.
 
 ---
@@ -82,7 +82,7 @@ flowchart TD
     Splash --> Interrupt{Lower button<br/>pressed?}
     Interrupt -- "yes" --> Menu[Enter Menu mode]
     Interrupt -- "no" --> Migrate[migrate_legacy_nvs_keys<br/>+ first-boot slv_group<br/>random 1, 2 or 3]
-    Migrate --> Load[Load last_mode from NVS<br/>default: AutonomousMaster]
+    Migrate --> Load[Load last_mode from NVS<br/>default: Director]
     Load --> Enter[Enter saved mode]
 ```
 
@@ -96,31 +96,31 @@ The first-boot path picks a random group in {1, 2, 3} and persists it; subsequen
 stateDiagram-v2
     [*] --> Boot
     Boot --> Menu: lower-button interrupt
-    Boot --> AutonomousMaster: default boot
-    Boot --> Slave: last_mode resumes
+    Boot --> Director: default boot
+    Boot --> Lume: last_mode resumes
     Boot --> Config: last_mode resumes
     Boot --> Test: last_mode resumes
 
-    Menu --> AutonomousMaster
-    Menu --> Slave
+    Menu --> Director
+    Menu --> Lume
     Menu --> Config
     Menu --> Test
 
-    AutonomousMaster --> Menu: long-press BtnA+BtnB
-    Slave --> Menu: long-press BtnA+BtnB
+    Director --> Menu: long-press BtnA+BtnB
+    Lume --> Menu: long-press BtnA+BtnB
     Config --> Menu: long-press BtnA+BtnB
     Test --> Menu: long-press BtnA+BtnB
 
-    AutonomousMaster --> Config: long-press BtnA
-    Slave --> Config: long-press BtnA
+    Director --> Config: long-press BtnA
+    Lume --> Config: long-press BtnA
 ```
 
 Mode IDs are stable across releases (see [protocol manual annex B](protocol-manual.md#annex-b-non-volatile-storage-schema)):
-- `0` Boot, `1` Menu, `2` AutonomousMaster, `3` Slave, `4` Config, `5` Test.
+- `0` Boot, `1` Menu, `2` Director, `3` Lume, `4` Config, `5` Test.
 
 ---
 
-## 4. Master audio analyser pipeline
+## 4. Director audio analyser pipeline
 
 ```mermaid
 flowchart TD
@@ -143,13 +143,13 @@ flowchart TD
     Dispatch -. screen loopback .-> MasterLCD
 ```
 
-The analyser primitives are master-internal events. They do not appear on the ESP-NOW wire other than `MUSIC_EVENT` (drop / breakdown / build). The Show plug-in consumes the events, computes colour and envelope, and dispatches `LIGHT_COMMAND` frames.
+The analyser primitives are Director-internal events. They do not appear on the ESP-NOW wire other than `MUSIC_EVENT` (drop / breakdown / build). The Show plug-in consumes the events, computes colour and envelope, and dispatches `LIGHT_COMMAND` frames.
 
 ---
 
-## 5. Master render dispatch
+## 5. Director render dispatch
 
-One `render_fx` call fans out to three sinks: ESP-NOW broadcast, master IR loopback, master LCD pulse. Exactly one IR frame is sent per dispatch call. (An Epic 4.7 build inserted a zero-RGB "primer" frame ahead of the main IR fire on idle gaps; bench testing in Epic 4.8 found the extra traffic overloaded the bracelet receivers, so the primer was removed.)
+One `render_fx` call fans out to three sinks: ESP-NOW broadcast, Director IR loopback, Director LCD pulse. Exactly one IR frame is sent per dispatch call. (An Epic 4.7 build inserted a zero-RGB "primer" frame ahead of the main IR fire on idle gaps; bench testing in Epic 4.8 found the extra traffic overloaded the bracelet receivers, so the primer was removed.)
 
 ```mermaid
 flowchart TD
@@ -169,7 +169,7 @@ flowchart TD
 
 ---
 
-## 6. Slave receive pipeline
+## 6. Lume receive pipeline
 
 Every ESP-NOW frame goes through these steps. The class-and-group routing is unpacked separately in section 7.
 
@@ -192,7 +192,7 @@ flowchart TD
 
     ForEach --> Route[See class-and-group<br/>routing diagram]
 
-    Repeater{Slave-as-repeater<br/>enabled?}
+    Repeater{Lume-as-repeater<br/>enabled?}
     Hop -- "after dedup OK" --> Repeater
     Repeater -- "yes" --> ReTX[Rebroadcast at<br/>hop_count + 1]
     Repeater -- "no" --> End[Done]
@@ -249,9 +249,9 @@ flowchart LR
     CI --> CIE["Enable / Disable<br/>(toggle, NVS: ir_en)"]
     CI --> CIP[Protocol: PixMob only]
 
-    CE --> CEM["Master Channel<br/>{1, 6, 11}<br/>NVS: mst_chan"]
-    CE --> CES["Slave Channel<br/>{0 auto, 1, 6, 11}<br/>NVS: slv_chan"]
-    CE --> CER["Slave Repeat<br/>(toggle, NVS: slv_repeat)"]
+    CE --> CEM["Director Channel<br/>{1, 6, 11}<br/>NVS: mst_chan"]
+    CE --> CES["Lume Channel<br/>{0 auto, 1, 6, 11}<br/>NVS: slv_chan"]
+    CE --> CER["Lume Repeat<br/>(toggle, NVS: slv_repeat)"]
 
     U --> UP[PixMob]
     U --> UL[Level Tuning]
@@ -279,7 +279,7 @@ Top-level cycle order is `Group → Show → Display → Connectivity → Utilit
 These diagrams are hand-derived from the firmware code. When the firmware changes any of these flows, update the corresponding diagram in this file. The diagrams are deliberately schematic - they exist to support a reader's mental model, not to be a substitute for reading the code. Specific anchors:
 
 - [src/dal/dal.cpp](../../src/dal/dal.cpp) - dispatch fan-out (section 5).
-- [src/modes/slave_mode.cpp](../../src/modes/slave_mode.cpp) - receive pipeline and class-and-group routing (sections 6 and 7).
+- [src/modes/lume_mode.cpp](../../src/modes/lume_mode.cpp) - receive pipeline and class-and-group routing (sections 6 and 7).
 - [src/modes/mode_machine.cpp](../../src/modes/mode_machine.cpp) - mode finite-state-machine (section 3).
 - [src/modes/config_mode.cpp](../../src/modes/config_mode.cpp) - configuration tree (section 8).
 - [src/modes/persistence.cpp](../../src/modes/persistence.cpp) - first-boot slv_group assignment (section 2).

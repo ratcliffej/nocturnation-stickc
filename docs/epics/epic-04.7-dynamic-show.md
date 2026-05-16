@@ -20,7 +20,7 @@ sync_direction: bidirectional
 
 Two deliverables in one Epic:
 
-**A. Refactor master mode around a Show plug-in framework.** Today AutonomousMasterMode bakes one performance into the firmware (beat → broadcast colour to all groups). A Show is the right unit to make swappable: a developer should be able to drop in a C++ Show class with a defined entry point and analyser-event hook surface, register it, and have it appear in the master-mode show picker. Shows own the screen, button handling, and what gets sent on the wire — they decide whether to draw a beat bar, a spectrum analyser, a custom visual, diagnostic text, or nothing at all. Existing functionality is preserved by reimplementing today's behaviour as `SimpleBeatShow`.
+**A. Refactor Director mode around a Show plug-in framework.** Today DirectorMode bakes one performance into the firmware (beat → broadcast colour to all groups). A Show is the right unit to make swappable: a developer should be able to drop in a C++ Show class with a defined entry point and analyser-event hook surface, register it, and have it appear in the Director-mode show picker. Shows own the screen, button handling, and what gets sent on the wire — they decide whether to draw a beat bar, a spectrum analyser, a custom visual, diagnostic text, or nothing at all. Existing functionality is preserved by reimplementing today's behaviour as `SimpleBeatShow`.
 
 **B. Build a richer Show driven by the FFT and class+group routing.** Use the per-band FFT magnitudes Epic 4.5 already exposes to compute multi-band onset events (kick / snare / hi-hat), spectral centroid, energy envelope, and onset density. Add section detection (verse / chorus / build / breakdown) as a slower-window state machine. A new Show (`DynamicShow`) consumes all of the above and uses the post-Epic-4.65 class+group routing to send different effects to different device groups — kick to group 1, bass to group 2, cymbals to group 3, palette shifts on section change — so the lights track the song's whole shape, not just the kick.
 
@@ -40,15 +40,15 @@ The conversation that produced this Epic surfaced terminology that the codebase 
 
 | Layer | Who runs it | What it does |
 |---|---|---|
-| **Show** (new plug-in surface) | Master only | Owns the performance: subscribes to analyser events, makes `render_fx()` calls with class+group targets, owns the screen, owns button handling (except the back gesture). One Show active at a time. |
-| **Widget library** (formerly Visualisations) | Master, composed by Shows or by Utilities | Reusable level-tuning UI: beat-bar, spectrum-bars. Renderable inside a Show *or* standalone via `ConfigMode > Utilities > Level Tuning`. Library, not plug-in surface, for now. |
-| **Slave mode** | Slave | Unchanged. Inbound render_fx → LocalDisplayBinding (screen) + PixMobIrBinding (IR relay). No shows, no widgets. |
+| **Show** (new plug-in surface) | Director only | Owns the performance: subscribes to analyser events, makes `render_fx()` calls with class+group targets, owns the screen, owns button handling (except the back gesture). One Show active at a time. |
+| **Widget library** (formerly Visualisations) | Director, composed by Shows or by Utilities | Reusable level-tuning UI: beat-bar, spectrum-bars. Renderable inside a Show *or* standalone via `ConfigMode > Utilities > Level Tuning`. Library, not plug-in surface, for now. |
+| **Lume mode** | Lume | Unchanged. Inbound render_fx → LocalDisplayBinding (screen) + PixMobIrBinding (IR relay). No shows, no widgets. |
 
 The existing `active_vis` NVS key retires (consumed by `migrate_legacy_nvs_keys`). A new `active_show` NVS key replaces it, persisting the operator's last Show choice. Each Show is free to decide what to draw on the screen — there is no longer a separate "visualisation" concept at the framework level.
 
-## Master-mode show pathways
+## Director-mode show pathways
 
-The new framework supports three pathways for how a master generates a performance:
+The new framework supports three pathways for how a Director generates a performance:
 
 1. **Simple broadcast** — beat detection drives a single colour event to all devices / all groups. Today's behaviour. Implemented as `SimpleBeatShow` in Block 1.
 2. **Class+group routed** — different musical content drives different targets: kick to group 1, bass to group 2, cymbals to group 3; palette changes per section. Implemented as `DynamicShow` in Block 5. Multiple variants of this Show could co-exist over time as developers tune for different music styles (rock, dance, ambient).
@@ -62,7 +62,7 @@ Verification ownership: **(L)** = laptop / native test, **(B)** = build-time che
 
 ## Algorithmic primitives
 
-Four primitives live in the audio analyser layer (`src/audio_analyser/`), computed once per FFT frame on the master, exposed as events on the Show plug-in API. They are **not** wire payloads — analyser output stays master-local; the wire still only carries `LIGHT_COMMAND` (per Epic 4.65 settle).
+Four primitives live in the audio analyser layer (`src/audio_analyser/`), computed once per FFT frame on the Director, exposed as events on the Show plug-in API. They are **not** wire payloads — analyser output stays Director-local; the wire still only carries `LIGHT_COMMAND` (per Epic 4.65 settle).
 
 ### Multi-band onset detection
 
@@ -94,7 +94,7 @@ Rolling RMS across all FFT bins, smoothed over ~0.5-1 second. The song's volume 
 
 Events-per-second across all bands, smoothed. Tracks how busy the music is — a chorus with kick-snare-hihat firing densely has higher density than a sparse verse. Shows map it to effect probability or layer count.
 
-`on_music_descriptor()` carries centroid + energy + density together, fired at FFT rate (master-internal, no wire cost). Rate-limited delivery to Show hooks: only fired when any value changes by more than the configured threshold (default 5 %), to avoid useless every-frame churn.
+`on_music_descriptor()` carries centroid + energy + density together, fired at FFT rate (Director-internal, no wire cost). Rate-limited delivery to Show hooks: only fired when any value changes by more than the configured threshold (default 5 %), to avoid useless every-frame churn.
 
 ### Section detection
 
@@ -144,13 +144,13 @@ public:
 };
 ```
 
-`AutonomousMasterMode` becomes a thin host: holds the active Show, dispatches analyser events into it, dispatches button events into it, calls `on_render()` per frame. The Show makes `DAL::render_fx("<class>:<group>", ev)` calls when it wants to drive devices.
+`DirectorMode` becomes a thin host: holds the active Show, dispatches analyser events into it, dispatches button events into it, calls `on_render()` per frame. The Show makes `DAL::render_fx("<class>:<group>", ev)` calls when it wants to drive devices.
 
 ### Show selection
 
-Operator picks a Show via the master-mode entry path:
+Operator picks a Show via the Director-mode entry path:
 
-- On entering Master mode, either jump straight to the last-used Show (NVS `active_show`) or surface a brief picker if more than one Show is registered. Final UX settled in Block 1.
+- On entering Director mode, either jump straight to the last-used Show (NVS `active_show`) or surface a brief picker if more than one Show is registered. Final UX settled in Block 1.
 - `ConfigMode > Show` provides explicit selection / preview.
 - New Shows register at firmware boot via a `register_show()` call alongside the existing plug-in registrations.
 
@@ -162,9 +162,9 @@ Operator picks a Show via the master-mode entry path:
 - A Show that wants in-show level tuning constructs the widget, feeds it analyser data (or manually-set values), and calls `draw()` from its own `on_render()`.
 - `ConfigMode > Utilities > Level Tuning` becomes a small sub-mode that hosts the widgets standalone for bench work, supporting manual level injection so a developer can verify the IR/ESP-NOW path independently of audio.
 
-### Slave mode
+### Lume mode
 
-Unchanged. The Show framework is master-only. Slaves continue to:
+Unchanged. The Show framework is Director-only. Lumes continue to:
 
 - Receive `LIGHT_COMMAND` on ESP-NOW (target_class + target_group filtering per Epic 4.65)
 - Render to `LocalDisplayBinding` (screen mirror) and `PixMobIrBinding` (IR relay)
@@ -172,16 +172,16 @@ Unchanged. The Show framework is master-only. Slaves continue to:
 
 ### Wire format
 
-**No new wire payloads.** Analyser primitives are master-internal; Shows consume them and produce class+group-targeted `LIGHT_COMMAND` traffic via `render_fx()`. This is the Epic 4.65 settle held intact — the wire stays minimal.
+**No new wire payloads.** Analyser primitives are Director-internal; Shows consume them and produce class+group-targeted `LIGHT_COMMAND` traffic via `render_fx()`. This is the Epic 4.65 settle held intact — the wire stays minimal.
 
 ## Scope
 
 **Included**
 
-- Show plug-in framework (`Show` base class, `register_show()` registry, `AutonomousMasterMode` host refactor)
+- Show plug-in framework (`Show` base class, `register_show()` registry, `DirectorMode` host refactor)
 - `SimpleBeatShow` (preserves today's beat → broadcast-to-all behaviour)
 - `DynamicShow` (consumes new analyser primitives; routes via class+group)
-- Show selection UI (master-mode entry + `ConfigMode > Show`)
+- Show selection UI (Director-mode entry + `ConfigMode > Show`)
 - `active_show` NVS key + legacy-`active_vis` consumption in `migrate_legacy_nvs_keys()`
 - Widget library extraction: `BeatBarWidget`, `SpectrumBarsWidget` in `src/widgets/`
 - `ConfigMode > Utilities > Level Tuning` sub-mode hosting the widgets with manual injection
@@ -195,7 +195,7 @@ Unchanged. The Show framework is master-only. Slaves continue to:
 **Explicitly excluded**
 
 - Third-party widget plug-in surface (widgets stay library-only this Epic; promote to plug-in surface later if developer demand surfaces)
-- New ESP-NOW message types — analyser output stays master-internal
+- New ESP-NOW message types — analyser output stays Director-internal
 - DMX / Art-Net / QLC+ integration (Epic 7)
 - Tempo-aware autocorrelation tracking (post-EMF stretch)
 - ML-based section recognition (rule-based is sufficient)
@@ -213,13 +213,13 @@ Unchanged. The Show framework is master-only. Slaves continue to:
 - [ ] **(L)** Energy envelope tracks the volume contour of a quiet-loud-quiet test signal.
 - [ ] **(L)** Section detection identifies sections correctly on a labelled test track (manual annotation as ground truth; > 70 % accuracy on transition timing within ±2 seconds).
 - [ ] **(L)** Show plug-in framework: stub Show registered with the registry is reachable via the registry API; hook dispatch fires on simulated analyser events; show switching invokes `on_exit()` / `on_enter()` cleanly.
-- [ ] **(H)** Master-mode entry shows the active Show by default; the picker / ConfigMode path can change the active Show and the new choice persists across reboots.
+- [ ] **(H)** Director-mode entry shows the active Show by default; the picker / ConfigMode path can change the active Show and the new choice persists across reboots.
 - [ ] **(H)** `SimpleBeatShow` produces the same visible behaviour as the pre-refactor firmware (no regression for existing users).
 - [ ] **(H)** `DynamicShow` with a varied playlist (pop, dance, drum & bass, ballad, ambient, drum machine): kick events route to group 1; snare to group 2; hi-hat to group 3; centroid drives hue drift; energy drives brightness; section transitions produce visible palette changes.
 - [ ] **(H)** Cross-device consistency: Plus2 and S3 placed side-by-side produce visually equivalent output for the same audio under both Shows.
 - [ ] **(H)** Widget library: `BeatBarWidget` and `SpectrumBarsWidget` render correctly both standalone (Utilities > Level Tuning) and composed inside `DynamicShow`. Manual level injection in Utilities drives the widgets without audio input.
 - [ ] **(H)** Subjective "feels alive" test: Jason plays a varied playlist through `DynamicShow`; the lights produce a visibly different show for each genre without per-genre configuration.
-- [ ] **(H)** No regression: Epic 4.5 beat detection still works; Epic 4.6 UI is unchanged; Epic 4.65 class+group routing still works; slave mode still relays IR + renders local-screen mirror.
+- [ ] **(H)** No regression: Epic 4.5 beat detection still works; Epic 4.6 UI is unchanged; Epic 4.65 class+group routing still works; Lume mode still relays IR + renders local-screen mirror.
 - [ ] **(L)** Developer documentation at `docs/developing-shows.md` covers: Show base-class API, registration, analyser hook surface, `render_fx()` targeting with class+group, widget composition, NVS persistence, and native + hardware testing patterns. A contributor can write and register a new Show from the doc alone, without reading the framework source.
 - [ ] Architecture spec updated to v0.23.
 
@@ -231,10 +231,10 @@ Land the framework first, preserve current behaviour, no analyser changes.
 
 - New `include/shows/show.h` with the `Show` base class and registry
 - New `src/shows/show_registry.cpp` matching the existing plug-in-registry style
-- `AutonomousMasterMode` refactored to host the active Show: subscribes to analyser events on its behalf, dispatches button events, calls `on_render()`
+- `DirectorMode` refactored to host the active Show: subscribes to analyser events on its behalf, dispatches button events, calls `on_render()`
 - `SimpleBeatShow` (`src/shows/simple_beat_show.cpp`): reproduces the pre-refactor behaviour by consuming `on_beat_detected()` and calling `DAL::render_fx("00:00", ev)`
 - `active_show` NVS key + `migrate_legacy_nvs_keys()` consumes `active_vis`
-- Master-mode entry: jump to active Show; surface a picker if more than one is registered
+- Director-mode entry: jump to active Show; surface a picker if more than one is registered
 - ConfigMode entry under `> Show` (top level) for explicit selection
 - Native unit tests: Show registry / framework
 - Commit: "Show plug-in framework with SimpleBeatShow preserving current behaviour"
@@ -292,7 +292,7 @@ The Epic's headline Show, consuming everything Blocks 3-4 expose.
 
 Empirical listening + watching. Pure (H) work; no code changes outside parameter constants.
 
-- Plus2 and S3 side-by-side with three or more slave devices on distinct groups
+- Plus2 and S3 side-by-side with three or more Lume devices on distinct groups
 - Varied test playlist (Vengaboys, Coldplay ballad, drum & bass, dance with build/drop, ambient, drum machine, podcast for silence-test, rock)
 - Tune threshold multipliers, smoothing time constants, section-detection rules, palette mappings until each genre produces a visibly distinct and pleasant show
 - Document final tuning parameters in the spec for future contributors
@@ -304,10 +304,10 @@ Empirical listening + watching. Pure (H) work; no code changes outside parameter
 A standalone developer guide so a contributor can write and register a Show without having to read the framework source. Doubles as a forcing function on the API: if something is awkward to explain in prose, that is a signal to revisit the API in the framework blocks before tuning lands.
 
 - New `docs/developing-shows.md` covering:
-  - **Concept**: Show as a master-side performance plug-in; how it fits between Modes, the audio analyser, the widget library, and the DAL.
+  - **Concept**: Show as a Director-side performance plug-in; how it fits between Modes, the audio analyser, the widget library, and the DAL.
   - **File layout**: where Show headers / sources / registration live (`include/shows/`, `src/shows/`).
   - **Show base-class API**: every virtual on `Show`, with "when fired / what to do" notes and the default no-op behaviour. Includes `id()`, `display_name()`, `on_enter()`, `on_exit()`, and every analyser, render, and button hook.
-  - **Registration**: `register_show()` call site and registry ordering; how Shows appear in the master-mode picker.
+  - **Registration**: `register_show()` call site and registry ordering; how Shows appear in the Director-mode picker.
   - **Analyser hook surface**: `on_beat_detected`, `on_snare_detected`, `on_hihat_detected`, `on_music_descriptor`, `on_section_change` — with timing characteristics (event rates, smoothing windows, refractory periods).
   - **Sending light commands**: `DAL::render_fx("<class>:<group>", ev)` with the structured-target format from Epic 4.65, the `hal::DeviceClass` enum, group conventions (0 = all, 1..n = specific), and `RgbPulseEvent` field semantics (r, g, b, attack, sustain, release, chance).
   - **Drawing to the screen**: `Canvas` API, frame cadence, what `on_render()` may and may not do.
@@ -357,7 +357,7 @@ Processing Type stays **Hybrid** because algorithm work is well-suited to laptop
 
 Closed with Blocks 1-5, 7, and 8 shipped to main and verified against 348 native tests across 17 envs. Block 6 (hardware tuning) was done inline via a series of bench iterations against bracelets rather than as a discrete tuning pass — the tuning surfaced architectural fixes that fed back into the code rather than just parameter tweaks. Highlights:
 
-- **Master-IR loopback in `dispatch_output_class_group`**. `render_fx` calls fire ESP-NOW broadcast + master's PixMob IR LED + master's screen pulse from one entry point. Shows no longer hand-roll a "fire to all-pixmobs in addition" call - the dispatch path treats the master as its own slave for output purposes. Class+group filtering is honoured (only Light-class targets reach IR; only Screen-class reach LocalDriver).
+- **Director-IR loopback in `dispatch_output_class_group`**. `render_fx` calls fire ESP-NOW broadcast + Director's PixMob IR LED + Director's screen pulse from one entry point. Shows no longer hand-roll a "fire to all-pixmobs in addition" call - the dispatch path treats the Director as its own Lume for output purposes. Class+group filtering is honoured (only Light-class targets reach IR; only Screen-class reach LocalDriver).
 - **IR reset primer**, idle-gated. Bench observation that Pulse / Fade fires landed but bracelets didn't respond, and that Sparkle / WhiteOut fades picked up colour artefacts and ended abruptly. Diagnosed as residual envelope state on bracelets between commands. Fix: `dispatch_output_class_group` sends an rgb=0 broadcast primer before the main fire when the IR transmitter has been idle for > 300 ms. The primer clears bracelet state; the main fire then runs cleanly. Continuous high-cadence streams (Rainbow at 25 ms cycle) skip the primer via the idle gate. **(Rolled back in Epic 4.8 on 2026-05-12: further bench testing showed the extra IR frame doubled effective traffic on every sparse-cadence show and overloaded the bracelet receivers — only Rainbow, which skipped the primer via the idle gate, rendered reliably. The dispatch now sends exactly one IR frame per `render_fx` call; shows manage residue by sizing envelopes to fit inside their fire cadence.)**
 - **`DynamicShow.groups` property**, default 1 = broadcast. Bench testing confirmed bracelets ship at random groups, so per-drum group routing (kick→1, snare→2, hi-hat→3) only works after the operator pre-programmes bracelets. Default 1 fires everything to PixMob group 0 (broadcast), works out of the box on any deployment. Operator bumps to 3 for the full per-drum split.
 - **TestMode unification**. Pulse / Fade / Rainbow / Sparkle / WhiteOut all collapse from three render_fx calls each (`"all-pixmobs"` + `"local"` + `"00:00"`) to one (`"00:00"`). The loopback handles fan-out.

@@ -11,32 +11,32 @@ sync_direction: bidirectional
 ## Related documents
 
 - [NocturNation protocol manual](../manuals/protocol-manual.md) - the authoritative implementation specification for Epic 5. Every byte on the wire is documented here. Where this Epic references protocol behaviour, it points at sections of this manual rather than at the architecture spec.
-- [NocturNation user manual](../manuals/user-manual.md) - operator-facing behaviour expected of a NocturNation slave; the Tildagon should match it as closely as the form factor allows.
+- [NocturNation user manual](../manuals/user-manual.md) - operator-facing behaviour expected of a NocturNation Lume; the Tildagon should match it as closely as the form factor allows.
 - [Architecture specification](../architecture.md) - internal design notes. §15 photosensitivity / Calm Mode is the load-bearing reference for Epic 5 safety work.
 - [Epic 4 (ESP-NOW transport)](epic-04-esp-now.md) - the transport surface the Tildagon connects to.
 - [Epic 4.65 (class+group addressing)](epic-04.65-device-addressing.md) - the addressing model the Tildagon participates in. `MultiLedScreen` (`0x03`) is reserved for Tildagon-class devices in the `DeviceClass` enum.
-- [Epic 4.7 (dynamic shows)](epic-04.7-dynamic-show.md) - the show framework whose output the Tildagon consumes. Important context: the analyser primitives (snare, hi-hat, descriptors, sections) feed master-internal show logic and produce `LIGHT_COMMAND` fires - they are not broadcast as separate wire messages.
+- [Epic 4.7 (dynamic shows)](epic-04.7-dynamic-show.md) - the show framework whose output the Tildagon consumes. Important context: the analyser primitives (snare, hi-hat, descriptors, sections) feed Director-internal show logic and produce `LIGHT_COMMAND` fires - they are not broadcast as separate wire messages.
 
 ## Goal
 
-Build the Tildagon receiver app: a MicroPython app that runs on the EMF Tildagon badge, listens for NocturNation ESP-NOW frames, and animates the badge's twelve perimeter LEDs (indexed 1..12 per the Tildagon hardware API) and 240×240 round LCD in time with the music produced by a master Stick. Calm Mode default-on per [architecture spec §15](../architecture.md). **Fresh codebase; not a port of the M5 Stick firmware.**
+Build the Tildagon receiver app: a MicroPython app that runs on the EMF Tildagon badge, listens for NocturNation ESP-NOW frames, and animates the badge's twelve perimeter LEDs (indexed 1..12 per the Tildagon hardware API) and 240×240 round LCD in time with the music produced by a Director Stick. Calm Mode default-on per [architecture spec §15](../architecture.md). **Fresh codebase; not a port of the M5 Stick firmware.**
 
-## Architectural constraint: Tildagon is slave-only
+## Architectural constraint: Tildagon is Lume-only
 
-The Tildagon has no microphone and is therefore inherently slave-only. It cannot run autonomous audio analysis; it cannot be a master. This is not a limitation worth working around with hexpansions; it is a clean architectural fact that strengthens the design for the first version.
-It should be noted that future versions will likely incorporate a master mode, but it will be architecturally different to the ESP32 version, e.g. responding to button presses, an external mic, or providing Art-Net/DMX compatibility, but this will be for a future epic.
+The Tildagon has no microphone and is therefore inherently Lume-only. It cannot run autonomous audio analysis; it cannot be a Director. This is not a limitation worth working around with hexpansions; it is a clean architectural fact that strengthens the design for the first version.
+It should be noted that future versions will likely incorporate a Director mode, but it will be architecturally different to the ESP32 version, e.g. responding to button presses, an external mic, or providing Art-Net/DMX compatibility, but this will be for a future epic.
 
 Implications:
 
-- The Tildagon app implements **Slave behaviour only**, not the full M5 mode finite-state-machine. There is no master-mode option to expose at this time. It should be noted, though that this may change.
-- The Tildagon **boots directly into receive mode** with channel auto-scan (per [protocol manual §5.3](../manuals/protocol-manual.md#53-slave-auto-scan-mode)). No mode menu at boot - if anything, just channel selection.
+- The Tildagon app implements **Lume behaviour only**, not the full M5 mode finite-state-machine. There is no Director-mode option to expose at this time. It should be noted, though that this may change.
+- The Tildagon **boots directly into receive mode** with channel auto-scan (per [protocol manual §5.3](../manuals/protocol-manual.md#53-lume-auto-scan-mode)). No mode menu at boot - if anything, just channel selection.
 - The Tildagon is a pure receiver: ESP-NOW receive only, no transmission. This is now [protocol-required of any receiver](../manuals/protocol-manual.md#74-receiver-must-not) (a conforming receiver MUST NOT transmit NocturNation frames other than as a repeater or to render a local infra-red equivalent - and the Tildagon does neither).
 
 The Tildagon being mic-less validates the same dumb-receiver / smart-upstream-source pattern that any future companion-app device will use. Same protocol, different upstream. The Tildagon is, in effect, a *good prototype* for the eventual mic-less receiver pattern, being validated on real hardware first.
 
 What the Tildagon *cannot* do compared to an M5 Stick:
 
-- Operate standalone in a venue without a master (it would just sit dark with no input).
+- Operate standalone in a venue without a Director (it would just sit dark with no input).
 - Generate beats from ambient music.
 - Be used at home with the user's own music *without external infrastructure*.
 
@@ -50,11 +50,11 @@ What the Tildagon *can* do that an M5 Stick cannot, easily:
 
 Spelled out here because the Notion draft was loose on this and Epic 5 needs the rule exact:
 
-- `target_group == 0` on a `LIGHT_COMMAND` is the **broadcast group**. Every receiver renders, regardless of the receiver's own configured group. This is the canonical "address everyone" form and is the default routing for `render_fx` calls on the reference master.
+- `target_group == 0` on a `LIGHT_COMMAND` is the **broadcast group**. Every receiver renders, regardless of the receiver's own configured group. This is the canonical "address everyone" form and is the default routing for `render_fx` calls on the reference Director.
 - `target_group == N` for non-zero N addresses only receivers whose own configured group is exactly N.
 - A receiver whose **own** group is 0 has no group and only renders broadcasts; it is not a receive-side wildcard.
 
-First-boot default: receivers (StickC slaves *and* Tildagons) **MUST** persist a random group in {1, 2, 3} on first boot, so a fleet of newly-flashed devices distributes naturally across the three drum groups that DynamicShow routes kick / snare / hi-hat to. The operator can override via the in-app settings (any value 0..255, with 0 explicitly meaning "broadcast only").
+First-boot default: receivers (StickC Lumes *and* Tildagons) **MUST** persist a random group in {1, 2, 3} on first boot, so a fleet of newly-flashed devices distributes naturally across the three drum groups that DynamicShow routes kick / snare / hi-hat to. The operator can override via the in-app settings (any value 0..255, with 0 explicitly meaning "broadcast only").
 
 This rule is now implemented on the StickC at [src/modes/persistence.cpp::migrate_legacy_nvs_keys()](../../src/modes/persistence.cpp) (Epic 5 prep), and codified normatively in [protocol manual §4.2](../manuals/protocol-manual.md#42-group-filtering). The Tildagon receiver replicates the same behaviour in MicroPython.
 
@@ -62,14 +62,14 @@ This rule is now implemented on the StickC at [src/modes/persistence.cpp::migrat
 
 This is the most important change from the original Notion draft.
 
-The Tildagon receives **`LIGHT_COMMAND` frames** (message type `0x03`, [protocol manual §3.3.4](../manuals/protocol-manual.md#334-light_command-0x03)) and filters them against its configured device class and group. It is structurally an `OutputBinding`-shaped consumer, not a separate kind of receiver that consumes analyser events directly. There is no `SNARE_DETECTED` / `HIHAT_DETECTED` / `MUSIC_DESCRIPTOR` / `SECTION_CHANGE` message type to consume; those are master-internal analyser primitives that the master's `DynamicShow` plug-in consumes to compute and dispatch `LIGHT_COMMAND` frames.
+The Tildagon receives **`LIGHT_COMMAND` frames** (message type `0x03`, [protocol manual §3.3.4](../manuals/protocol-manual.md#334-light_command-0x03)) and filters them against its configured device class and group. It is structurally an `OutputBinding`-shaped consumer, not a separate kind of receiver that consumes analyser events directly. There is no `SNARE_DETECTED` / `HIHAT_DETECTED` / `MUSIC_DESCRIPTOR` / `SECTION_CHANGE` message type to consume; those are Director-internal analyser primitives that the Director's `DynamicShow` plug-in consumes to compute and dispatch `LIGHT_COMMAND` frames.
 
 In practical terms:
 
-- **Kick drum** at the master fires a `LIGHT_COMMAND` to class `0x01` (Light) group 1 (in DynamicShow's `groups=3` config) or group 0 broadcast (in DynamicShow's default `groups=1`).
-- **Snare hit** at the master fires `LIGHT_COMMAND` to Light group 2, or also goes to broadcast in the default configuration.
-- **Hi-hat onset** at the master fires `LIGHT_COMMAND` to Light group 3, or broadcast.
-- **Section change** at the master swaps the palette internally; nothing extra goes on the wire.
+- **Kick drum** at the Director fires a `LIGHT_COMMAND` to class `0x01` (Light) group 1 (in DynamicShow's `groups=3` config) or group 0 broadcast (in DynamicShow's default `groups=1`).
+- **Snare hit** at the Director fires `LIGHT_COMMAND` to Light group 2, or also goes to broadcast in the default configuration.
+- **Hi-hat onset** at the Director fires `LIGHT_COMMAND` to Light group 3, or broadcast.
+- **Section change** at the Director swaps the palette internally; nothing extra goes on the wire.
 
 The Tildagon participates by advertising itself as a `MultiLedScreen` (`0x03`) class device and choosing how to map class+group LIGHT_COMMANDs to its render surfaces. There are reasonable design choices here that need settling (see [open design questions](#open-design-questions) below) - the broad direction is: every `LIGHT_COMMAND` whose `target_class` matches (`0x00` All or `0x03` MultiLedScreen) and whose `target_group` matches (`0x00` or the Tildagon's configured group) is rendered on the Tildagon's perimeter and LCD.
 
@@ -78,7 +78,7 @@ In addition to `LIGHT_COMMAND`, the Tildagon SHOULD honour:
 - **`HEARTBEAT`** (`0x00`) for liveness ([protocol manual §6](../manuals/protocol-manual.md#6-heartbeat-and-liveness)).
 - **`MUSIC_EVENT`** (`0x06`) carrying DROP/BREAKDOWN/BUILD if there is locally interpretable behaviour for it - e.g. a palette shift on DROP. Optional.
 
-The richer "music descriptor" behaviour from the original Notion draft is rendered on the M5 master and emitted as a stream of `LIGHT_COMMAND` fires; the Tildagon experiences it as a richer-than-Simple-Beat stream of light commands, not as a stream of new wire message types.
+The richer "music descriptor" behaviour from the original Notion draft is rendered on the M5 Director and emitted as a stream of `LIGHT_COMMAND` fires; the Tildagon experiences it as a richer-than-Simple-Beat stream of light commands, not as a stream of new wire message types.
 
 ## Operational model: protocol-shared, codebase-separate
 
@@ -107,7 +107,7 @@ What this means in practice:
 
 ## Business value
 
-The Tildagon receiver is the moment NocturNation transitions from "clever IR controller plus a few slaves" to "distributed crowd lighting at festival scale, on hardware that's already in attendees' hands". It is also where the [photosensitivity safety constraints](../architecture.md) become real implementation rather than spec text, on what is structurally the highest-risk surface in the system (close to faces, full RGB, high-contrast flash capable).
+The Tildagon receiver is the moment NocturNation transitions from "clever IR controller plus a few Lumes" to "distributed crowd lighting at festival scale, on hardware that's already in attendees' hands". It is also where the [photosensitivity safety constraints](../architecture.md) become real implementation rather than spec text, on what is structurally the highest-risk surface in the system (close to faces, full RGB, high-contrast flash capable).
 
 Without this Epic:
 
@@ -127,30 +127,30 @@ Without this Epic:
 - Optional **`MUSIC_EVENT`** consumption for palette shifts on DROP / BREAKDOWN.
 - **Class+group filtering** on inbound `LIGHT_COMMAND` per the [group ID semantics section above](#group-id-semantics-canonical-shared-with-stickc). Tildagon advertises class `MultiLedScreen` (`0x03`); first-boot group is a random value in {1, 2, 3}; operator overrides via the in-app settings.
 - **Configuration menu**. A small in-app settings UI for group ID (mandatory; the EMF audience will want to set this), channel (1 hobby vs 11 show), Calm Mode toggle, and brightness. Reachable from the standard Tildagon navigation; persists to MicroPython NVS.
-- **Manual master mode** (stretch goal for EMF). Button-activated fire-an-effect input on the Tildagon: the operator presses a button, the Tildagon emits a `LIGHT_COMMAND` over ESP-NOW, every other receiver in range renders. This makes the Tildagon a *limited* upstream source - not a beat-driven master, but a tinkerer's "I want to fire a colour from my badge" interaction. The EMF audience enjoys tinkering with what is in their hands; this gives them a useful surface. Calm Mode caps still apply. Channel 11 (show) is reserved for the official master; a manual-master Tildagon transmits on channel 1 (hobby) so it does not interfere.
-- **Test modes** (stretch goal for EMF). A small in-app test menu that fires fixed colours / envelopes locally on the Tildagon's perimeter LEDs and LCD, without needing a master in range. Useful for verifying the badge is working in a quiet area, and for the same EMF tinkerer audience that will be poking at the manual-master mode.
+- **Manual Director mode** (stretch goal for EMF). Button-activated fire-an-effect input on the Tildagon: the operator presses a button, the Tildagon emits a `LIGHT_COMMAND` over ESP-NOW, every other receiver in range renders. This makes the Tildagon a *limited* upstream source - not a beat-driven Director, but a tinkerer's "I want to fire a colour from my badge" interaction. The EMF audience enjoys tinkering with what is in their hands; this gives them a useful surface. Calm Mode caps still apply. Channel 11 (show) is reserved for the official Director; a manual-Director Tildagon transmits on channel 1 (hobby) so it does not interfere.
+- **Test modes** (stretch goal for EMF). A small in-app test menu that fires fixed colours / envelopes locally on the Tildagon's perimeter LEDs and LCD, without needing a Director in range. Useful for verifying the badge is working in a quiet area, and for the same EMF tinkerer audience that will be poking at the manual-Director mode.
 - **Calm Mode default-on** per architecture spec §15.3: cap fire frequency at 2 Hz, cap brightness at 50 %, disable LCD flashing, require operator opt-in for full-effect mode.
 - Brightness / contrast caps per §15.2 (no high-contrast full-screen flashes).
 - Frequency cap enforcement per §15.1 (4 Hz hard cap even in full-effect mode).
 - **NO SIGNAL** indication after the 3-second heartbeat gap per [protocol manual §6.2](../manuals/protocol-manual.md#62-receiver-liveness-check).
 - Backgrounded behaviour: perimeter LEDs continue, LCD reverts to user's foreground app per [architecture spec §7.3](../architecture.md).
 - Native Python unit tests (pytest) covering the protocol implementation against the [reference test vectors](../manuals/protocol-manual.md#annex-c-reference-test-vectors).
-- M5↔Tildagon interop verification (master Stick + Tildagon in radio range; LIGHT_COMMAND fires from a DynamicShow render on the perimeter LEDs).
+- M5↔Tildagon interop verification (Director Stick + Tildagon in radio range; LIGHT_COMMAND fires from a DynamicShow render on the perimeter LEDs).
 
 **Explicitly excluded:**
 
-- **Master mode** - architecturally not possible (no mic).
-- **Any ESP-NOW transmission** by the Tildagon (no slave-as-repeater, no acknowledgements, no upstream telemetry).
+- **Director mode** - architecturally not possible (no mic).
+- **Any ESP-NOW transmission** by the Tildagon (no Lume-as-repeater, no acknowledgements, no upstream telemetry).
 - **IR transmission** from the Tildagon (no IR LED hexpansion in this design; Tildagon does not target bracelets).
 - **Tier 1 encryption / authentication** - separate security Epic.
-- **Custom hardware** (DECT module, audio hexpansion, etc.). Specifically, adding a mic hexpansion to make the Tildagon a master would defeat the architectural pattern this Epic validates.
+- **Custom hardware** (DECT module, audio hexpansion, etc.). Specifically, adding a mic hexpansion to make the Tildagon a Director would defeat the architectural pattern this Epic validates.
 - **App-store review-and-iterate beyond one revision round** - if the first revision is rejected and a second rejection seems plausible, fall back to the minimal-scope ship described in the [EMF 2026 timeline](#emf-2026-timeline) section.
 
 ## Open design questions
 
 These need settling before block-level planning, but are not blockers for Epic 5 to be considered ready.
 
-**Q1: Device class.** Tildagon advertises as `MultiLedScreen` (`0x03`) per the existing `DeviceClass` enum. Implication: a master broadcasting class `0x01` (Light) does not address the Tildagon - only class `0x00` (All) or class `0x03` (MultiLedScreen) does. **Decision needed**: do we want the Tildagon to *also* render `Light`-class commands so it lights up alongside PixMob bracelets on `01:00` broadcasts? Pros: visual consistency with PixMobs. Cons: dilutes the class taxonomy. Recommendation: render `Light`-class commands on the perimeter LEDs (the natural analogue of a wristband), reserve `Screen`-class for LCD-specific behaviour, and treat `MultiLedScreen` as the "address the whole Tildagon as one unit" form.
+**Q1: Device class.** Tildagon advertises as `MultiLedScreen` (`0x03`) per the existing `DeviceClass` enum. Implication: a Director broadcasting class `0x01` (Light) does not address the Tildagon - only class `0x00` (All) or class `0x03` (MultiLedScreen) does. **Decision needed**: do we want the Tildagon to *also* render `Light`-class commands so it lights up alongside PixMob bracelets on `01:00` broadcasts? Pros: visual consistency with PixMobs. Cons: dilutes the class taxonomy. Recommendation: render `Light`-class commands on the perimeter LEDs (the natural analogue of a wristband), reserve `Screen`-class for LCD-specific behaviour, and treat `MultiLedScreen` as the "address the whole Tildagon as one unit" form.
 
 **Q2: Group default at first boot.** Original Notion draft said "self-assign from 1-3"; that mapped to the pre-Epic-4.65 group scheme. Current model: groups are 0-255 (PixMob constrains to 0-31). **Decision needed**: does the Tildagon default to group 0 (broadcast - accept everything), or auto-self-assign to a random group in 1..31 to participate in sparkle patterns? Recommendation: default group 0 (operator visibility into what is happening matters more than statistical sparkle).
 
@@ -158,14 +158,14 @@ These need settling before block-level planning, but are not blockers for Epic 5
 
 **Q4: Channel scan order.** Protocol manual §5.3 specifies channel 11 first, then channel 1. Confirm the Tildagon implements the same order (it should, but worth verifying that the MicroPython `espnow` module's channel-switch timing supports the 2-second-per-channel cadence cleanly).
 
-**Q5: Protected show channel.** Channel 11 is the show channel; channel 1 is the open hobby channel. EMF attendees with Tildagons will tinker, including with the manual-master button-fire mode listed in scope. The show MUST be insulated from this. Asymmetric channel handling on the Tildagon:
+**Q5: Protected show channel.** Channel 11 is the show channel; channel 1 is the open hobby channel. EMF attendees with Tildagons will tinker, including with the manual-Director button-fire mode listed in scope. The show MUST be insulated from this. Asymmetric channel handling on the Tildagon:
 
-- **Receive (slave mode)**: the Tildagon auto-scans both channels with channel 11 checked first per [protocol manual §5.3](../manuals/protocol-manual.md#53-slave-auto-scan-mode). The Tildagon listens on whichever channel the master is broadcasting on, so an attendee whose badge is on auto-scan participates in the show on channel 11 without configuration.
-- **Transmit (manual-master mode, if implemented)**: hard rule - MUST transmit on channel 1 only. The firmware physically cannot configure manual-master to use channel 11, even if the operator tries. Channel 11 stays reserved for the official master.
+- **Receive (Lume mode)**: the Tildagon auto-scans both channels with channel 11 checked first per [protocol manual §5.3](../manuals/protocol-manual.md#53-lume-auto-scan-mode). The Tildagon listens on whichever channel the Director is broadcasting on, so an attendee whose badge is on auto-scan participates in the show on channel 11 without configuration.
+- **Transmit (manual-Director mode, if implemented)**: hard rule - MUST transmit on channel 1 only. The firmware physically cannot configure manual-Director to use channel 11, even if the operator tries. Channel 11 stays reserved for the official Director.
 
-Channel 11 is **not encrypted** at protocol version `0x01`. Any "lock channel 11 to a known master id" or cryptographic-authentication mechanism is out of scope for this Epic and tracked as a separate Tier 1 security Epic. For EMF 2026, the protection is two-layered: (a) firmware-enforced transmit constraint on the Tildagon (no badge can transmit on channel 11), and (b) operator-enforced master uniqueness (only the official master Stick is configured for channel 11 at the venue). The show benefits from frequency isolation without needing cryptographic protection yet.
+Channel 11 is **not encrypted** at protocol version `0x01`. Any "lock channel 11 to a known Director id" or cryptographic-authentication mechanism is out of scope for this Epic and tracked as a separate Tier 1 security Epic. For EMF 2026, the protection is two-layered: (a) firmware-enforced transmit constraint on the Tildagon (no badge can transmit on channel 11), and (b) operator-enforced Director uniqueness (only the official Director Stick is configured for channel 11 at the venue). The show benefits from frequency isolation without needing cryptographic protection yet.
 
-**Q6: ESP-NOW receive-channel steering on Tildagon hardware** (added 2026-05-12 after Block 2 bench verification). The naïve `wlan.config(channel=N)` on `network.WLAN(STA_IF)` works for *the first* channel change after `wlan.active(True)`, but a subsequent change raises `RuntimeError: Wifi Unknown Error 0xffffffff`. Confirmed on real Tildagon hardware: first call (`channel=11`) succeeded, second call (`channel=1`) failed. The badge's networking layer appears to lock STA on a channel once it has been set, so the auto-scan-across-channels design from protocol manual §5.3 cannot be implemented as written. Block 2 currently falls back to receiving on whichever channel succeeded first (channel 11 in practice, since that is the scan-order head); the operator aligns the master Stick to that channel manually.
+**Q6: ESP-NOW receive-channel steering on Tildagon hardware** (added 2026-05-12 after Block 2 bench verification). The naïve `wlan.config(channel=N)` on `network.WLAN(STA_IF)` works for *the first* channel change after `wlan.active(True)`, but a subsequent change raises `RuntimeError: Wifi Unknown Error 0xffffffff`. Confirmed on real Tildagon hardware: first call (`channel=11`) succeeded, second call (`channel=1`) failed. The badge's networking layer appears to lock STA on a channel once it has been set, so the auto-scan-across-channels design from protocol manual §5.3 cannot be implemented as written. Block 2 currently falls back to receiving on whichever channel succeeded first (channel 11 in practice, since that is the scan-order head); the operator aligns the Director Stick to that channel manually.
 
 Three avenues to investigate at Block 5 (configuration UI is the natural place to surface "current channel" + "scan / fixed" toggle to the operator, so the question wants answering then):
 
@@ -177,17 +177,17 @@ Three avenues to investigate at Block 5 (configuration UI is the natural place t
 
 - [ ] App installs on a real Tildagon via `mpremote`.
 - [ ] App runs in the Tildagon Simulator (where supported) without errors.
-- [x] Tildagon in radio range of a master Stick (Plus2 or S3, running DynamicShow) animates perimeter LEDs in sync with detected kicks / snares / hi-hats per `LIGHT_COMMAND` arrival.
+- [x] Tildagon in radio range of a Director Stick (Plus2 or S3, running DynamicShow) animates perimeter LEDs in sync with detected kicks / snares / hi-hats per `LIGHT_COMMAND` arrival.
 - [x] Calm Mode is on by default; operator must opt-in to full-effect mode via the in-app settings.
 - [x] Group filter persists across reboots (operator-set, or auto-assigned per [open design question Q2](#open-design-questions)).
-- [x] Frequency cap enforced: even if the master broadcasts at 8 Hz, the Tildagon never fires faster than 4 Hz (full mode) or 2 Hz (Calm Mode).
+- [x] Frequency cap enforced: even if the Director broadcasts at 8 Hz, the Tildagon never fires faster than 4 Hz (full mode) or 2 Hz (Calm Mode).
 - [x] Backgrounded app continues ESP-NOW listening; perimeter LEDs continue animating; LCD returns to the user's foreground app.
 - [x] Battery impact characterised: how much faster does the badge drain with the receiver app active versus idle?
-- [x] NO SIGNAL behaviour: after a 3-second gap, the Tildagon shows a clear indication that the master is unreachable and runs no local effect.
+- [x] NO SIGNAL behaviour: after a 3-second gap, the Tildagon shows a clear indication that the Director is unreachable and runs no local effect.
 - [x] Python unit-test suite passes against the [reference test vectors](../manuals/protocol-manual.md#annex-c-reference-test-vectors).
-- [x] M5↔Tildagon interop verified at the bench: a Plus2 master with a Tildagon in range, playing a DynamicShow against a real music track, with the perimeter LEDs visibly reacting.
+- [x] M5↔Tildagon interop verified at the bench: a Plus2 Director with a Tildagon in range, playing a DynamicShow against a real music track, with the perimeter LEDs visibly reacting.
 - [x] First-boot group assignment: a freshly-flashed Tildagon persists a random group in {1, 2, 3} on first power-on; the value survives reboot; operator can override via the in-app settings.
-- [ ] ~~Manual-master mode (if implemented): button-fire transmits on channel 1 only. Channel 11 is verified rejected at the firmware level (the operator cannot configure manual-master to transmit on the show channel even if they try).~~ (stretch goal; not implemented in v1, deferred post-EMF)
+- [ ] ~~Manual-Director mode (if implemented): button-fire transmits on channel 1 only. Channel 11 is verified rejected at the firmware level (the operator cannot configure manual-Director to transmit on the show channel even if they try).~~ (stretch goal; not implemented in v1, deferred post-EMF)
 - [x] In-app settings menu: group ID, channel, Calm Mode toggle, brightness all reachable and persistent.
 
 ## Blocks
@@ -211,7 +211,7 @@ Verification ownership: **(L)** = laptop / native Python tests, **(B)** = Tildag
 - Implement `hop_count` drop rule.
 - Implement channel auto-scan per protocol manual §5.3 (channel 11 then channel 1, 2 s each).
 - **(L)** Python `pytest` suite validates frame parsing against reference vectors from protocol manual annex C; deduplication round-trips correctly.
-- **(H)** real Tildagon receives `LIGHT_COMMAND` frames from a master Stick; serial console logs the parsed RGB triplet on each arrival.
+- **(H)** real Tildagon receives `LIGHT_COMMAND` frames from a Director Stick; serial console logs the parsed RGB triplet on each arrival.
 
 ### Block 3: Perimeter-LED rendering
 
@@ -219,7 +219,7 @@ Verification ownership: **(L)** = laptop / native Python tests, **(B)** = Tildag
 - Map a `LIGHT_COMMAND` envelope onto the six-LED ring: the [open design questions](#open-design-questions) Q1 choice of class behaviour determines whether kick/snare/hi-hat fires hit different LED subsets or all six.
 - Implement the frequency cap (Calm Mode 2 Hz / full 4 Hz).
 - **(L)** Python tests cover envelope timing on a stub LED layer.
-- **(H)** real Tildagon perimeter ring fires in sync with a master Stick running DynamicShow on real music.
+- **(H)** real Tildagon perimeter ring fires in sync with a Director Stick running DynamicShow on real music.
 
 ### Block 4: LCD rendering
 
@@ -240,11 +240,11 @@ Verification ownership: **(L)** = laptop / native Python tests, **(B)** = Tildag
 - NO SIGNAL indication after 3-second gap per protocol manual §6.2.
 - Backgrounded behaviour: perimeter LEDs continue animating, LCD returns to user's foreground app per architecture spec §7.3.
 - Optional `MUSIC_EVENT` consumption: DROP triggers a palette shift; BREAKDOWN reverts.
-- **(H)** real Tildagon shows NO SIGNAL when master is powered off; resumes immediately when master returns; backgrounded behaviour verified by switching to another badge app.
+- **(H)** real Tildagon shows NO SIGNAL when Director is powered off; resumes immediately when Director returns; backgrounded behaviour verified by switching to another badge app.
 
 ### Block 7: Interop verification, EMF app-store submission, close-out
 
-- M5↔Tildagon bench session: master Stick + Tildagon + handful of PixMob bracelets, running DynamicShow against real music. Confirm the Tildagon visibly reacts in coordination with the bracelets.
+- M5↔Tildagon bench session: Director Stick + Tildagon + handful of PixMob bracelets, running DynamicShow against real music. Confirm the Tildagon visibly reacts in coordination with the bracelets.
 - Battery drain measurement: idle Tildagon vs receiver-app Tildagon, both over a 2-hour window.
 - Documentation: README in the Tildagon app, screenshots, link to the protocol manual.
 - **EMF 2026 app-store submission** (hard deadline target: 30 June 2026). Package per the EMF app-store requirements; submit; track review.
@@ -294,8 +294,8 @@ All upstream firmware Epics are closed. Epic 5 can start as soon as Epic 4.8's f
 
 Proposed 2026-05-06; refined 2026-05-08; further refined 2026-05-12 (twice) to address the following corrections to the original Notion draft:
 
-1. **Wire-format premise corrected.** The original draft described the Tildagon as consuming `SNARE_DETECTED`, `HIHAT_DETECTED`, `MUSIC_DESCRIPTOR`, and `SECTION_CHANGE` as separate ESP-NOW message types. None of those message types exist on the wire as shipped. The analyser primitives produce master-internal events; the master's `DynamicShow` plug-in consumes them and emits `LIGHT_COMMAND` fires with appropriate class+group routing. The Tildagon is structurally an `OutputBinding`-shaped consumer of `LIGHT_COMMAND`, exactly like every other slave.
-2. **`MUSIC_EVENT` vs `MUSIC_DESCRIPTOR`.** The wire-level `MUSIC_EVENT` (`0x06`) carries only DROP / BREAKDOWN / BUILD. Centroid, energy, and density never leave the master.
+1. **Wire-format premise corrected.** The original draft described the Tildagon as consuming `SNARE_DETECTED`, `HIHAT_DETECTED`, `MUSIC_DESCRIPTOR`, and `SECTION_CHANGE` as separate ESP-NOW message types. None of those message types exist on the wire as shipped. The analyser primitives produce Director-internal events; the Director's `DynamicShow` plug-in consumes them and emits `LIGHT_COMMAND` fires with appropriate class+group routing. The Tildagon is structurally an `OutputBinding`-shaped consumer of `LIGHT_COMMAND`, exactly like every other Lume.
+2. **`MUSIC_EVENT` vs `MUSIC_DESCRIPTOR`.** The wire-level `MUSIC_EVENT` (`0x06`) carries only DROP / BREAKDOWN / BUILD. Centroid, energy, and density never leave the Director.
 3. **All upstream Epics closed.** Epics 4 / 4.5 / 4.6 / 4.65 / 4.7 are Done; Epic 4.8 in progress (documentation). The "hybrid parallel sequencing with Epic 4.7" rationale is no longer needed.
 4. **Group ID model updated.** Original "1-3" self-assignment mapped to a pre-Epic-4.65 scheme. Current model is class (`MultiLedScreen=0x03` for Tildagon) plus group (`0..255`, PixMob constrains to 0..31). Default behaviour is an [open design question](#open-design-questions).
 5. **Protocol manual is now the implementation spec.** Epic 4.8 produced [docs/manuals/protocol-manual.md](../manuals/protocol-manual.md) specifically as the receiver-implementation specification. Epic 5 rebases on it.
@@ -309,11 +309,11 @@ Second pass on 2026-05-12 (afternoon) addressing user-supplied direction:
 
 11. **Group ID semantics codified explicitly.** New section [Group ID semantics (canonical, shared with StickC)](#group-id-semantics-canonical-shared-with-stickc) captures the rules: `target_group == 0` is the broadcast group (every receiver renders regardless of own group); `target_group == N` only matches receivers with own group N; a receiver whose own group is 0 only renders broadcasts. First-boot default is random {1, 2, 3} on both StickC and Tildagon. Original Notion draft was loose on this and got it wrong in the protocol-manual-as-shipped (which has now been corrected).
 12. **First-boot random group implemented on StickC.** [src/modes/persistence.cpp::migrate_legacy_nvs_keys()](../../src/modes/persistence.cpp) now picks a random value in {1, 2, 3} and persists on first boot when the `slv_group` key has not been written. Native test seam allows deterministic verification; three new native unit tests cover the path. Tildagon receiver app replicates the same behaviour in MicroPython per Block 5.
-13. **Future Tildagon master mode acknowledged.** Per Jason's revision, current Tildagon implementation is slave-only, but future versions are expected to add a master mode that is architecturally different from the StickC's audio-driven master - likely button-driven, external mic via hexpansion, or Art-Net / DMX upstream. This is a follow-up Epic, not in scope here.
-14. **Manual master mode added as stretch goal.** EMF audience will tinker; the Tildagon should offer a button-fire interaction that emits `LIGHT_COMMAND` over ESP-NOW. Hard constraint: manual-master mode MUST transmit on channel 1 (hobby) only. Channel 11 (show) is reserved for the official master.
-15. **Test modes added as stretch goal.** A small in-app fixed-effect tester for verifying a badge works in a quiet area without a master in range.
+13. **Future Tildagon Director mode acknowledged.** Per Jason's revision, current Tildagon implementation is Lume-only, but future versions are expected to add a Director mode that is architecturally different from the StickC's audio-driven Director - likely button-driven, external mic via hexpansion, or Art-Net / DMX upstream. This is a follow-up Epic, not in scope here.
+14. **Manual Director mode added as stretch goal.** EMF audience will tinker; the Tildagon should offer a button-fire interaction that emits `LIGHT_COMMAND` over ESP-NOW. Hard constraint: manual-Director mode MUST transmit on channel 1 (hobby) only. Channel 11 (show) is reserved for the official Director.
+15. **Test modes added as stretch goal.** A small in-app fixed-effect tester for verifying a badge works in a quiet area without a Director in range.
 16. **Configuration menu in scope.** Group ID, channel, Calm Mode toggle, brightness - all reachable from the standard Tildagon navigation, all persistent.
-17. **Protected show channel surfaced** as open design question Q5. For EMF 2026 the protection is operator-enforced (only the official master transmits on channel 11); cryptographic channel protection tracked as a separate Tier 1 security Epic.
+17. **Protected show channel surfaced** as open design question Q5. For EMF 2026 the protection is operator-enforced (only the official Director transmits on channel 11); cryptographic channel protection tracked as a separate Tier 1 security Epic.
 
 The original "intentionally under-refined" framing still applies to Block 1 and subsequent: the Tildagon platform may surface surprises that change the downstream block plan, and the plan should adapt rather than press on with a stale design.
 
@@ -333,10 +333,10 @@ The original "intentionally under-refined" framing still applies to Block 1 and 
 
 ### Bench-verified (2026-05-13)
 
-- **M5↔Tildagon interop session**: master Stick + Tildagon in radio range, DynamicShow running against real music; Tildagon perimeter ring visibly reacts in coordination.
+- **M5↔Tildagon interop session**: Director Stick + Tildagon in radio range, DynamicShow running against real music; Tildagon perimeter ring visibly reacts in coordination.
 - **Battery drain measurement**: idle vs receiver-app Tildagon characterised over the 2-hour window; receiver-app drain is operator-acceptable for EMF show-night duty.
 - **MUSIC_EVENT (DROP/BREAKDOWN) hardware verification**: confirmed Tildagon synthesises the local whiteout (DROP) and slow blue fade (BREAKDOWN) on hardware-fired events.
-- **NO SIGNAL hardware verification**: powering off the master mid-show surfaces NO SIGNAL within 3 s; powering it back on clears the overlay and resumes rendering.
+- **NO SIGNAL hardware verification**: powering off the Director mid-show surfaces NO SIGNAL within 3 s; powering it back on clears the overlay and resumes rendering.
 - **Backgrounded behaviour hardware verification**: minimising NocturNation and switching to another badge app keeps the perimeter ring animating; returning to NocturNation resumes cleanly.
 
 ### Out-of-Epic operator admin (post-Done)
@@ -350,8 +350,8 @@ App-store submission is operator-driven and outside Epic 5's scope; the technica
 
 ### Known follow-ups not gating EMF 2026 ship
 
-- **Q6 channel-steering**: `wlan.config(channel=N)` on STA_IF rejects a second channel-change call with `RuntimeError 0xffffffff`. Current behaviour falls back to first-successful-channel; operator aligns master manually. Three avenues remain (`wlan.disconnect()` dance, `AP_IF`, or drop auto-scan entirely) - tackle when post-EMF.
-- **Q5 protected show channel**: manual-master mode firmware-constrained to channel 1 if implemented; channel 11 is operator-enforced-exclusive for EMF 2026. Cryptographic protection deferred to a separate Tier 1 security Epic.
+- **Q6 channel-steering**: `wlan.config(channel=N)` on STA_IF rejects a second channel-change call with `RuntimeError 0xffffffff`. Current behaviour falls back to first-successful-channel; operator aligns Director manually. Three avenues remain (`wlan.disconnect()` dance, `AP_IF`, or drop auto-scan entirely) - tackle when post-EMF.
+- **Q5 protected show channel**: manual-Director mode firmware-constrained to channel 1 if implemented; channel 11 is operator-enforced-exclusive for EMF 2026. Cryptographic protection deferred to a separate Tier 1 security Epic.
 
 ### Test counts
 

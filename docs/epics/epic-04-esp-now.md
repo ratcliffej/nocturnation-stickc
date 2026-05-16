@@ -16,7 +16,7 @@ sync_direction: bidirectional
 
 ## Goal
 
-Implement ESP-NOW transport on the Stick reference platform (StickC Plus2 *and* M5StickS3, sharing the HAL layer established in Epic 2): master broadcast, slave receive, deduplication, repeat-mode toggle, dual-channel scanning with show/hobby channel separation, and signal-strength reporting for operator awareness. After this Epic, two Sticks - of either model - configured as Master and Slave coordinate beat-locked IR firing across the room with no wires between them, and the operator can see whether the radio link is healthy via a familiar battery-style indicator.
+Implement ESP-NOW transport on the Stick reference platform (StickC Plus2 *and* M5StickS3, sharing the HAL layer established in Epic 2): Director broadcast, Lume receive, deduplication, repeat-mode toggle, dual-channel scanning with show/hobby channel separation, and signal-strength reporting for operator awareness. After this Epic, two Sticks - of either model - configured as Director and Lume coordinate beat-locked IR firing across the room with no wires between them, and the operator can see whether the radio link is healthy via a familiar battery-style indicator.
 
 ## Operational model: laptop-driven, multi-target
 
@@ -31,7 +31,7 @@ ESP-NOW is the protocol layer that elevates NocturNation from "one device, one b
 - Multi-Stick deployments at NullSector and similar spaces
 - The protocol foundation for the Tildagon receiver (Epic 5) - the badge speaks the same wire format
 - Repeater capability for venues larger than a single ESP-NOW radio range
-- The audio-master pattern: one Stick analyses audio, others fire IR locally
+- The audio-Director pattern: one Stick analyses audio, others fire IR locally
 - Cross-platform interop: Plus2 and S3 devices coexist transparently in the same deployment, since ESP-NOW is identical at the radio firmware level across all ESP32 variants
 - Operator visibility into link health via signal-strength reporting (per the new Feature 4.8 below)
 
@@ -58,11 +58,11 @@ NocturNation operates on a deliberate two-channel split that encodes a social co
 
 **No traffic on channels 2-10 or 12-13.** Channels 2-10 cause adjacent-channel interference with 1, 6, 11, which is *worse* than co-channel congestion. Channels 12-13 are not legal in all regions and we maintain global compatibility by not using them. The scan utility may report on these channels for operator information, but cannot select them as defaults.
 
-## Slave-side dual-channel scan and lock
+## Lume-side dual-channel scan and lock
 
-**Behaviour for receivers (Slaves, Tildagon receivers, future bracelets):**
+**Behaviour for receivers (Lumes, Tildagon receivers, future bracelets):**
 
-On boot, the slave performs a 2-second scan of both channels 1 and 11 looking for ESP-NOW heartbeat traffic. The scan-and-lock decision logic:
+On boot, the Lume performs a 2-second scan of both channels 1 and 11 looking for ESP-NOW heartbeat traffic. The scan-and-lock decision logic:
 
 ```
 scan both channels for ~2 seconds at boot:
@@ -75,46 +75,46 @@ while locked to a channel:
   if heartbeat timeout (1 second silence per spec §4.3):
     return to dual-channel scan mode
 
-while in dual-channel scan mode (no master heard):
+while in dual-channel scan mode (no Director heard):
   alternate listening between channels 1 and 11 every ~200ms
   any heartbeat seen → lock to that channel (channel 11 priority if both seen)
 ```
 
-**Rationale**: ESP-NOW radios are single-tuner. They cannot listen on two channels simultaneously. Time-slicing between channels has overhead (5-15ms per channel switch, so 5-15% of airtime is lost during scanning) but redundant transmission (3-5 sends per frame) absorbs missed frames during switch windows. Once locked to a channel, the slave stays locked - no periodic check of the other channel - which means no missed show frames once the show is found.
+**Rationale**: ESP-NOW radios are single-tuner. They cannot listen on two channels simultaneously. Time-slicing between channels has overhead (5-15ms per channel switch, so 5-15% of airtime is lost during scanning) but redundant transmission (3-5 sends per frame) absorbs missed frames during switch windows. Once locked to a channel, the Lume stays locked - no periodic check of the other channel - which means no missed show frames once the show is found.
 
-**Implication for slave-only devices** (bracelets without UI, future custom hardware, anything where the user can't manually choose a channel): this auto-scan logic means *they don't need to*. Show traffic always wins over hobby traffic, automatically, with no user input. This is exactly what a wearable or zero-config receiver needs.
+**Implication for Lume-only devices** (bracelets without UI, future custom hardware, anything where the user can't manually choose a channel): this auto-scan logic means *they don't need to*. Show traffic always wins over hobby traffic, automatically, with no user input. This is exactly what a wearable or zero-config receiver needs.
 
 **Implication for Stick devices with UI**: the auto-scan is the default behaviour. Operators can override it via Config Mode (§8.4 of architecture spec) to lock the device to a specific channel - useful when a hobbyist deliberately wants to ignore concurrent show traffic and play with their own deployment. The override is sticky across reboots.
 
-## Master-side channel selection
+## Director-side channel selection
 
-**Behaviour for transmitters (Masters):**
+**Behaviour for transmitters (Directors):**
 
-Masters do not auto-scan. They transmit on a single channel chosen at startup based on their role:
+Directors do not auto-scan. They transmit on a single channel chosen at startup based on their role:
 
-- **Hobby Master** (default for personal/community use, default mode of any new install): channel 1.
-- **Show Master** (configured via Config Mode for commercial use): channel 11.
+- **Hobby Director** (default for personal/community use, default mode of any new install): channel 1.
+- **Show Director** (configured via Config Mode for commercial use): channel 11.
 - **Custom channel** (advanced operators, research): any of {1, 6, 11} via key combination.
 
-The Master's role is selected during Master Mode startup per architecture spec §8.3. The default is hobby/channel 1; switching to show/channel 11 requires explicit operator action - reflecting that show deployment is a more deliberate decision than hobby playing.
+The Director's role is selected during Director Mode startup per architecture spec §8.3. The default is hobby/channel 1; switching to show/channel 11 requires explicit operator action - reflecting that show deployment is a more deliberate decision than hobby playing.
 
 ## Signal strength: operator awareness
 
 **RSSI is presented to operators in a familiar battery-style indicator** alongside the actual battery icon, not as raw dBm in normal operation.
 
-The Slave's status display shows two icons:
+The Lume's status display shows two icons:
 
 - **Battery icon** (existing): how much device power is left
-- **Signal icon** (new): how strong the master's signal is
+- **Signal icon** (new): how strong the Director's signal is
 
 Mapping from raw RSSI to display bars:
 
 | Bars | RSSI range | Meaning |
 | --- | --- | --- |
-| 4 (full) | -30 to -55 dBm | Excellent. Master is close, no risk of missed frames. |
+| 4 (full) | -30 to -55 dBm | Excellent. Director is close, no risk of missed frames. |
 | 3 | -55 to -70 dBm | Good. Normal operating distance. Reliable. |
 | 2 | -70 to -82 dBm | Workable. Will likely deliver but vulnerable to fading. Consider repositioning or adding a repeater. |
-| 1 | -82 to -90 dBm | Poor. Frames will start to be missed. Move closer to a master or repeater. |
+| 1 | -82 to -90 dBm | Poor. Frames will start to be missed. Move closer to a Director or repeater. |
 | 0 (empty) | Below -90 dBm or no recent frame | No signal. Device will fall back to local idle effect after heartbeat timeout. |
 
 A diagnostic mode (accessible from Test Mode per spec §8.5) shows the underlying numeric dBm value and per-source-id RSSI history, useful for radio debugging.
@@ -127,7 +127,7 @@ With 3 hops and properly-placed repeaters at +21 dBm transmit power, NocturNatio
 - **Festival field with crowd**: 150-200m (3 hops × 50-70m through bodies)
 - **Indoor / through walls**: 60-150m (3 hops × 20-50m)
 
-This covers a typical festival field with one Master and a handful of Slave-with-Repeat-enabled devices placed strategically. Multi-room enclosed venues (large warehouses, multi-stage festivals) may need additional repeaters or a redesigned topology. The signal-strength display above is exactly the diagnostic tool operators need to position repeaters intelligently.
+This covers a typical festival field with one Director and a handful of Lume-with-Repeat-enabled devices placed strategically. Multi-room enclosed venues (large warehouses, multi-stage festivals) may need additional repeaters or a redesigned topology. The signal-strength display above is exactly the diagnostic tool operators need to position repeaters intelligently.
 
 ## Plus2 vs S3: relevant differences
 
@@ -142,27 +142,27 @@ The HAL from Epic 2 hides most chip differences. For Epic 4 specifically, these 
 | USB | CH9102 chip | Native USB-OTG | S3 flashes faster and presents cleaner serial port; same code on both. |
 | BLE | BLE 4.2 | BLE 5.0 | Not used in Epic 4 (ESP-NOW is on WiFi radio); not relevant. |
 
-**Net result**: ESP-NOW code in Epic 4 is genuinely shared between Plus2 and S3. The HAL handles pin differences for IR/screen/buttons/audio (already done in Epic 2). The radio layer Just Works on both. The mixed-pair test (Plus2 Master + S3 Slave) verifies this empirically.
+**Net result**: ESP-NOW code in Epic 4 is genuinely shared between Plus2 and S3. The HAL handles pin differences for IR/screen/buttons/audio (already done in Epic 2). The radio layer Just Works on both. The mixed-pair test (Plus2 Director + S3 Lume) verifies this empirically.
 
 ## Scope
 
 **Included:**
 
 - Frame format encoder and decoder per spec §4.3 (6-byte header, message types 0x00-0x05)
-- ESP-NOW broadcast send (Master Mode)
-- ESP-NOW receive callback (Slave Mode)
+- ESP-NOW broadcast send (Director Mode)
+- ESP-NOW receive callback (Lume Mode)
 - Deduplication via `(source_id, sequence_number)` ring buffer of last 16 frames
-- Repeat flag implementation per §8.4 (slave-also-rebroadcasts; default OFF)
+- Repeat flag implementation per §8.4 (Lume-also-rebroadcasts; default OFF)
 - **Two-channel social contract**: channel 1 hobby, channel 11 show
-- **Slave dual-channel scan with show priority** at boot and after heartbeat loss
-- **Master single-channel transmit** with hobby (default) / show / custom mode selection
-- Heartbeat at 4 Hz from Master; Slave detects master-loss within 1s and falls back to local idle effect
+- **Lume dual-channel scan with show priority** at boot and after heartbeat loss
+- **Director single-channel transmit** with hobby (default) / show / custom mode selection
+- Heartbeat at 4 Hz from Director; Lume detects Director-loss within 1s and falls back to local idle effect
 - Sequence number wrap handling at 64s window (per §4.3)
 - Group ID propagation: LIGHT_COMMAND respects target_group field per §4.5
-- **RSSI capture and battery-style signal display** on Slave status screen (per spec §8.6 status display section)
+- **RSSI capture and battery-style signal display** on Lume status screen (per spec §8.6 status display section)
 - **Diagnostic RSSI mode** in Test Mode showing numeric dBm and per-source history
-- TX power configurable; default +21 dBm for Masters, lower for Slaves/Repeats
-- Redundant transmission: each Master frame sent 3-5 times with 5-15ms jitter
+- TX power configurable; default +21 dBm for Directors, lower for Lumes/Repeats
+- Redundant transmission: each Director frame sent 3-5 times with 5-15ms jitter
 - **Multi-target HAL discipline**: any chip-specific code goes in the HAL (per Epic 2). Main ESP-NOW code path is shared between Plus2 and S3.
 
 **Explicitly excluded:**
@@ -172,7 +172,7 @@ The HAL from Epic 2 hides most chip differences. For Epic 4 specifically, these 
 - Channel 6 as a runtime option - architecture forbids it (microwave leakage, default-router congestion)
 - Channels 12-13 - not legal in all regions; maintained for global compatibility
 - Adaptive bitrate / dynamic power management beyond fixed configuration
-- Audio-silence failover demoting Master to Slave (config option exists but defaults OFF; §8.2)
+- Audio-silence failover demoting Director to Lume (config option exists but defaults OFF; §8.2)
 - Tildagon receiver implementation - that's Epic 5 (will use the same protocol with the same channel scan)
 - DMX or Art-Net (those are Epics 7 and 8)
 - Bracelet receiver hardware - future, post-EMF
@@ -182,18 +182,18 @@ The HAL from Epic 2 hides most chip differences. For Epic 4 specifically, these 
 - [ ] **(B)** Code builds cleanly under both `[env:m5stick-plus2]` and `[env:m5stick-s3]` PlatformIO environments without HAL leakage into the ESP-NOW transport layer
 - [ ] **(B)** Native unit tests for frame format encoder/decoder pass; round-trip serialise-then-deserialise for all message types
 - [ ] **(L)** Frame format byte-level conformance verified with packet capture (Wireshark on a sniffing ESP32 in promiscuous mode)
-- [ ] **(H-Plus2)** Two StickC Plus2 devices in the same room: one in Master Mode broadcasts beats on channel 1, one in Slave Mode receives and fires IR locally on every beat
+- [ ] **(H-Plus2)** Two StickC Plus2 devices in the same room: one in Director Mode broadcasts beats on channel 1, one in Lume Mode receives and fires IR locally on every beat
 - [ ] **(H-S3)** Two M5StickS3 devices: same test, byte-identical wire behaviour
-- [ ] **(H)** Mixed pair test: Plus2 Master + S3 Slave, and S3 Master + Plus2 Slave, both work transparently (proves protocol is genuinely chip-agnostic)
-- [ ] **(H)** Slave dual-channel scan: with no traffic, Slave defaults to channel 1; with channel 11 traffic present, Slave locks to channel 11 (show priority verified)
-- [ ] **(H)** Slave channel-lock recovery: after channel 11 master goes silent for >1 second, Slave returns to dual-channel scan and finds channel 1 traffic if present
-- [ ] **(H)** Master role selection: hobby mode defaults to channel 1, show mode requires explicit Config Mode selection of channel 11
-- [ ] **(H)** Signal-strength battery-style indicator on Slave screen shows correct number of bars at known distances; verified by walking a slave away from a stationary master
+- [ ] **(H)** Mixed pair test: Plus2 Director + S3 Lume, and S3 Director + Plus2 Lume, both work transparently (proves protocol is genuinely chip-agnostic)
+- [ ] **(H)** Lume dual-channel scan: with no traffic, Lume defaults to channel 1; with channel 11 traffic present, Lume locks to channel 11 (show priority verified)
+- [ ] **(H)** Lume channel-lock recovery: after channel 11 Director goes silent for >1 second, Lume returns to dual-channel scan and finds channel 1 traffic if present
+- [ ] **(H)** Director role selection: hobby mode defaults to channel 1, show mode requires explicit Config Mode selection of channel 11
+- [ ] **(H)** Signal-strength battery-style indicator on Lume screen shows correct number of bars at known distances; verified by walking a Lume away from a stationary Director
 - [ ] **(H)** Diagnostic RSSI mode (Test Mode) shows numeric dBm and per-source RSSI history
-- [ ] **(H)** Slave with Repeat enabled rebroadcasts received frames; a third device in radio range of the repeater but out of range of master receives correctly
-- [ ] **(H)** Deduplication confirmed: master sending each frame 3-5 times produces only one IR fire per logical beat
-- [ ] **(H)** Slave detects master loss within 1 second of master being powered off; falls back to subtle hue cycle
-- [ ] **(H)** Group ID targeting works: Master sends LIGHT_COMMAND with target_group=2; only Slaves assigned to group 2 fire IR
+- [ ] **(H)** Lume with Repeat enabled rebroadcasts received frames; a third device in radio range of the repeater but out of range of Director receives correctly
+- [ ] **(H)** Deduplication confirmed: Director sending each frame 3-5 times produces only one IR fire per logical beat
+- [ ] **(H)** Lume detects Director loss within 1 second of Director being powered off; falls back to subtle hue cycle
+- [ ] **(H)** Group ID targeting works: Director sends LIGHT_COMMAND with target_group=2; only Lumes assigned to group 2 fire IR
 - [ ] **(H)** TX power is set correctly per device role; verified by measuring effective range at default vs maximum power
 - [ ] **(H)** Range estimate validation: 3-hop mesh with line-of-sight covers ≥200m in open-air conditions (single empirical test session)
 - [ ] **(H)** Hackspace stress test: at least one session with 5+ devices in active broadcast mode in a deliberately-noisy 2.4GHz environment (microwave running, streaming devices on WiFi, multiple Bluetooth speakers active). Acceptable degradation = <5% missed beats over a 5-minute period.
@@ -251,49 +251,49 @@ Work:
 - [ ] **(H-S3)** `ir-rx` capability declared in S3 profile and basic decode of an inbound PixMob frame demonstrated (not used by Epic 4, just verified as a capability)
 - [ ] **(H)** No regression on Plus2: same firmware codebase still builds and runs cleanly under `[env:m5stick-plus2]` after the HAL changes
 
-### Block 3: Master broadcast on Plus2 (channel 1, hobby)
+### Block 3: Director broadcast on Plus2 (channel 1, hobby)
 
-Now that we have two physical test devices (Plus2 + S3 from Block 2), get the Master role transmitting on the Plus2, verified by sniffing in promiscuous mode on the S3. Default to channel 1 / hobby mode for the entirety of this block - we'll add the show-mode override in Block 6.
+Now that we have two physical test devices (Plus2 + S3 from Block 2), get the Director role transmitting on the Plus2, verified by sniffing in promiscuous mode on the S3. Default to channel 1 / hobby mode for the entirety of this block - we'll add the show-mode override in Block 6.
 
 - HAL: `radio_init(channel)`, `radio_send_frame(buf, len)` for ESP-NOW
-- Master Mode integration on Plus2: existing beat detection produces BEAT_DETECTED frames at heartbeat rate
+- Director Mode integration on Plus2: existing beat detection produces BEAT_DETECTED frames at heartbeat rate
 - Configurable TX power (default +21 dBm)
 - Verification: S3 in promiscuous mode logs received frames; Wireshark capture validates byte structure
-- Commit: "Master broadcast on channel 1 (hobby) from Plus2; S3 sniffer validates wire format"
+- Commit: "Director broadcast on channel 1 (hobby) from Plus2; S3 sniffer validates wire format"
 
-### Block 4: Slave receive end-to-end (Plus2 master, S3 slave)
+### Block 4: Lume receive end-to-end (Plus2 Director, S3 Lume)
 
-Get a Slave receiving frames from a Master and firing IR locally **and lighting up its own display as a visible light point**. Single-channel for this block - dual-channel scan comes in Block 6. With both devices working, this block proves the cross-platform interop story almost incidentally.
+Get a Lume receiving frames from a Director and firing IR locally **and lighting up its own display as a visible light point**. Single-channel for this block - dual-channel scan comes in Block 6. With both devices working, this block proves the cross-platform interop story almost incidentally.
 
-A crucial piece often missed: when a Stick is in Slave Mode, **its display is itself a light point in the show**, behaving like a PixMob bracelet. On a beat firing, the screen flashes the same colour with the same envelope as the IR command sent to bracelets. This makes a Stick on a tripod alongside bracelets a coherent piece of installation gear - it isn't just a transmitter that drives lights, it *is* one of the lights. For the constellation art piece, a single Stick can function as both transmitter AND visible light point, reducing the bracelet count needed.
+A crucial piece often missed: when a Stick is in Lume Mode, **its display is itself a light point in the show**, behaving like a PixMob bracelet. On a beat firing, the screen flashes the same colour with the same envelope as the IR command sent to bracelets. This makes a Stick on a tripod alongside bracelets a coherent piece of installation gear - it isn't just a transmitter that drives lights, it *is* one of the lights. For the constellation art piece, a single Stick can function as both transmitter AND visible light point, reducing the bracelet count needed.
 
 - HAL: `radio_register_recv_callback()` for ESP-NOW (on both Plus2 and S3 since both will need it)
-- Slave Mode integration: received BEAT_DETECTED triggers existing IR fire path
-- **Display-as-light**: same beat event also drives the screen via the existing display HAL. Full-screen colour wash with matching ASR envelope. Behaves like the PixMob bracelet group it's targeting (or a configurable own-group, per Slave-Mode config).
+- Lume Mode integration: received BEAT_DETECTED triggers existing IR fire path
+- **Display-as-light**: same beat event also drives the screen via the existing display HAL. Full-screen colour wash with matching ASR envelope. Behaves like the PixMob bracelet group it's targeting (or a configurable own-group, per Lume-Mode config).
 - Deduplication ring buffer
-- Master-loss detection at 1 second, fallback to idle effect (also visible on the screen as the device's own ambient state)
-- Verification: Plus2 Master + S3 Slave, IR fires on S3 in time with Master-detected beats, **and** the S3's screen flashes in sync
-- Bonus: swap roles (S3 Master + Plus2 Slave); confirm interop is genuinely symmetric
-- Commit: "Slave receive end-to-end with display-as-light-point; Plus2↔S3 cross-platform interop verified"
+- Director-loss detection at 1 second, fallback to idle effect (also visible on the screen as the device's own ambient state)
+- Verification: Plus2 Director + S3 Lume, IR fires on S3 in time with Director-detected beats, **and** the S3's screen flashes in sync
+- Bonus: swap roles (S3 Director + Plus2 Lume); confirm interop is genuinely symmetric
+- Commit: "Lume receive end-to-end with display-as-light-point; Plus2↔S3 cross-platform interop verified"
 
 ### Block 5: Repeat mode
 
 The last functional piece of the basic mesh.
 
-- Slave-with-Repeat config option (default OFF)
+- Lume-with-Repeat config option (default OFF)
 - Repeat increments hop_count, drops on hop_count >= 3
-- Sanity test: 3-device chain (Master → Repeater → Slave-out-of-range-of-Master). Could be Plus2 + S3 + a borrowed third device; or chain just two devices and verify the hop_count increment in packet captures.
+- Sanity test: 3-device chain (Director → Repeater → Lume-out-of-range-of-Director). Could be Plus2 + S3 + a borrowed third device; or chain just two devices and verify the hop_count increment in packet captures.
 - Commit: "Repeat mode with 3-hop limit"
 
 ### Block 6: Two-channel architecture (hobby + show)
 
 Introduce the channel-priority dual-scan logic. This is the architecturally meaningful block.
 
-- Master role selection in Config Mode: hobby (channel 1, default) / show (channel 11) / custom
-- Slave dual-channel scan at boot per architecture spec §4.5: channel 11 for ~2 seconds first, then channel 1 for ~2 seconds, loop until heartbeat detected
-- Slave reverts to scan loop after 1-second heartbeat loss
-- Test scenario: bring up channel 1 master, slave locks to channel 1; bring up channel 11 master concurrently, slave switches to channel 11 (show priority); kill channel 11 master, slave returns to channel 1 within heartbeat-loss window
-- Commit: "Two-channel hobby/show architecture with show-priority slave scan"
+- Director role selection in Config Mode: hobby (channel 1, default) / show (channel 11) / custom
+- Lume dual-channel scan at boot per architecture spec §4.5: channel 11 for ~2 seconds first, then channel 1 for ~2 seconds, loop until heartbeat detected
+- Lume reverts to scan loop after 1-second heartbeat loss
+- Test scenario: bring up channel 1 Director, Lume locks to channel 1; bring up channel 11 Director concurrently, Lume switches to channel 11 (show priority); kill channel 11 Director, Lume returns to channel 1 within heartbeat-loss window
+- Commit: "Two-channel hobby/show architecture with show-priority Lume scan"
 
 ### Block 7: RSSI capture and battery-style display
 
@@ -301,9 +301,9 @@ Capture and display per-frame signal strength so operators can position devices 
 
 - Detect ESP-IDF version: if v5.3+, use `esp_now_recv_info_t` for RSSI; if older, fall back to promiscuous-mode sniffer pattern (filter for Espressif OUI `18:fe:34` action frames)
 - Track RSSI per source_id in a small in-memory table
-- Slave UI: 4-bar signal indicator on status screen, paired with battery icon. Visual style matches the brand (per Brand and visual identity page).
+- Lume UI: 4-bar signal indicator on status screen, paired with battery icon. Visual style matches the brand (per Brand and visual identity page).
 - Diagnostic mode (Test Mode): numeric dBm value and per-source RSSI history
-- Master UI: RSSI of any repeater traffic overheard, useful for mesh-quality monitoring
+- Director UI: RSSI of any repeater traffic overheard, useful for mesh-quality monitoring
 - Commit: "RSSI tracking and battery-style operator display"
 
 ### Block 8: Range validation and stress testing
@@ -320,11 +320,11 @@ The deliberate empirical session that validates the design.
 Anticipated Features (Isambard or Jason can decompose into Tasks before dispatch):
 
 - Feature 4.1: ESP-NOW frame format (encoder + decoder + header validation + native tests)
-- Feature 4.2: ESP-NOW master broadcast (Master Mode integration)
-- Feature 4.3: ESP-NOW slave receive (Slave Mode integration + deduplication)
-- Feature 4.4: Repeat mode (slave-also-rebroadcasts)
-- Feature 4.5: Two-channel architecture (hobby/show, master role selection, slave dual-channel scan)
-- Feature 4.6: Heartbeat and master-loss timeout handling
+- Feature 4.2: ESP-NOW Director broadcast (Director Mode integration)
+- Feature 4.3: ESP-NOW Lume receive (Lume Mode integration + deduplication)
+- Feature 4.4: Repeat mode (Lume-also-rebroadcasts)
+- Feature 4.5: Two-channel architecture (hobby/show, Director role selection, Lume dual-channel scan)
+- Feature 4.6: Heartbeat and Director-loss timeout handling
 - Feature 4.7: Group ID targeting in LIGHT_COMMAND
 - Feature 4.8: RSSI capture and battery-style signal display
 - Feature 4.9: Multi-target HAL audit (ensure Plus2 and S3 both build and run)
@@ -354,9 +354,9 @@ Proposed 2026-05-06; refined 2026-05-08 multiple times.
 **v4 refinement (2026-05-08)**: two important architectural clarifications.
 
 1. **S3 HAL is first-class, not parity-only.** Block 2 now exploits the S3's genuine advantages (esp-dsp FFT with vector instructions, ES8311 codec audio quality, 8MB PSRAM headroom, native USB-OTG, IR receive capability declaration, BLE 5.0 capability declaration) rather than treating these as future enhancements. The S3 is the project's future reference platform (Plus2 EOL); future contributors will arrive directly on S3, so the HAL should look right from day one. The Plus2 backend continues to work and test against the same protocol; the S3 backend doesn't degrade Plus2 behaviour.
-2. **Slave Mode display behaves as a visible light point.** Block 4 now explicitly includes display-as-light behaviour: when a Stick is in Slave Mode, its screen flashes in sync with the IR command, like a PixMob bracelet. This makes a Stick on a tripod a coherent piece of installation gear (it's a light, not just a transmitter), and means the constellation art piece could use a single Stick as both transmitter and visible light point.
+2. **Lume Mode display behaves as a visible light point.** Block 4 now explicitly includes display-as-light behaviour: when a Stick is in Lume Mode, its screen flashes in sync with the IR command, like a PixMob bracelet. This makes a Stick on a tripod a coherent piece of installation gear (it's a light, not just a transmitter), and means the constellation art piece could use a single Stick as both transmitter and visible light point.
 
-The two-channel architecture is genuinely meaningful: it makes slave-only devices (future bracelets, Tildagons in audience) zero-configuration in the most useful way, since show traffic always wins over hobby traffic with no user input needed. It also encodes a clear social contract for the project's deployment ecosystem - hobbyists know channel 1 is theirs to play with, professional operators know channel 11 is reserved for production. This is good architecture not just for technical reasons but for community reasons.
+The two-channel architecture is genuinely meaningful: it makes Lume-only devices (future bracelets, Tildagons in audience) zero-configuration in the most useful way, since show traffic always wins over hobby traffic with no user input needed. It also encodes a clear social contract for the project's deployment ecosystem - hobbyists know channel 1 is theirs to play with, professional operators know channel 11 is reserved for production. This is good architecture not just for technical reasons but for community reasons.
 
 Key technical risks:
 
@@ -368,33 +368,33 @@ The Plus2 EOL situation creates a small additional task: at the end of this Epic
 
 Processing Type stays Hybrid because most of this is laptop-driven coding work where Claude Code is genuinely a useful pair. The exception is Block 8's stress test, which is genuinely Manual - Jason and a deliberately-noisy environment.
 
-**Block 3 + Block 4 + Block 6 progress update (2026-05-09)**: ESP-NOW transmit + receive HAL backends landed on both Plus2 and S3. AutonomousMaster broadcasts BEAT_DETECTED + LIGHT_COMMAND on each detected beat. Slave mode receives, decodes header, defers payload work to main-loop (essential - calling IRsend::sendRaw from the WiFi callback context crashes the S3). Slave's screen renders the broadcast colour with attack/sustain/release fade through a new `LocalDriver` RgbPulse handler; orchestration just calls `DAL::render_fx("local", ev)` and the driver owns the per-frame paint at ~30 Hz.
+**Block 3 + Block 4 + Block 6 progress update (2026-05-09)**: ESP-NOW transmit + receive HAL backends landed on both Plus2 and S3. Director broadcasts BEAT_DETECTED + LIGHT_COMMAND on each detected beat. Lume mode receives, decodes header, defers payload work to main-loop (essential - calling IRsend::sendRaw from the WiFi callback context crashes the S3). Lume's screen renders the broadcast colour with attack/sustain/release fade through a new `LocalDriver` RgbPulse handler; orchestration just calls `DAL::render_fx("local", ev)` and the driver owns the per-frame paint at ~30 Hz.
 
-**Block 4 close (2026-05-09)**: deduplication ring buffer (16-entry `(source_id, sequence_number)` tuple, per spec §4.3) added to SlaveMode's `on_recv` so master's planned 2-3x redundant TX (Block 5) doesn't double-fire IR or paint twice per logical beat. Alive-signal updates run on every received frame including duplicates so master-loss detection isn't fooled by the redundancy. Slave-mode no-signal behaviour deliberately does NOT run any autonomous idle effect: a "subtle hue cycle" - which the original Block 4 plan called for - is too visible during a brief master-loss in a live show and risks visually fragmenting the deployment. Black + small "NO SIGNAL" status text only.
+**Block 4 close (2026-05-09)**: deduplication ring buffer (16-entry `(source_id, sequence_number)` tuple, per spec §4.3) added to LumeMode's `on_recv` so Director's planned 2-3x redundant TX (Block 5) doesn't double-fire IR or paint twice per logical beat. Alive-signal updates run on every received frame including duplicates so Director-loss detection isn't fooled by the redundancy. Lume-mode no-signal behaviour deliberately does NOT run any autonomous idle effect: a "subtle hue cycle" - which the original Block 4 plan called for - is too visible during a brief Director-loss in a live show and risks visually fragmenting the deployment. Black + small "NO SIGNAL" status text only.
 
-**Slave own-group IR routing (2026-05-09)**: slave's IR forward target now configurable via `Config → IR → Slave Group`, persisted to NVS as `slv_ir_grp`. Group 0 = broadcast to all-pixmobs (default, preserves historical behaviour); 1..5 = specific group. Solves the "two slaves at opposite ends of a venue both bombarding all bracelets in IR range" problem by letting the operator partition bracelets into groups and configure each slave to its own group. Bracelets get their group ID via the existing PixMob > Set Group ID workflow.
+**Lume own-group IR routing (2026-05-09)**: Lume's IR forward target now configurable via `Config → IR → Lume Group`, persisted to NVS as `slv_ir_grp`. Group 0 = broadcast to all-pixmobs (default, preserves historical behaviour); 1..5 = specific group. Solves the "two Lumes at opposite ends of a venue both bombarding all bracelets in IR range" problem by letting the operator partition bracelets into groups and configure each Lume to its own group. Bracelets get their group ID via the existing PixMob > Set Group ID workflow.
 
-**Block 6 (two-channel architecture, 2026-05-09)**: implemented per spec §4.5. Master channel and slave channel both NVS-backed and configurable via `Config → ESP-NOW`:
+**Block 6 (two-channel architecture, 2026-05-09)**: implemented per spec §4.5. Director channel and Lume channel both NVS-backed and configurable via `Config → ESP-NOW`:
 
-- **Master Channel**: cycles 1 (hobby, default) → 6 (custom override) → 11 (show). Persisted as `mst_chan`. AutonomousMaster + Test mode both pick this up at mode entry.
-- **Slave Channel**: cycles auto (default) → 1 → 6 → 11. Persisted as `slv_chan`. When set to auto, slave starts on channel 11 (show priority per spec) and dual-channel scans (channel 11 ↔ channel 1, 2 s dwell each) during NO SIGNAL state until a master is found. When locked to a specific channel, stays there. Channel switching during scan goes through the new `HAL::ESPNow::set_channel()` method (added on both Plus2 and S3 backends, mods the broadcast peer's stored channel alongside `esp_wifi_set_channel`).
+- **Director Channel**: cycles 1 (hobby, default) → 6 (custom override) → 11 (show). Persisted as `mst_chan`. Director + Test mode both pick this up at mode entry.
+- **Lume Channel**: cycles auto (default) → 1 → 6 → 11. Persisted as `slv_chan`. When set to auto, Lume starts on channel 11 (show priority per spec) and dual-channel scans (channel 11 ↔ channel 1, 2 s dwell each) during NO SIGNAL state until a Director is found. When locked to a specific channel, stays there. Channel switching during scan goes through the new `HAL::ESPNow::set_channel()` method (added on both Plus2 and S3 backends, mods the broadcast peer's stored channel alongside `esp_wifi_set_channel`).
 
 Two-channel architecture is the key deployability piece - hobby (channel 1) and show (channel 11) traffic now operate without interference, and an operator at a festival can configure their show on channel 11 knowing channel 1 is reserved for community / hobby experimenters in the same venue.
 
 Several architectural clarifications adopted during Block 3 (now in spec §4.3, §4.7-Bluetooth, §7.4):
 
 1. **`render_fx(target, event)` is the canonical effect entry point** for orchestration. Existing per-capability `fire_*` helpers stay for legacy call sites; new effect types (text overlay, simple graphics, scripted animations - per §6 future work) ship as `render_fx` overloads on new event structs.
-2. **Slave-as-target-device**: a slave is just one of the lights in the show, not just an ESP-NOW relay. On a beat it lights its own screen AND forwards IR to nearby bracelets - both via explicit `render_fx` calls. No auto-forwarding inside `render_fx`.
-3. **No auto-promote on master loss**: corrects spec §4.3's original "fall back to autonomous mode" wording. Slaves stay slaves and run a local idle effect; promotion only via explicit operator action.
+2. **Lume-as-target-device**: a Lume is just one of the lights in the show, not just an ESP-NOW relay. On a beat it lights its own screen AND forwards IR to nearby bracelets - both via explicit `render_fx` calls. No auto-forwarding inside `render_fx`.
+3. **No auto-promote on Director loss**: corrects spec §4.3's original "fall back to autonomous mode" wording. Lumes stay Lumes and run a local idle effect; promotion only via explicit operator action.
 4. **Heartbeat 4 Hz → 1 Hz with skip-if-recent**: lower TX/RX duty cycle for battery-powered receivers; `BEAT_DETECTED` traffic during music covers the alive-signal so heartbeat traffic drops to roughly zero.
 5. **Bluetooth as control plane**: future Epic adds BLE so a phone app can drive any host within Bluetooth range; the host fans `render_fx()` out over ESP-NOW. `Capability::Bluetooth` is declared by the HAL on Plus2 (BLE 4.2) and S3 (BLE 5.0) now so the API surface is ready.
 6. **Per-capability driver gates**: `Config → Display → Pulse Enable` (NVS-backed) gates the LocalDriver's `RgbPulse` handler only - status text and other display events stay unaffected. Finer-grained than driver-level enable.
-7. **Test mode joins the broadcast**: Test sub-tests (Pulse / Fade / Rainbow / Sparkle / WhiteOut) now `render_fx("local", ev)` for the screen AND call a shared `EspNowBroadcaster` helper to broadcast LIGHT_COMMAND, so any slave on the channel renders the same colour during a test the same way it does during a real show.
+7. **Test mode joins the broadcast**: Test sub-tests (Pulse / Fade / Rainbow / Sparkle / WhiteOut) now `render_fx("local", ev)` for the screen AND call a shared `EspNowBroadcaster` helper to broadcast LIGHT_COMMAND, so any Lume on the channel renders the same colour during a test the same way it does during a real show.
 
-**Block 5 (master 3× redundant TX + slave repeater, 2026-05-09)**:
+**Block 5 (Director 3× redundant TX + Lume repeater, 2026-05-09)**:
 
-- *Master redundancy*: every frame goes out 3 times total (initial + 2 retransmits) with the SAME sequence number, separated by 5-15 ms of pseudo-random jitter. Implemented in `EspNowBroadcaster` as a small pending-retransmit queue drained by `pump_retransmits()` from the owning mode's `loop_tick` (so retransmit time never blocks beat detection). Slave dedup ring buffer (Block 4 close) handles the duplicates, so each logical frame produces exactly one IR fire / one screen paint at the receiver. New frame replaces any pending burst - if a beat lands while a heartbeat is mid-redundancy, the beat's redundancy takes priority.
-- *Slave-as-repeater*: `Config → ESP-NOW → Repeat` toggle (NVS-backed, default OFF). When enabled, each unique inbound frame is rebroadcast once with `hop_count` incremented by 1, capped at the spec §4.3 3-hop limit. Source ID + sequence number preserved exactly so dedup works mesh-wide - other slaves seeing both the original master frame and the repeat treat them as duplicates and act once. Repeat send is queued in `on_recv` and drained from `loop_tick` to keep `esp_now_send` off the WiFi callback context (same safety reasoning as the IR forward path).
+- *Director redundancy*: every frame goes out 3 times total (initial + 2 retransmits) with the SAME sequence number, separated by 5-15 ms of pseudo-random jitter. Implemented in `EspNowBroadcaster` as a small pending-retransmit queue drained by `pump_retransmits()` from the owning mode's `loop_tick` (so retransmit time never blocks beat detection). Lume dedup ring buffer (Block 4 close) handles the duplicates, so each logical frame produces exactly one IR fire / one screen paint at the receiver. New frame replaces any pending burst - if a beat lands while a heartbeat is mid-redundancy, the beat's redundancy takes priority.
+- *Lume-as-repeater*: `Config → ESP-NOW → Repeat` toggle (NVS-backed, default OFF). When enabled, each unique inbound frame is rebroadcast once with `hop_count` incremented by 1, capped at the spec §4.3 3-hop limit. Source ID + sequence number preserved exactly so dedup works mesh-wide - other Lumes seeing both the original Director frame and the repeat treat them as duplicates and act once. Repeat send is queued in `on_recv` and drained from `loop_tick` to keep `esp_now_send` off the WiFi callback context (same safety reasoning as the IR forward path).
 
 **Block 7 (signal quality, 2026-05-09)**: shipped as **sequence-loss-rate quality tracking** rather than RSSI. The transport-agnostic `transport::SignalQuality` class counts received-vs-expected frames per source from sequence numbers, maps the rolling 5-second loss percentage to 0-4 bars (<5% → 4 bars, <15% → 3, <30% → 2, <50% → 1, ≥50% → 0). Reflects **delivered fidelity** rather than radio strength - what an operator actually cares about for show coordination. Strong RSSI with 30% packet loss is a bad show; weak RSSI with 0% loss is fine.
 
@@ -406,7 +406,7 @@ Why not RSSI:
 
 The `SignalQuality` class is genuinely transport-agnostic - any sequenced protocol where the sender increments per-frame can use the same class. Future BLE / IR ack channels plug in identically.
 
-11 native unit tests in `test/test_signal_quality/` cover lossless / partial-loss / severe-loss bands, source-change resets, sequence-number wrap (255 → 1 with no phantom missed frames), `seq=0` "sequencing disabled" exclusion, and rolling-window decay. SlaveMode integrates the tracker by feeding it from `on_recv` after the dedup gate (only unique frames count); the status strip's signal bars come from `SignalQuality::bars()` with the existing frame-age proxy as a cold-start fallback.
+11 native unit tests in `test/test_signal_quality/` cover lossless / partial-loss / severe-loss bands, source-change resets, sequence-number wrap (255 → 1 with no phantom missed frames), `seq=0` "sequencing disabled" exclusion, and rolling-window decay. LumeMode integrates the tracker by feeding it from `on_recv` after the dedup gate (only unique frames count); the status strip's signal bars come from `SignalQuality::bars()` with the existing frame-age proxy as a cold-start fallback.
 
 Outstanding follow-ups carried into Block 8 / future Epics:
 
@@ -417,15 +417,15 @@ Outstanding follow-ups carried into Block 8 / future Epics:
 - Empirical IR radiation patterns: Plus2 IR LED is omnidirectional, S3 is more focused. Useful for deployment planning - operator can stack a Plus2 + S3 in the same venue with the S3 aimed at the dance floor and the Plus2 doing general fill.
 - Epic 4.5 (sub-band adaptive-threshold beat detection) addresses the Plus2/S3 sensitivity divergence that surfaced during Block 3. Proposed but not yet started.
 
-**Closed 2026-05-10**. Blocks 1-7 functionally complete and hardware-verified on Plus2 master + S3 slave. Block 8 (range + stress empirical session) deferred as ready-when-you-are work - it's a venue / outdoor outing rather than bench code, and gates nothing on the Tildagon receiver path or the audio-algorithm work in Epic 4.5. Two-Stick deployment is now a working show platform: Plus2 in AutonomousMaster mode broadcasts beats to PixMob bracelets via IR while ESP-NOW-coordinating a slave Stick that renders the same colour on its screen and forwards IR to its own bracelet group. Test mode broadcasts on the same channel so manual show triggers reach slaves. The two-channel architecture (channel 1 hobby / channel 11 show) provides the social contract for hackspace + festival co-existence; slaves auto-scan with show priority.
+**Closed 2026-05-10**. Blocks 1-7 functionally complete and hardware-verified on Plus2 Director + S3 Lume. Block 8 (range + stress empirical session) deferred as ready-when-you-are work - it's a venue / outdoor outing rather than bench code, and gates nothing on the Tildagon receiver path or the audio-algorithm work in Epic 4.5. Two-Stick deployment is now a working show platform: Plus2 in Director mode broadcasts beats to PixMob bracelets via IR while ESP-NOW-coordinating a Lume Stick that renders the same colour on its screen and forwards IR to its own bracelet group. Test mode broadcasts on the same channel so manual show triggers reach Lumes. The two-channel architecture (channel 1 hobby / channel 11 show) provides the social contract for hackspace + festival co-existence; Lumes auto-scan with show priority.
 
-Late additions during Block 7 hardware verification (all on the slave side, all NVS-backed and non-default to avoid surprising existing deployments):
+Late additions during Block 7 hardware verification (all on the Lume side, all NVS-backed and non-default to avoid surprising existing deployments):
 
-- 16-entry `(source_id, sequence_number)` dedup ring catches the master's 3× redundant TX so each logical frame produces exactly one IR fire / one screen paint.
+- 16-entry `(source_id, sequence_number)` dedup ring catches the Director's 3× redundant TX so each logical frame produces exactly one IR fire / one screen paint.
 - `transport::SignalQuality` sequence-loss-rate tracker (transport-agnostic, 11 native unit tests) drives a 4-bar quality indicator that reflects delivered fidelity rather than RSSI - shipped instead of an RSSI sniffer because the latter would burn battery in dense venues like EMF and gives a less useful signal anyway.
 - 12 px status strip overlay with battery and signal icons stays visible across pulse paints via a configurable `LocalDriver` pulse rect.
 - HAL Display sprite double-buffer (`begin_buffered_paint` / `end_buffered_paint`) batches the strip's ~13 fill_rect+text ops into one SPI burst, eliminating inter-element tearing during strip refresh. Doesn't fix smooth-fade tearing on solid-colour fills (a vsync issue requiring TE pin we don't have) but the API is now in place for any future host with a TE-routed display.
-- Cold-start scan bug fixed: slave now alternates channels 11↔1 from boot in auto mode rather than waiting for `no_signal_` to flip true (which never happened with `rx_count_=0`).
+- Cold-start scan bug fixed: Lume now alternates channels 11↔1 from boot in auto mode rather than waiting for `no_signal_` to flip true (which never happened with `rx_count_=0`).
 - Saturating subtract on `(now - last_rx_ms_)` everywhere it appears - fixes a WiFi-task / main-task race that produced spurious NO SIGNAL flickers ~once per pulse cycle (logs showed ages of `4294967275 ms` etc., uint32 underflow).
 
 Honest list of things known incomplete:
@@ -433,5 +433,5 @@ Honest list of things known incomplete:
 - Audio meter on S3 still slightly hot at idle (carry-forward from Block 2 verification).
 - `Btn2` short-press fires once on the long-press-to-back path (could refine `Pressed` → `Clicked` on the relevant short-press handlers; logged but not fixed).
 - 3-device repeater chain not yet hardware-verified (need a third Stick).
-- S3-master + Plus2-slave swap not verified (only Plus2-master + S3-slave verified).
+- S3-Director + Plus2-Lume swap not verified (only Plus2-Director + S3-Lume verified).
 - Group ID targeting end-to-end with bracelets in a specific group not yet hardware-verified.

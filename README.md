@@ -2,7 +2,7 @@
 
 > Open-source crowd lighting, conjured from cheap silicon.
 
-NocturNation is a modular open-source crowd-lighting system: one master Stick listens to music, detects beats and structural events, and broadcasts light commands to a swarm of slave Sticks that fire infra-red at PixMob bracelets worn by the audience. A full deployment costs roughly the price of a meal out, and gives smaller bands and art installations the same kind of platform that proprietary stadium fan-lighting systems sell to touring acts at five-figure prices.
+NocturNation is a modular open-source crowd-lighting system: one Director Stick listens to music, detects beats and structural events, and broadcasts light commands to a swarm of Lume Sticks that fire infra-red at PixMob bracelets worn by the audience. A full deployment costs roughly the price of a meal out, and gives smaller bands and art installations the same kind of platform that proprietary stadium fan-lighting systems sell to touring acts at five-figure prices.
 
 This repository is the reference firmware. It runs on the M5StickC Plus2 and the M5StickS3 (the "Sticks"). Both Sticks share a single firmware codebase with hardware-specific abstraction underneath.
 
@@ -24,12 +24,12 @@ This repository is the reference firmware. It runs on the M5StickC Plus2 and the
 
 | Item | Notes |
 |---|---|
-| **M5StickC Plus2** or **M5StickS3** | The Stick. Either can run as master, slave, or both. The S3 is the current first-class reference; the Plus2 (now end-of-life from M5Stack) remains fully supported. See the [hardware section of the user manual](docs/manuals/user-manual.md#2-hardware) for the comparison. |
+| **M5StickC Plus2** or **M5StickS3** | The Stick. Either can run as Director, Lume, or both. The S3 is the current first-class reference; the Plus2 (now end-of-life from M5Stack) remains fully supported. See the [hardware section of the user manual](docs/manuals/user-manual.md#2-hardware) for the comparison. |
 | **PixMob X4 Gen 3.1 bracelets** | The reference target. Distributed at Coldplay's *Music of the Spheres* tour (2022-2024) and widely available second-hand. Earlier generations are partially compatible; later generations have not been bench-tested. |
 | **USB-C cable** | For flashing the Sticks. |
 | **A speaker playing music** | Anything with a clear kick drum. The reference test track is Vengaboys, *We Like to Party* (138 BPM). |
 
-A useful first deployment is one master plus one slave, in a small room with a handful of bracelets. For larger venues see [hardware deployment guidance in the user manual](docs/manuals/user-manual.md#23-ir-radiation-patterns).
+A useful first deployment is one Director plus one Lume, in a small room with a handful of bracelets. For larger venues see [hardware deployment guidance in the user manual](docs/manuals/user-manual.md#23-ir-radiation-patterns).
 
 ---
 
@@ -43,7 +43,7 @@ pio run -e m5stack-stickcs3 -t upload
 
 Substitute `m5stack-stickcplus2` for a Plus2. Open the folder in VS Code with the [PlatformIO IDE extension](https://marketplace.visualstudio.com/items?itemName=platformio.platformio-ide) for the integrated build/upload flow. The PlatformIO extension ships its own CLI, so a system-wide `pio` install is not required; on macOS it lives at `~/.platformio/penv/bin/pio`.
 
-For a more thorough quickstart - including button layout, mode flow, and how to add a second slave - read the [user manual quickstart](docs/manuals/user-manual.md#quickstart).
+For a more thorough quickstart - including button layout, mode flow, and how to add a second Lume - read the [user manual quickstart](docs/manuals/user-manual.md#quickstart).
 
 ---
 
@@ -54,11 +54,11 @@ The firmware has a six-layer plug-in architecture:
 1. **HAL** - hardware abstraction (mic, IR, display, buttons, BLE, ESP-NOW). Plus2 and S3 backends.
 2. **DAL** - device-abstraction layer. Holds the audio analyser core (BeatDetector, DropDetector, music descriptors), event bus, and the canonical `render_fx` dispatch.
 3. **Plug-ins** - `Plugin` base class with property bags and per-plug-in NVS namespaces.
-4. **Analyser** - sits on the DAL's mic pipeline; produces beat, drop, and music-descriptor events that the master's Show consumes.
+4. **Analyser** - sits on the DAL's mic pipeline; produces beat, drop, and music-descriptor events that the Director's Show consumes.
 5. **Shows** (Epic 4.7) - operator-selectable performances. Currently `SimpleBeatShow` (faithful pre-4.7 BeatPulse behaviour) and `DynamicShow` (FFT-driven HSV with per-drum group routing).
-6. **OutputBindings** - slave-side render targets. Currently `LocalDisplayBinding` (LCD pulse) and `PixMobIrBinding` (infra-red wire encoder, a pure relay).
+6. **OutputBindings** - Lume-side render targets. Currently `LocalDisplayBinding` (LCD pulse) and `PixMobIrBinding` (infra-red wire encoder, a pure relay).
 
-Every render call flows through `render_fx("<class>:<group>", ev)` with structured class+group targets. The master's dispatch fans every call out to ESP-NOW broadcast, the master's own infra-red transmitter, and the master's screen pulse - so the master is treated as one of its own slaves for output purposes. This loopback is dispatch-side behaviour and is described in detail in the [user manual's theory of operation](docs/manuals/user-manual.md#1-theory-of-operation) and the [protocol manual's class-and-group addressing](docs/manuals/protocol-manual.md#4-class-and-group-addressing).
+Every render call flows through `render_fx("<class>:<group>", ev)` with structured class+group targets. The Director's dispatch fans every call out to ESP-NOW broadcast, the Director's own infra-red transmitter, and the Director's screen pulse - so the Director is treated as one of its own Lumes for output purposes. This loopback is dispatch-side behaviour and is described in detail in the [user manual's theory of operation](docs/manuals/user-manual.md#1-theory-of-operation) and the [protocol manual's class-and-group addressing](docs/manuals/protocol-manual.md#4-class-and-group-addressing).
 
 The architecture has settled enough that protocol-level documentation is now public-facing rather than internal design notes - hence the [protocol manual](docs/manuals/protocol-manual.md). Third-party implementations are welcome.
 
@@ -97,7 +97,7 @@ src/dal/                  DAL implementation, analyser, render dispatch.
 src/transport/espnow/     ESP-NOW frame encode/decode.
 src/modes/                Runtime mode finite-state-machine.
 src/shows/                Show plug-ins (simple_beat, dynamic).
-src/output_bindings/      Slave-side render targets (local_display, pixmob_ir).
+src/output_bindings/      Lume-side render targets (local_display, pixmob_ir).
 src/visualisations/       Legacy visualisations (pre-Epic-4.7; kept for migration).
 include/pixmob_protocol.h PixMob IR encoder (header-only port from jamesw343/PixMob_IR).
 test/                     Native unit tests, one folder per native env.
@@ -115,11 +115,11 @@ Closed Epics:
 - **Epic 1** - PlatformIO baseline + byte-identical IR encoder parity vs jamesw343's reference.
 - **Epic 2** - Hardware abstraction layer + Device abstraction layer + Effect classes + Mode FSM + TestDevice extensibility.
 - **Epic 3** - Boot countdown, mode menu, Test Mode, Config tree, status display.
-- **Epic 4** - ESP-NOW transport on Plus2 + S3, redundant TX, dedup ring, signal-quality bars, slave-as-repeater, two-channel architecture.
+- **Epic 4** - ESP-NOW transport on Plus2 + S3, redundant TX, dedup ring, signal-quality bars, Lume-as-repeater, two-channel architecture.
 - **Epic 4.5** - Capability-aware audio analyser. Sub-band adaptive BeatDetector, DropDetector with arm/disarm gate, `MUSIC_EVENT` wire format.
 - **Epic 4.6** - Clean plug-in architecture. `Visualisation` and `OutputBinding` plug-in surfaces, semantic `InputAction` layer, per-plug-in NVS namespaces.
 - **Epic 4.65** - Class+group device addressing. `render_fx("<class>:<group>")` structured targets; `LightCommandPayload` carries both bytes on the wire.
-- **Epic 4.7** - Show plug-in framework + DynamicShow. `Show` base class atop `Plugin`; widget library (BeatBarWidget, SpectrumBarsWidget); analyser primitives (snare/hi-hat onset, music descriptors, section detection); master-IR loopback in dispatch. (The Epic-4.7 IR reset primer was rolled back in Epic 4.8 after bench testing — see [user manual §1.5](docs/manuals/user-manual.md#15-bracelet-timing-and-residual-state).)
+- **Epic 4.7** - Show plug-in framework + DynamicShow. `Show` base class atop `Plugin`; widget library (BeatBarWidget, SpectrumBarsWidget); analyser primitives (snare/hi-hat onset, music descriptors, section detection); Director-IR loopback in dispatch. (The Epic-4.7 IR reset primer was rolled back in Epic 4.8 after bench testing — see [user manual §1.5](docs/manuals/user-manual.md#15-bracelet-timing-and-residual-state).)
 
 In progress:
 
@@ -160,4 +160,4 @@ For protocol changes, please regenerate the parity-test reference vectors agains
 
 ### Adding a new Show
 
-The master's performance is implemented by a Show plug-in. To add your own performance see [docs/developing-shows.md](docs/developing-shows.md) for the developer guide - it covers the `Show` base class API, the analyser hook surface, class+group routing via `render_fx`, screen rendering, widget composition, NVS persistence, and the testing pattern, with `DynamicShow` as the worked example.
+The Director's performance is implemented by a Show plug-in. To add your own performance see [docs/developing-shows.md](docs/developing-shows.md) for the developer guide - it covers the `Show` base class API, the analyser hook surface, class+group routing via `render_fx`, screen rendering, widget composition, NVS persistence, and the testing pattern, with `DynamicShow` as the worked example.
