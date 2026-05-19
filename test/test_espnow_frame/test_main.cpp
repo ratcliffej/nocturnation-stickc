@@ -326,6 +326,42 @@ static void test_heartbeat_wire_format_byte_for_byte(void) {
 }
 
 // ---------------------------------------------------------------------------
+// Source-id partitioning (protocol manual §3.4)
+// ---------------------------------------------------------------------------
+
+static void test_source_id_partition_boundary_values(void) {
+    TEST_ASSERT_EQUAL_UINT8(0x00, kSourceIdCommunityMin);
+    TEST_ASSERT_EQUAL_UINT8(0x3F, kSourceIdCommunityMax);
+    TEST_ASSERT_EQUAL_UINT8(0x40, kSourceIdPerformanceMin);
+    TEST_ASSERT_EQUAL_UINT8(0xFE, kSourceIdPerformanceMax);
+    TEST_ASSERT_EQUAL_UINT8(0xFF, kBroadcastSourceId);
+
+    // The two ranges are contiguous (no gap) and don't overlap.
+    TEST_ASSERT_EQUAL_UINT8(kSourceIdCommunityMax + 1, kSourceIdPerformanceMin);
+    // Performance range stops one short of broadcast.
+    TEST_ASSERT_EQUAL_UINT8(kSourceIdPerformanceMax + 1, kBroadcastSourceId);
+}
+
+static void test_is_community_range(void) {
+    TEST_ASSERT_TRUE (is_community_range(0x00));
+    TEST_ASSERT_TRUE (is_community_range(0x01));
+    TEST_ASSERT_TRUE (is_community_range(0x20));
+    TEST_ASSERT_TRUE (is_community_range(0x3F));   // upper boundary
+    TEST_ASSERT_FALSE(is_community_range(0x40));   // first Performance
+    TEST_ASSERT_FALSE(is_community_range(0xFE));
+    TEST_ASSERT_FALSE(is_community_range(0xFF));   // broadcast
+}
+
+static void test_is_performance_range(void) {
+    TEST_ASSERT_FALSE(is_performance_range(0x00));
+    TEST_ASSERT_FALSE(is_performance_range(0x3F));   // last community
+    TEST_ASSERT_TRUE (is_performance_range(0x40));   // lower boundary
+    TEST_ASSERT_TRUE (is_performance_range(0x7F));
+    TEST_ASSERT_TRUE (is_performance_range(0xFE));   // upper boundary
+    TEST_ASSERT_FALSE(is_performance_range(0xFF));   // broadcast
+}
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
@@ -344,5 +380,8 @@ int main(int, char**) {
     RUN_TEST(test_payload_decoder_caller_payload_len_argument_mismatch);
     RUN_TEST(test_decode_header_extension_type_recognised);
     RUN_TEST(test_heartbeat_wire_format_byte_for_byte);
+    RUN_TEST(test_source_id_partition_boundary_values);
+    RUN_TEST(test_is_community_range);
+    RUN_TEST(test_is_performance_range);
     return UNITY_END();
 }

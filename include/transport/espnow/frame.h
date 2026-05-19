@@ -38,6 +38,24 @@ constexpr uint8_t kMagic0            = 0x4E;  // 'N' - NocturNation discriminato
 constexpr uint8_t kMagic1            = 0x4E;  // 'N' - NocturNation discriminator byte 1
 constexpr uint8_t kProtocolVersion   = 0x02;  // bumped from 0x01 for the magic-prefix wire change
 constexpr uint8_t kBroadcastSourceId = 0xFF;
+
+// Source-id partitioning per protocol manual §3.4. Channel 1 uses the
+// community range (stable per device, persisted to NVS). Channel 11 uses
+// the Performance range (random per boot, listen-before-broadcast).
+// 0xFF (kBroadcastSourceId, above) is reserved for broadcast / anonymous.
+constexpr uint8_t kSourceIdCommunityMin   = 0x00;
+constexpr uint8_t kSourceIdCommunityMax   = 0x3F;  // 64 slots
+constexpr uint8_t kSourceIdPerformanceMin = 0x40;
+constexpr uint8_t kSourceIdPerformanceMax = 0xFE;  // 191 slots
+
+constexpr bool is_community_range(uint8_t source_id) {
+    return source_id <= kSourceIdCommunityMax;
+}
+constexpr bool is_performance_range(uint8_t source_id) {
+    return source_id >= kSourceIdPerformanceMin &&
+           source_id <= kSourceIdPerformanceMax;
+}
+
 constexpr uint8_t kHeaderSize        = 8;     // 2 magic + 1 version + 5 metadata
 constexpr uint8_t kMaxHopCount       = 3;
 
