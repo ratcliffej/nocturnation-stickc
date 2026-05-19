@@ -15,6 +15,7 @@
 #ifdef ARDUINO
 #include <Arduino.h>
 #include <WiFi.h>
+#include <esp_random.h>
 #endif
 
 namespace nocturnation {
@@ -23,17 +24,25 @@ namespace dal {
 namespace {
 EspNowBroadcastDriver s_instance;
 
-// now_ms() shim. Native test envs that link this TU (test_dal_*) don't
-// pull in modes/ where mode_machine.cpp defines its native millis() seam,
-// so we can't depend on millis() being available. Returning 0 in
-// native builds means heartbeat / retransmit pacing doesn't advance
-// under tests - fine, since the radio isn't active in those envs and
-// active_ gates everything anyway.
+#ifndef ARDUINO
+// Native test seam state. Tests reach this via the test_seam:: free
+// functions at the bottom of this TU.
+uint32_t s_native_now_ms = 0;
+
+constexpr size_t kPickQueueCap = 8;
+uint8_t  s_pick_queue[kPickQueueCap] = {};
+size_t   s_pick_queue_count          = 0;
+#endif
+
+// now_ms() shim. In ARDUINO builds this is the real ::millis(); in
+// native builds it reads s_native_now_ms which tests drive explicitly
+// (defaults to 0 so existing tests that ignore time still see 0 like
+// before B4).
 inline uint32_t now_ms() {
 #ifdef ARDUINO
     return ::millis();
 #else
-    return 0;
+    return s_native_now_ms;
 #endif
 }
 }  // namespace
@@ -51,6 +60,13 @@ bool EspNowBroadcastDriver::begin() {
 }
 
 void EspNowBroadcastDriver::loop_tick() {
+    // Listen-before-broadcast (ch 11) gate: while in Listening we hold
+    // TX off and watch for collisions; listen_tick() settles us into
+    // Active once the listen window elapses (with or without re-roll).
+    if (startup_state_ == StartupState::Listening) {
+        listen_tick();
+        return;
+    }
     if (!active_) return;
     // Drain any pending redundant retransmits (per spec §4.3) and emit
     // the 1 Hz alive signal when no other frame has hit the wire recently.
@@ -95,13 +111,45 @@ bool EspNowBroadcastDriver::send(uint8_t target_class,
 // -----------------------------------------------------------------------------
 
 bool EspNowBroadcastDriver::start_broadcast(uint8_t channel) {
-    if (active_) return true;
+    if (active_ || startup_state_ != StartupState::Idle) return active_;
     auto* radio = hal::HAL::esp_now();
     if (!radio) return false;
-    source_id_  = derive_source_id(channel);
     seq_num_    = 1;
     last_tx_ms_ = 0;
-    active_ = radio->begin(channel);
+
+    if (channel == 11) {
+        // Channel 11 (Performance mode): pick a Performance-range id,
+        // install a listen-window recv callback, bring the radio up
+        // RX-capable, and leave active_ = false so loop_tick() holds
+        // TX off until listen_tick() settles. See spec §3.4 and the
+        // B4a design notes in the Epic working copy.
+        listen_candidate_          = pick_performance_id_random();
+        listen_collision_heard_    = false;
+        listen_attempts_remaining_ = kListenMaxAttempts;
+        radio->set_recv_callback([this](const hal::ESPNowMessage& m) {
+            this->on_listen_recv(m);
+        });
+        if (!radio->begin(channel)) {
+            radio->set_recv_callback(nullptr);
+#ifdef ARDUINO
+            Serial.println("[espnow] broadcaster begin(11) failed");
+#endif
+            return false;
+        }
+        listen_started_ms_ = now_ms();
+        startup_state_     = StartupState::Listening;
+#ifdef ARDUINO
+        Serial.printf("[espnow] broadcaster listening: ch=11 candidate=0x%02X\n",
+                      (unsigned)listen_candidate_);
+#endif
+        return true;
+    }
+
+    // Channels 1 and 6: original path. source_id derives synchronously
+    // (community range on ch 1 via persistence, MAC-derive on ch 6).
+    source_id_ = derive_source_id(channel);
+    active_    = radio->begin(channel);
+    startup_state_ = active_ ? StartupState::Active : StartupState::Idle;
 #ifdef ARDUINO
     if (!active_) {
         Serial.println("[espnow] broadcaster begin() failed");
@@ -114,9 +162,17 @@ bool EspNowBroadcastDriver::start_broadcast(uint8_t channel) {
 }
 
 void EspNowBroadcastDriver::stop_broadcast() {
-    if (!active_) return;
-    if (auto* radio = hal::HAL::esp_now()) radio->end();
-    active_ = false;
+    if (startup_state_ == StartupState::Idle && !active_) return;
+    if (auto* radio = hal::HAL::esp_now()) {
+        // Tear down the listen callback whether or not we were listening;
+        // safe no-op if we never installed one.
+        radio->set_recv_callback(nullptr);
+        radio->end();
+    }
+    active_                    = false;
+    startup_state_             = StartupState::Idle;
+    listen_collision_heard_    = false;
+    listen_attempts_remaining_ = 0;
 }
 
 // -----------------------------------------------------------------------------
@@ -239,6 +295,155 @@ bool EspNowBroadcastDriver::maybe_send_heartbeat() {
     send_heartbeat();
     return true;
 }
+
+// -----------------------------------------------------------------------------
+// Channel-11 listen-before-broadcast (Epic 5.5 B4)
+// -----------------------------------------------------------------------------
+
+void EspNowBroadcastDriver::listen_tick() {
+    // Called only while startup_state_ == Listening; loop_tick() gates this.
+    const uint32_t now = now_ms();
+    if (now - listen_started_ms_ < kListenWindowMs) return;
+
+    if (listen_collision_heard_) {
+        // listen_attempts_remaining_ was set to kListenMaxAttempts at
+        // start_broadcast; decrement each time we conclude a collided
+        // window. When it reaches zero we proceed with the most-recent
+        // candidate per spec §3.4 ("after three consecutive collisions
+        // the Director MAY proceed and SHOULD log a warning").
+        --listen_attempts_remaining_;
+        if (listen_attempts_remaining_ == 0) {
+            log_listen_collision_warning();
+            // fall through to settle
+        } else {
+            listen_candidate_       = pick_performance_id_random();
+            listen_collision_heard_ = false;
+            listen_started_ms_      = now;
+#ifdef ARDUINO
+            Serial.printf("[espnow] listen collision; re-rolling to 0x%02X "
+                          "(attempts left=%u)\n",
+                          (unsigned)listen_candidate_,
+                          (unsigned)listen_attempts_remaining_);
+#endif
+            return;
+        }
+    }
+
+    // Settle: window elapsed without (further) collision, or attempts exhausted.
+    source_id_     = listen_candidate_;
+    if (auto* radio = hal::HAL::esp_now()) {
+        radio->set_recv_callback(nullptr);
+    }
+    active_        = true;
+    startup_state_ = StartupState::Active;
+#ifdef ARDUINO
+    Serial.printf("[espnow] broadcaster settled: ch=11 src_id=0x%02X\n",
+                  (unsigned)source_id_);
+#endif
+}
+
+void EspNowBroadcastDriver::on_listen_recv(const hal::ESPNowMessage& m) {
+    // Only HEARTBEATs matching our candidate id count as a collision.
+    // Everything else - other message types, frames addressed to other
+    // candidate ids, or malformed frames - is silently ignored. We MUST
+    // NOT route inbound frames to renderers from here; Director Mode
+    // has no inbound consumer in steady state, so the recv callback's
+    // sole job during the listen window is collision detection.
+    using namespace transport::espnow;
+    Header hdr{};
+    if (decode_header(m.data, m.len, hdr) != DecodeResult::Ok) return;
+    if (hdr.message_type != MessageType::Heartbeat) return;
+    if (hdr.source_id == listen_candidate_) {
+        listen_collision_heard_ = true;
+    }
+}
+
+void EspNowBroadcastDriver::log_listen_collision_warning() const {
+#ifdef ARDUINO
+    Serial.printf("[espnow] listen collision on all %u attempts; "
+                  "proceeding with src_id=0x%02X (operationally extremely rare)\n",
+                  (unsigned)kListenMaxAttempts,
+                  (unsigned)listen_candidate_);
+#endif
+}
+
+uint8_t EspNowBroadcastDriver::pick_performance_id_random() {
+#ifdef ARDUINO
+    // Performance range: 0x40..0xFE inclusive = 191 slots.
+    return static_cast<uint8_t>(0x40 + (esp_random() % 191));
+#else
+    if (s_pick_queue_count == 0) {
+        // Deterministic floor for tests that forget to queue.
+        return 0x40;
+    }
+    const uint8_t id = s_pick_queue[0];
+    for (size_t i = 1; i < s_pick_queue_count; ++i) {
+        s_pick_queue[i - 1] = s_pick_queue[i];
+    }
+    --s_pick_queue_count;
+    return id;
+#endif
+}
+
+#ifndef ARDUINO
+// -----------------------------------------------------------------------------
+// Native test seam
+// -----------------------------------------------------------------------------
+
+void EspNowBroadcastDriver::test_enter_listening(uint8_t candidate,
+                                                  uint32_t started_ms) {
+    // Force the driver into Listening without going through start_broadcast
+    // (which needs a live ESPNow HAL we don't stub in native tests).
+    listen_candidate_          = candidate;
+    listen_collision_heard_    = false;
+    listen_attempts_remaining_ = kListenMaxAttempts;
+    listen_started_ms_         = started_ms;
+    active_                    = false;
+    startup_state_             = StartupState::Listening;
+}
+
+void EspNowBroadcastDriver::test_inject_listen_heartbeat(uint8_t source_id) {
+    // Build a minimal valid HEARTBEAT frame and route it into the listen
+    // callback as if it had come from the radio. The frame buffer lives
+    // on the stack here; on_listen_recv() consumes synchronously.
+    using namespace transport::espnow;
+    Header h{};
+    h.source_id       = source_id;
+    h.sequence_number = 1;
+    h.hop_count       = 0;
+    HeartbeatPayload p{};
+    p.tick               = 0;
+    p.days_since_2026    = 0;
+    p.centiseconds_today = 0;
+    uint8_t buf[kHeaderSize + kHeartbeatPayloadLen];
+    const size_t n = encode_heartbeat(buf, sizeof(buf), h, p);
+    if (n == 0) return;
+    hal::ESPNowMessage msg{};
+    msg.timestamp_ms = 0;
+    msg.data         = buf;
+    msg.len          = n;
+    msg.rssi         = -50;
+    on_listen_recv(msg);
+}
+
+namespace test_seam {
+void set_now_ms(uint32_t ms) {
+    s_native_now_ms = ms;
+}
+
+void queue_next_performance_pick(uint8_t id_in_performance_range) {
+    if (s_pick_queue_count < kPickQueueCap) {
+        s_pick_queue[s_pick_queue_count++] = id_in_performance_range;
+    }
+}
+
+void clear_native_driver_state() {
+    s_native_now_ms     = 0;
+    s_pick_queue_count  = 0;
+    for (size_t i = 0; i < kPickQueueCap; ++i) s_pick_queue[i] = 0;
+}
+}  // namespace test_seam
+#endif
 
 }  // namespace dal
 }  // namespace nocturnation

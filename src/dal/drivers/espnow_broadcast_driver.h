@@ -48,6 +48,27 @@ public:
     // bytes including header) fits comfortably.
     static constexpr size_t   kRetransmitBufSize  = 32;
 
+    // Channel 11 Performance-mode listen-before-broadcast (Epic 5.5 B4).
+    // Spec §3.4: Director MUST listen for at least one second on its
+    // chosen source_id before transmitting; if a HEARTBEAT carrying the
+    // same id arrives during that window the candidate must be
+    // re-rolled. After kListenMaxAttempts unsuccessful attempts the
+    // Director MAY proceed with the last pick and SHOULD log a warning.
+    static constexpr uint32_t kListenWindowMs   = 1000;
+    static constexpr uint8_t  kListenMaxAttempts = 3;
+
+    // Startup phase of the driver. See B4a design notes (Epic working copy).
+    //   Idle      - stop_broadcast / never-started state.
+    //   Listening - ch 11 only: radio is RX-capable, TX gated off,
+    //               listen_candidate_ held while we watch for collisions.
+    //   Active    - normal operation; send_broadcast / heartbeat / retransmits
+    //               are all live.
+    enum class StartupState : uint8_t {
+        Idle      = 0,
+        Listening = 1,
+        Active    = 2,
+    };
+
     const char* transport_name() const override { return "esp-now-broadcast"; }
 
     bool begin() override;
@@ -79,6 +100,7 @@ public:
     void stop_broadcast();
 
     bool active() const { return active_; }
+    StartupState startup_state() const { return startup_state_; }
 
     // Currently-allocated source_id for the active broadcast. Valid
     // once start_broadcast has been called; returns 0 before that.
@@ -95,8 +117,24 @@ public:
     // without spinning up the radio or HAL.
     static uint8_t  derive_source_id(uint8_t channel);
 
+#ifndef ARDUINO
+    // ----- Native test seam (compiled only in host builds) -----
+    // Listening-state plumbing is awkward to drive through start_broadcast
+    // because native test envs don't ship an ESPNow HAL stub - start_broadcast
+    // bails on a nullptr radio. These hooks let tests put the driver into
+    // Listening directly, then advance the state machine with synthetic
+    // time + synthetic inbound HEARTBEATs.
+    void test_enter_listening(uint8_t candidate, uint32_t started_ms);
+    void test_inject_listen_heartbeat(uint8_t source_id);
+    uint8_t test_listen_candidate()          const { return listen_candidate_; }
+    bool    test_listen_collision_heard()    const { return listen_collision_heard_; }
+    uint8_t test_listen_attempts_remaining() const { return listen_attempts_remaining_; }
+    uint32_t test_listen_started_ms()        const { return listen_started_ms_; }
+#endif
+
 private:
     static uint32_t redundant_gap_ms();
+    static uint8_t  pick_performance_id_random();
 
     uint8_t next_seq();
 
@@ -115,10 +153,27 @@ private:
     // heartbeat traffic stays at zero.
     bool maybe_send_heartbeat();
 
-    bool      active_      = false;
+    // Channel-11 listen-before-broadcast helpers (Epic 5.5 B4).
+    // listen_tick() runs from loop_tick() while startup_state_ == Listening.
+    // on_listen_recv() is installed as the HAL recv callback for the
+    // duration of the listen window and watches for HEARTBEAT frames
+    // carrying our candidate source_id.
+    void listen_tick();
+    void on_listen_recv(const hal::ESPNowMessage& m);
+    void log_listen_collision_warning() const;
+
+    bool         active_      = false;
+    StartupState startup_state_ = StartupState::Idle;
     uint8_t   source_id_   = 1;
     uint8_t   seq_num_     = 1;
     uint32_t  last_tx_ms_  = 0;
+
+    // Listen-window state. Only meaningful while startup_state_ == Listening;
+    // listen_attempts_remaining_ counts down per re-roll.
+    uint8_t   listen_candidate_          = 0;
+    uint8_t   listen_attempts_remaining_ = 0;
+    bool      listen_collision_heard_    = false;
+    uint32_t  listen_started_ms_         = 0;
 
     // Pending-retransmit state. When a frame is sent for the first time
     // we copy its bytes here and schedule the next 2 sends; pump_retransmits()
@@ -130,6 +185,25 @@ private:
 };
 
 EspNowBroadcastDriver* esp_now_broadcast_driver_instance();
+
+#ifndef ARDUINO
+namespace test_seam {
+// Drive the driver's native-build "synthetic clock" used by now_ms().
+// The driver defaults to 0 (time doesn't advance under tests unless
+// a test explicitly calls this).
+void set_now_ms(uint32_t ms);
+
+// Queue successive return values for pick_performance_id_random().
+// First queued value is returned on the first call; empties FIFO.
+// When the queue is empty pick_performance_id_random() falls back to
+// 0x40 (deterministic floor of the Performance range) so a test that
+// forgets to queue doesn't roll random in native.
+void queue_next_performance_pick(uint8_t id_in_performance_range);
+
+// Reset all native-test state (now_ms back to 0, pick queue cleared).
+void clear_native_driver_state();
+}  // namespace test_seam
+#endif
 
 }  // namespace dal
 }  // namespace nocturnation

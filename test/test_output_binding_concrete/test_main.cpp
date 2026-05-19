@@ -667,6 +667,182 @@ static void test_driver_derive_source_id_non_channel_1_falls_back(void) {
 }
 
 // =============================================================================
+// Channel-11 listen-before-broadcast (Epic 5.5 B4)
+// =============================================================================
+
+namespace {
+dal::EspNowBroadcastDriver* listen_driver() {
+    return dal::esp_now_broadcast_driver_instance();
+}
+
+void reset_listen_driver() {
+    auto* drv = listen_driver();
+    drv->stop_broadcast();   // forces state back to Idle if any prior test left it set
+    dal::test_seam::clear_native_driver_state();
+}
+}
+
+// No collision during the listen window: window elapses, driver
+// settles on the candidate, source_id is committed.
+static void test_listen_no_collision_settles_to_first_candidate(void) {
+    reset_listen_driver();
+    auto* drv = listen_driver();
+    dal::test_seam::set_now_ms(0);
+
+    drv->test_enter_listening(/*candidate=*/0x4A, /*started_ms=*/0);
+    TEST_ASSERT_EQUAL(static_cast<int>(dal::EspNowBroadcastDriver::StartupState::Listening),
+                      static_cast<int>(drv->startup_state()));
+
+    // Halfway through the window: nothing settles yet.
+    dal::test_seam::set_now_ms(500);
+    drv->loop_tick();
+    TEST_ASSERT_EQUAL(static_cast<int>(dal::EspNowBroadcastDriver::StartupState::Listening),
+                      static_cast<int>(drv->startup_state()));
+    TEST_ASSERT_FALSE(drv->active());
+
+    // Window elapsed, no collision -> settle to Active with the candidate.
+    dal::test_seam::set_now_ms(1000);
+    drv->loop_tick();
+    TEST_ASSERT_EQUAL(static_cast<int>(dal::EspNowBroadcastDriver::StartupState::Active),
+                      static_cast<int>(drv->startup_state()));
+    TEST_ASSERT_TRUE(drv->active());
+    TEST_ASSERT_EQUAL_UINT8(0x4A, drv->source_id());
+
+    reset_listen_driver();
+}
+
+// One collision in window-1, clear in window-2: re-roll picks the
+// queued next candidate, second window elapses cleanly, driver
+// settles with the re-rolled id.
+static void test_listen_one_collision_then_clear(void) {
+    reset_listen_driver();
+    auto* drv = listen_driver();
+    dal::test_seam::set_now_ms(0);
+
+    // Queue the value the re-roll will use.
+    dal::test_seam::queue_next_performance_pick(0x4B);
+
+    drv->test_enter_listening(/*candidate=*/0x4A, /*started_ms=*/0);
+    TEST_ASSERT_EQUAL_UINT8(0x4A, drv->test_listen_candidate());
+    TEST_ASSERT_EQUAL_UINT8(3, drv->test_listen_attempts_remaining());
+
+    // Inject a colliding HEARTBEAT mid-window.
+    dal::test_seam::set_now_ms(400);
+    drv->test_inject_listen_heartbeat(0x4A);
+    TEST_ASSERT_TRUE(drv->test_listen_collision_heard());
+
+    // Window elapses with a collision recorded: driver decrements
+    // attempts (3 -> 2), re-rolls, and resets the window start.
+    dal::test_seam::set_now_ms(1000);
+    drv->loop_tick();
+    TEST_ASSERT_EQUAL(static_cast<int>(dal::EspNowBroadcastDriver::StartupState::Listening),
+                      static_cast<int>(drv->startup_state()));
+    TEST_ASSERT_EQUAL_UINT8(0x4B, drv->test_listen_candidate());
+    TEST_ASSERT_EQUAL_UINT8(2, drv->test_listen_attempts_remaining());
+    TEST_ASSERT_FALSE(drv->test_listen_collision_heard());
+
+    // Second window: no collisions. Settle.
+    dal::test_seam::set_now_ms(2000);
+    drv->loop_tick();
+    TEST_ASSERT_EQUAL(static_cast<int>(dal::EspNowBroadcastDriver::StartupState::Active),
+                      static_cast<int>(drv->startup_state()));
+    TEST_ASSERT_EQUAL_UINT8(0x4B, drv->source_id());
+
+    reset_listen_driver();
+}
+
+// Three consecutive collisions (one per window): driver logs the
+// warning and settles with the third pick anyway per spec §3.4.
+static void test_listen_three_collisions_settles_with_warning(void) {
+    reset_listen_driver();
+    auto* drv = listen_driver();
+    dal::test_seam::set_now_ms(0);
+
+    // Queue the re-rolls for attempts 2 and 3. Attempt-1 uses the
+    // candidate passed to test_enter_listening.
+    dal::test_seam::queue_next_performance_pick(0x4B);
+    dal::test_seam::queue_next_performance_pick(0x4C);
+
+    drv->test_enter_listening(/*candidate=*/0x4A, /*started_ms=*/0);
+
+    // Attempt 1: collision, decrement 3 -> 2, re-roll to 0x4B.
+    drv->test_inject_listen_heartbeat(0x4A);
+    dal::test_seam::set_now_ms(1000);
+    drv->loop_tick();
+    TEST_ASSERT_EQUAL_UINT8(0x4B, drv->test_listen_candidate());
+    TEST_ASSERT_EQUAL_UINT8(2, drv->test_listen_attempts_remaining());
+
+    // Attempt 2: collision again, 2 -> 1, re-roll to 0x4C.
+    drv->test_inject_listen_heartbeat(0x4B);
+    dal::test_seam::set_now_ms(2000);
+    drv->loop_tick();
+    TEST_ASSERT_EQUAL_UINT8(0x4C, drv->test_listen_candidate());
+    TEST_ASSERT_EQUAL_UINT8(1, drv->test_listen_attempts_remaining());
+
+    // Attempt 3: collision yet again, 1 -> 0, but no further re-roll
+    // - settle with 0x4C per the spec's "MAY proceed and SHOULD log".
+    drv->test_inject_listen_heartbeat(0x4C);
+    dal::test_seam::set_now_ms(3000);
+    drv->loop_tick();
+    TEST_ASSERT_EQUAL(static_cast<int>(dal::EspNowBroadcastDriver::StartupState::Active),
+                      static_cast<int>(drv->startup_state()));
+    TEST_ASSERT_EQUAL_UINT8(0x4C, drv->source_id());
+
+    reset_listen_driver();
+}
+
+// Non-colliding HEARTBEATs (different source_id) MUST NOT trip the
+// collision flag - the listen filter is candidate-specific.
+static void test_listen_ignores_non_matching_heartbeat(void) {
+    reset_listen_driver();
+    auto* drv = listen_driver();
+    dal::test_seam::set_now_ms(0);
+
+    drv->test_enter_listening(/*candidate=*/0x4A, /*started_ms=*/0);
+
+    // Inject HEARTBEATs from other Directors - these are noise, not
+    // collisions against our candidate.
+    drv->test_inject_listen_heartbeat(0x55);
+    drv->test_inject_listen_heartbeat(0xAA);
+    drv->test_inject_listen_heartbeat(0x4B);
+    TEST_ASSERT_FALSE(drv->test_listen_collision_heard());
+
+    dal::test_seam::set_now_ms(1000);
+    drv->loop_tick();
+    TEST_ASSERT_EQUAL(static_cast<int>(dal::EspNowBroadcastDriver::StartupState::Active),
+                      static_cast<int>(drv->startup_state()));
+    TEST_ASSERT_EQUAL_UINT8(0x4A, drv->source_id());
+
+    reset_listen_driver();
+}
+
+// stop_broadcast() mid-Listening cleans up state: Idle, no leftover
+// candidate / attempts / collision flag.
+static void test_stop_broadcast_mid_listening_cleans_up(void) {
+    reset_listen_driver();
+    auto* drv = listen_driver();
+    dal::test_seam::set_now_ms(0);
+
+    drv->test_enter_listening(/*candidate=*/0x4A, /*started_ms=*/0);
+    drv->test_inject_listen_heartbeat(0x4A);   // record a collision for good measure
+    TEST_ASSERT_EQUAL(static_cast<int>(dal::EspNowBroadcastDriver::StartupState::Listening),
+                      static_cast<int>(drv->startup_state()));
+
+    drv->stop_broadcast();
+    TEST_ASSERT_EQUAL(static_cast<int>(dal::EspNowBroadcastDriver::StartupState::Idle),
+                      static_cast<int>(drv->startup_state()));
+    TEST_ASSERT_FALSE(drv->active());
+    TEST_ASSERT_EQUAL_UINT8(0, drv->test_listen_attempts_remaining());
+    TEST_ASSERT_FALSE(drv->test_listen_collision_heard());
+
+    // After cleanup, a subsequent re-entry into Listening starts fresh.
+    drv->test_enter_listening(/*candidate=*/0x5A, /*started_ms=*/0);
+    TEST_ASSERT_EQUAL_UINT8(3, drv->test_listen_attempts_remaining());
+
+    reset_listen_driver();
+}
+
+// =============================================================================
 // main
 // =============================================================================
 
@@ -701,5 +877,10 @@ int main(int, char**) {
     RUN_TEST(test_out_of_range_persisted_src_id_is_re_rolled_by_migrate);
     RUN_TEST(test_driver_derive_source_id_channel_1_uses_persistence);
     RUN_TEST(test_driver_derive_source_id_non_channel_1_falls_back);
+    RUN_TEST(test_listen_no_collision_settles_to_first_candidate);
+    RUN_TEST(test_listen_one_collision_then_clear);
+    RUN_TEST(test_listen_three_collisions_settles_with_warning);
+    RUN_TEST(test_listen_ignores_non_matching_heartbeat);
+    RUN_TEST(test_stop_broadcast_mid_listening_cleans_up);
     return UNITY_END();
 }
