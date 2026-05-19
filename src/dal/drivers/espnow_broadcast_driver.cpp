@@ -6,6 +6,7 @@
 #include "espnow_broadcast_driver.h"
 
 #include "hal/hal.h"
+#include "modes/persistence.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -97,7 +98,7 @@ bool EspNowBroadcastDriver::start_broadcast(uint8_t channel) {
     if (active_) return true;
     auto* radio = hal::HAL::esp_now();
     if (!radio) return false;
-    source_id_  = derive_source_id();
+    source_id_  = derive_source_id(channel);
     seq_num_    = 1;
     last_tx_ms_ = 0;
     active_ = radio->begin(channel);
@@ -122,7 +123,20 @@ void EspNowBroadcastDriver::stop_broadcast() {
 // Internal helpers (verbatim from EspNowBroadcaster)
 // -----------------------------------------------------------------------------
 
-uint8_t EspNowBroadcastDriver::derive_source_id() {
+uint8_t EspNowBroadcastDriver::derive_source_id(uint8_t channel) {
+    // Channel 1: community range (Epic 5.5 B3). The value was rolled at
+    // first boot inside migrate_legacy_nvs_keys and persisted to NVS,
+    // so every subsequent boot loads the same stable per-device ID. A
+    // returning Lume locks back to the same Director ID across power-
+    // cycles, which is the contract channel 1 is built on.
+    if (channel == 1) {
+        return modes::persistence::load_director_source_id();
+    }
+
+    // Channels 6 and 11: legacy MAC-derived behaviour until B4 lands
+    // the Performance-range random-per-boot + listen-before-broadcast
+    // path for channel 11. Channel 6 stays operator-discretionary per
+    // spec §3.4 and is left on the MAC derivation indefinitely.
 #ifdef ARDUINO
     uint8_t mac[6] = {0};
     WiFi.macAddress(mac);

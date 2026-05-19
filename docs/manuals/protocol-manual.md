@@ -463,6 +463,7 @@ All keys live in a single namespace named `noct`. The reference firmware uses Es
 | `ir_en` | `bool` | `true` | - | IR transmitter enabled |
 | `scr_puls_en` | `bool` | `true` | - | Local LCD pulse animation enabled |
 | `mst_chan` | `u8` | `1` | {1, 6, 11} | Director Wi-Fi channel |
+| `mst_src_id` | `u8` | random in `0x00-0x3F` at first boot | `0x00-0x3F` | Director source_id for channel 1 (community range). Stable per device; reused across reboots. See [section 3.4](#34-source-identifier-partitioning). |
 | `slv_chan` | `u8` | `0` (auto) | {0, 1, 6, 11} | Lume Wi-Fi channel; 0 = auto-scan |
 | `slv_repeat` | `bool` | `false` | - | Lume operates as repeater |
 | `slv_group` | `u8` | `0` (broadcast) | 0..255 | Lume receive-filter group |

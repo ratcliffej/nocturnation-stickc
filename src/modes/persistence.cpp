@@ -146,6 +146,28 @@ void save_lume_group(uint8_t g) {
     prefs.end();
 }
 
+uint8_t load_director_source_id() {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/true);
+    uint8_t id = prefs.getUChar("mst_src_id", 0);
+    prefs.end();
+    // Defensive validation. The key is normally guaranteed-present and
+    // guaranteed-in-range by migrate_legacy_nvs_keys, but an older
+    // firmware build or a corrupt NVS entry could write something
+    // outside [0x00, 0x3F]. Clamp into the community range so callers
+    // can rely on the return value without re-validating.
+    if (id > 0x3F) id = 0;
+    return id;
+}
+
+void save_director_source_id(uint8_t id) {
+    if (id > 0x3F) id = 0;   // community range only
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/false);
+    prefs.putUChar("mst_src_id", id);
+    prefs.end();
+}
+
 // Active visualisation id (legacy, pre-Epic-4.7). Retained for back-
 // compat reads during migration; new code uses load_active_show_id.
 // Default is "beat-pulse" - the canonical pre-Block-1 vis - so a
@@ -266,6 +288,21 @@ void migrate_legacy_nvs_keys() {
         prefs.putUChar("slv_group", g);
     }
 
+    // First-boot mst_src_id assignment (Epic 5.5 B3). If mst_src_id has
+    // never been written, pick a random value in the community range
+    // [0x00, 0x3F] and persist it. Stable across reboots so a returning
+    // Lume locks back onto the same Director on channel 1. Out-of-range
+    // values (legacy firmware, NVS corruption) are retroactively
+    // corrected by re-rolling.
+    {
+        const bool present = prefs.isKey("mst_src_id");
+        const bool valid   = present && prefs.getUChar("mst_src_id", 0xFF) <= 0x3F;
+        if (!valid) {
+            const uint8_t id = static_cast<uint8_t>(esp_random() & 0x3F);
+            prefs.putUChar("mst_src_id", id);
+        }
+    }
+
     prefs.end();
 }
 
@@ -299,6 +336,9 @@ bool    s_native_lume_repeat_en  = false;
 uint8_t s_native_lume_group        = 0;
 bool    s_native_lume_group_set    = false;   // tracks "has slv_group been written" (the isKey() analogue)
 uint8_t s_native_first_boot_rng   = 2;       // deterministic stand-in for esp_random() % 3 + 1
+uint8_t s_native_director_src_id     = 0;
+bool    s_native_director_src_id_set = false;
+uint8_t s_native_first_boot_director_src_id_rng = 0x05;  // deterministic stand-in for esp_random() & 0x3F
 bool    s_native_legacy_slv_ir_grp_present = false;
 uint8_t s_native_legacy_slv_ir_grp_value   = 0;
 constexpr size_t kActiveVisBufSize = 16;
@@ -327,6 +367,19 @@ uint8_t          load_lume_group()                       { return s_native_lume_
 void             save_lume_group(uint8_t g)              {
     s_native_lume_group     = g;
     s_native_lume_group_set = true;
+}
+
+uint8_t load_director_source_id() {
+    // Mirror the Arduino branch's defensive clamp: an out-of-range
+    // persisted value is treated as "no valid value" and returns 0.
+    if (!s_native_director_src_id_set) return 0;
+    return s_native_director_src_id <= 0x3F ? s_native_director_src_id : 0;
+}
+
+void save_director_source_id(uint8_t id) {
+    if (id > 0x3F) id = 0;
+    s_native_director_src_id     = id;
+    s_native_director_src_id_set = true;
 }
 
 const char* load_active_vis_id() {
@@ -378,6 +431,19 @@ void migrate_legacy_nvs_keys() {
         s_native_lume_group     = s_native_first_boot_rng;
         s_native_lume_group_set = true;
     }
+
+    // First-boot mst_src_id assignment. Mirrors the Arduino branch: if
+    // no value has been written, or the persisted value is outside the
+    // community range, pick from the deterministic test seam (instead
+    // of esp_random) so the test outcome is predictable.
+    {
+        const bool valid = s_native_director_src_id_set &&
+                           s_native_director_src_id <= 0x3F;
+        if (!valid) {
+            s_native_director_src_id     = s_native_first_boot_director_src_id_rng;
+            s_native_director_src_id_set = true;
+        }
+    }
 }
 
 namespace test_seam {
@@ -394,12 +460,27 @@ void seed_legacy_active_vis(const char* id) {
 void set_first_boot_rng(uint8_t g_in_1_3) {
     s_native_first_boot_rng = g_in_1_3;
 }
+void set_first_boot_director_src_id_rng(uint8_t id_in_community_range) {
+    // Clamp defensively; tests pass values in range but a stray caller
+    // shouldn't silently get a Performance-range value here.
+    s_native_first_boot_director_src_id_rng =
+        (id_in_community_range <= 0x3F) ? id_in_community_range : 0;
+}
+void plant_raw_director_src_id(uint8_t id) {
+    // Bypass save_'s clamp to simulate a corrupted-NVS / older-firmware
+    // state where mst_src_id holds a value outside the community range.
+    s_native_director_src_id     = id;
+    s_native_director_src_id_set = true;
+}
 void clear_native_persistence() {
     s_native_lume_channel             = 0;
     s_native_lume_repeat_en           = false;
     s_native_lume_group                 = 0;
     s_native_lume_group_set             = false;
     s_native_first_boot_rng            = 2;
+    s_native_director_src_id            = 0;
+    s_native_director_src_id_set        = false;
+    s_native_first_boot_director_src_id_rng = 0x05;
     s_native_legacy_slv_ir_grp_present = false;
     s_native_legacy_slv_ir_grp_value   = 0;
     std::strncpy(s_native_active_vis, "beat-pulse", kActiveVisBufSize);

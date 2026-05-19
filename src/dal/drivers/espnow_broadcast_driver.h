@@ -80,8 +80,22 @@ public:
 
     bool active() const { return active_; }
 
+    // Currently-allocated source_id for the active broadcast. Valid
+    // once start_broadcast has been called; returns 0 before that.
+    // Used by the Director UI (Epic 5.5 B5) to show the operator
+    // which ID the audience is locking to.
+    uint8_t source_id() const { return source_id_; }
+
+    // Per Epic 5.5 B3: source_id allocation depends on the configured
+    // channel. Channel 1 uses the community range (stable per device,
+    // persisted via persistence::load_director_source_id). Other
+    // channels currently keep the MAC-derived legacy behaviour; B4
+    // replaces channel 11 with a random Performance-range pick +
+    // listen-before-broadcast. Exposed public for direct unit testing
+    // without spinning up the radio or HAL.
+    static uint8_t  derive_source_id(uint8_t channel);
+
 private:
-    static uint8_t  derive_source_id();
     static uint32_t redundant_gap_ms();
 
     uint8_t next_seq();

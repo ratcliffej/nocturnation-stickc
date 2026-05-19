@@ -25,6 +25,7 @@
 #include "output_bindings/local_display.h"
 #include "output_bindings/pixmob_ir.h"
 #include "../../src/modes/persistence.h"
+#include "../../src/dal/drivers/espnow_broadcast_driver.h"
 
 // =============================================================================
 // Native millis() seam (mirrors test_output_binding pattern)
@@ -557,6 +558,115 @@ static void test_lume_repeat_round_trip(void) {
 }
 
 // =============================================================================
+// Director source_id (Epic 5.5 B3): community-range stable ID on channel 1
+// =============================================================================
+
+// Fresh device: mst_src_id has never been written. migrate picks a
+// value from [0x00, 0x3F] using the deterministic test rng and
+// persists it. Three values exercised end-to-end to prove the path
+// is wired correctly.
+static void test_first_boot_assigns_community_range_director_src_id(void) {
+    for (uint8_t expected : {uint8_t{0x00}, uint8_t{0x1A}, uint8_t{0x3F}}) {
+        modes::persistence::test_seam::clear_native_persistence();
+        modes::persistence::test_seam::set_first_boot_director_src_id_rng(expected);
+
+        modes::persistence::migrate_legacy_nvs_keys();
+
+        TEST_ASSERT_EQUAL_UINT8(
+            expected, modes::persistence::load_director_source_id());
+    }
+}
+
+// Operator-set (well, post-first-boot persisted) mst_src_id survives a
+// second migrate call. Once the key is present and in-range, migrate
+// must not retro-randomise it.
+static void test_migrate_preserves_persisted_director_src_id(void) {
+    modes::persistence::test_seam::clear_native_persistence();
+    modes::persistence::test_seam::set_first_boot_director_src_id_rng(0x05);
+
+    modes::persistence::save_director_source_id(0x2A);
+    modes::persistence::migrate_legacy_nvs_keys();
+    TEST_ASSERT_EQUAL_UINT8(0x2A,
+                            modes::persistence::load_director_source_id());
+
+    // And again - second migrate is a no-op for an already-set key.
+    modes::persistence::migrate_legacy_nvs_keys();
+    TEST_ASSERT_EQUAL_UINT8(0x2A,
+                            modes::persistence::load_director_source_id());
+}
+
+// save_director_source_id clamps Performance-range or broadcast input
+// to 0 (community range floor). Protects against future code paths
+// that might try to write a non-community ID through this entry point.
+static void test_save_clamps_non_community_id_to_zero(void) {
+    modes::persistence::test_seam::clear_native_persistence();
+
+    modes::persistence::save_director_source_id(0xAA);   // Performance-range
+    TEST_ASSERT_EQUAL_UINT8(0,
+                            modes::persistence::load_director_source_id());
+
+    modes::persistence::save_director_source_id(0xFF);   // broadcast
+    TEST_ASSERT_EQUAL_UINT8(0,
+                            modes::persistence::load_director_source_id());
+
+    // Boundary: 0x3F is the last community value and MUST pass through
+    // unchanged.
+    modes::persistence::save_director_source_id(0x3F);
+    TEST_ASSERT_EQUAL_UINT8(0x3F,
+                            modes::persistence::load_director_source_id());
+}
+
+// A persisted mst_src_id outside the community range (older firmware,
+// NVS corruption) is treated as missing by migrate: re-rolls from the
+// rng seam, leaving the device with a valid community-range value.
+static void test_out_of_range_persisted_src_id_is_re_rolled_by_migrate(void) {
+    modes::persistence::test_seam::clear_native_persistence();
+    modes::persistence::test_seam::set_first_boot_director_src_id_rng(0x12);
+
+    // Plant a Performance-range value directly into the native store
+    // (bypassing save_'s clamp). This simulates a corrupted NVS or an
+    // older firmware that wrote a value outside the partition.
+    modes::persistence::test_seam::plant_raw_director_src_id(0xAA);
+
+    modes::persistence::migrate_legacy_nvs_keys();
+
+    TEST_ASSERT_EQUAL_UINT8(0x12,
+                            modes::persistence::load_director_source_id());
+    TEST_ASSERT_TRUE(transport::espnow::is_community_range(
+        modes::persistence::load_director_source_id()));
+}
+
+// EspNowBroadcastDriver::derive_source_id(channel) routes to the
+// persistence helper on channel 1, returning the persisted
+// community-range ID.
+static void test_driver_derive_source_id_channel_1_uses_persistence(void) {
+    modes::persistence::test_seam::clear_native_persistence();
+    modes::persistence::test_seam::set_first_boot_director_src_id_rng(0x07);
+    modes::persistence::migrate_legacy_nvs_keys();
+
+    const uint8_t id = dal::EspNowBroadcastDriver::derive_source_id(1);
+    TEST_ASSERT_EQUAL_UINT8(0x07, id);
+    TEST_ASSERT_TRUE(transport::espnow::is_community_range(id));
+}
+
+// Channels 6 and 11 keep the legacy fallback (native: returns 1).
+// Confirms the channel branch is wired - B4 will replace the channel
+// 11 case with the Performance-range random-per-boot path.
+static void test_driver_derive_source_id_non_channel_1_falls_back(void) {
+    modes::persistence::test_seam::clear_native_persistence();
+    modes::persistence::test_seam::set_first_boot_director_src_id_rng(0x07);
+    modes::persistence::migrate_legacy_nvs_keys();
+
+    // On native, the fallback returns 1 regardless of channel. The
+    // important assertion is that the value is NOT the persisted
+    // community-range ID - i.e. the channel != 1 branch is taken.
+    const uint8_t id_ch6  = dal::EspNowBroadcastDriver::derive_source_id(6);
+    const uint8_t id_ch11 = dal::EspNowBroadcastDriver::derive_source_id(11);
+    TEST_ASSERT_NOT_EQUAL_UINT8(0x07, id_ch6);
+    TEST_ASSERT_NOT_EQUAL_UINT8(0x07, id_ch11);
+}
+
+// =============================================================================
 // main
 // =============================================================================
 
@@ -585,5 +695,11 @@ int main(int, char**) {
     RUN_TEST(test_migration_is_idempotent_for_first_boot);
     RUN_TEST(test_lume_channel_round_trip);
     RUN_TEST(test_lume_repeat_round_trip);
+    RUN_TEST(test_first_boot_assigns_community_range_director_src_id);
+    RUN_TEST(test_migrate_preserves_persisted_director_src_id);
+    RUN_TEST(test_save_clamps_non_community_id_to_zero);
+    RUN_TEST(test_out_of_range_persisted_src_id_is_re_rolled_by_migrate);
+    RUN_TEST(test_driver_derive_source_id_channel_1_uses_persistence);
+    RUN_TEST(test_driver_derive_source_id_non_channel_1_falls_back);
     return UNITY_END();
 }

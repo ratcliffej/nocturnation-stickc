@@ -80,6 +80,30 @@ void             save_lume_repeat_enabled(bool e);
 uint8_t          load_lume_group();
 void             save_lume_group(uint8_t g);
 
+// Director source_id for channel 1 (community range, 0x00-0x3F) per
+// protocol manual §3.4. Stable per device: chosen randomly within the
+// community range on first boot by migrate_legacy_nvs_keys, persisted
+// to NVS key "mst_src_id" under the "noct" namespace, and reused on
+// every subsequent boot. A returning Lume therefore recognises the
+// same Director across power-cycles, which is the contract channel 1
+// is built on.
+//
+// The value is intentionally pre-rolled on every device regardless of
+// configured channel: if the operator later moves the device to a
+// Director-on-channel-1 deployment the ID is ready, and the dormant
+// key on a Lume-only or channel-11 device costs one byte of NVS. On
+// channel 11 the Director allocates a fresh Performance-range ID at
+// every boot via a different path (Epic 5.5 B4); this key is not
+// consulted there.
+//
+// Validation: a value persisted outside the community range (e.g. by
+// older firmware, NVS corruption) is treated as missing - the next
+// migrate_legacy_nvs_keys call re-rolls. Production code calling
+// load_director_source_id() can rely on the return value being in
+// [0x00, 0x3F] as long as migrate has run.
+uint8_t          load_director_source_id();
+void             save_director_source_id(uint8_t id);
+
 // Active Director-side visualisation id. Pre-Epic-4.7 selection key;
 // retained for read-side back-compat during migration. Block 1 of
 // Epic 4.7 retires this in favour of active_show; the value is
@@ -146,6 +170,15 @@ void seed_legacy_active_vis(const char* id);
 // the native migrate_legacy_nvs_keys() first-boot slv_group path.
 // Must be in {1, 2, 3} to mirror what esp_random() would emit.
 void set_first_boot_rng(uint8_t g_in_1_3);
+// Set the deterministic stand-in for esp_random() & 0x3F used by
+// the native migrate_legacy_nvs_keys() first-boot mst_src_id path.
+// Must be in [0x00, 0x3F] (the community range).
+void set_first_boot_director_src_id_rng(uint8_t id_in_community_range);
+// Plant a raw mst_src_id value in the native NVS stand-in, bypassing
+// the save_director_source_id clamp. Used to simulate the
+// "corrupted NVS / older firmware wrote an out-of-range value"
+// scenario so the migrate re-roll path can be exercised on native.
+void plant_raw_director_src_id(uint8_t id);
 void clear_native_persistence();
 }  // namespace test_seam
 #endif
