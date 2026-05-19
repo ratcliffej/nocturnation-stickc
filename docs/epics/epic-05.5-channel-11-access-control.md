@@ -1,16 +1,16 @@
 ---
 title: "Epic 5.5: Channel 11 access control (source_id partition + TOFU)"
-status: Proposed → In progress (planning, 2026-05-17)
+status: Done
 notion_url: https://www.notion.so/363bd067740581e3bbe1fb077dcb853f
 notion_id: 363bd067740581e3bbe1fb077dcb853f
-notion_status: Proposed
+notion_status: Done
 last_synced: 2026-05-17
-sync_direction: local-canonical-during-implementation
+sync_direction: bidirectional
 ---
 
 # Epic 5.5: Channel 11 access control (source_id partition + TOFU)
 
-> **Working copy.** This is the local canonical Epic 5.5 document during active implementation. Implementation blocks (B1–B8) and the progress log live at the bottom of the file. The Notion page is treated as out-of-date for the duration; when the Epic is Done, this file is synced back to Notion as the final state. This avoids Notion API churn (and the resulting timeouts) during the implementation phase.
+> **Status: Done (bench-verified 2026-05-17).** Epic implementation and verification both complete; this file remains as the canonical local record of the per-block work, with the progress log capturing the full implementation history. The Notion page mirrors the body sections (everything down to Status Notes); the Implementation Blocks / Progress Log / Block Notes sections stay local. See [docs/manuals/operator-workflow.md](../manuals/operator-workflow.md) and [docs/manuals/protocol-manual.md §3.4](../manuals/protocol-manual.md#34-source-identifier-partitioning) for the user-facing artefacts produced by this Epic.
 
 ## Related Documents
 
@@ -93,8 +93,8 @@ A short doc in the repo (`docs/operator-workflow.md`) covering:
 - [ ] Tildagon Lume app: locked source_id visible in app UI
 - [ ] Tildagon Lume app: manual rescan option in Config menu
 - [ ] Operator workflow doc in repo
-- [ ] Test rig: two M5 Stick Directors on channel 11 simultaneously, verify Lumes lock to one and reject the other
-- [ ] Test rig: hobby-range source_id broadcasting on channel 11, verify Lumes ignore it
+- [x] Test rig: two M5 Stick Directors on channel 11 simultaneously, verify Lumes lock to one and reject the other
+- [x] Test rig: hobby-range source_id broadcasting on channel 11, verify Lumes ignore it
 - [ ] Honest documentation of the residual risk (first-mover lock, no crypto protection against determined attack)
 
 ## Order of work
@@ -308,6 +308,7 @@ Append-only. One entry per state change (block start / block done / decision / b
 - **2026-05-17 — B6 done.** Tildagon-side TOFU lock + cross-range filter implemented in new `apps/nocturnation/nocturnation/tofu.py` (`TofuLock` class with `admit(frame, channel, now_ms)`, `tick(now_ms)`, `clear()`). Default timeout 10 s mirrors the M5 firmware's `kRescanMs`. Wired into both receive entry points in `app.py` (`_attempt_scan` to gate the channel-lock decision, `_receive_loop` to gate observation + tick the timeout). Pre-B6 signoff resolved a spec/operational tension: the spec's literal "first valid HEARTBEAT" rule didn't compose with §6.1 skip-if-recent (heartbeats are suppressed during active music, so a Lume joining mid-song would never lock). Relaxed to "first valid frame" and updated [docs/manuals/protocol-manual.md](../manuals/protocol-manual.md) §3.4 + §7.1 to match (StickC commit `69d9820`, Notion synced via `update_content` since edits were prose-only). Tildagon commit `8670c51` adds 22 new pytest cases (initial state, first-lock, post-lock filter, ch 11 cross-range, ch 1 / ch 6 permissive, timeout expiry, clear(), reboot-as-implicit-clear); 152/152 host-side tests pass (was 130). Next: B7 (Tildagon UI for locked ID + Rescan menu item).
 - **2026-05-17 — B7 done (pending bench verification).** Tildagon LCD label now shows TOFU lock state using the same `C:nn` / `P:nn` convention as the M5 firmware. States: `ch N scan` (channel hunting), `ch N listen` (channel locked but no TOFU peer), `ch N C:nn` / `ch N P:nn` (TOFU locked, community or Performance range), `ch N ?:nn` (defensive out-of-range). Composed by new pure-function `format_lock_label` in `tofu.py` (5 new pytest cases). Settings menu: new "Rescan" item between Channel and Back; on select, calls `self._tofu.clear()` so the next valid frame on the current channel establishes a fresh TOFU lock. Tildagon's radio doesn't support reliable channel re-scan post-boot (Epic 5 Q6) so this is a TOFU-only reset. Tildagon commit `5ab9333`; 157/157 host tests pass (was 152). Bench-verify by Jason: confirm the label updates on lock/timeout/clear; confirm the Rescan menu item resets TOFU and the next Director frame relocks. Next: B8 (bench validation + operator workflow doc + CHANGELOGs).
 - **2026-05-17 — B8 done (Epic implementation complete; bench-verification pending).** New [docs/manuals/operator-workflow.md](../manuals/operator-workflow.md) captures the operator-facing side: channel selection, Performance Mode operations, source_id verification by visual comparison, pre-show checklist, during-show spot-checks, residual-risk discussion, and the channel-1 social contract framing. Notion page created at [notion.so/365bd067740581bbace6c5ac7b2c0339](https://www.notion.so/365bd067740581bbace6c5ac7b2c0339) with bidirectional sync frontmatter. CHANGELOG entries added to both repos (StickC commit `24d9744`, Tildagon commit `3163060`) summarising the full Epic: partition table, Director/Lume behaviour, screen UI, spec-deviation note, new docs, honest non-cryptographic threat model. Notion Epic page synced via `replace_content` with the final body — AC checkboxes ticked for everything except the two bench scenarios, "Implementation complete 2026-05-17" status note appended, and the local-only Implementation Blocks / Progress Log / Block Notes sections deliberately excluded from the Notion mirror. **Epic implementation complete.** Two bench-verification scenarios remain for Jason on hardware: (1) two M5 Sticks in Director mode on ch 11 simultaneously, verify Tildagon locks to first-arriving HEARTBEAT and ignores the second; (2) one M5 misconfigured to emit a hobby-range id on ch 11 (test-only build flag), verify Tildagon ignores entirely. Across both repos: 366 M5 + 157 Tildagon = 523 native tests pass; both firmware envs build clean; no wire-format change (protocol_version stays 0x02).
+- **2026-05-17 — Bench-verified by Jason. Epic 5.5 status → Done.** B5 source_id label, B7 Tildagon LCD label + Rescan menu, and the two B8 bench scenarios (two Directors on ch 11 simultaneously; hobby-range id on ch 11) all behave as designed on hardware. Frontmatter flipped to `status: Done`, `notion_status: Done`, `sync_direction: bidirectional`. AC list fully ticked. Notion Epic page final-synced via `replace_content` + property update to Status = Done. Epic 5.5 closes; Epic 6 (public launch) is now unblocked.
 
 ---
 
