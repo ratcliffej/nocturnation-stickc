@@ -173,6 +173,20 @@ void TestMode::draw_menu() {
             10, 4 + (int)row * 16, buf,
             sel ? YELLOW : WHITE, BLACK, 2});
     }
+
+    // Source_id status label (Epic 5.5 B5). Same bottom-right placement
+    // and format as Director Mode. TestMode also broadcasts on the
+    // configured Director channel, so the ID is meaningful here too.
+    auto* drv = dal::esp_now_broadcast_driver_instance();
+    char status[16];
+    const size_t n = dal::EspNowBroadcastDriver::format_status_label(
+        drv->startup_state(), drv->source_id(), drv->listen_candidate(),
+        status, sizeof(status));
+    if (n > 0) {
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            /*x=*/200, /*y=*/126, /*text=*/status,
+            /*fg=*/WHITE, /*bg=*/BLACK, /*size=*/1});
+    }
 }
 
 void TestMode::update_menu_view_offset() {

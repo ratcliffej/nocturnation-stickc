@@ -367,6 +367,40 @@ void EspNowBroadcastDriver::log_listen_collision_warning() const {
 #endif
 }
 
+size_t EspNowBroadcastDriver::format_status_label(StartupState state,
+                                                   uint8_t source_id_value,
+                                                   uint8_t listen_candidate_value,
+                                                   char* buf,
+                                                   size_t buflen) {
+    if (buf == nullptr || buflen == 0) return 0;
+    buf[0] = '\0';
+    if (state == StartupState::Idle) return 0;
+
+    using namespace transport::espnow;
+    const uint8_t id = (state == StartupState::Listening)
+                           ? listen_candidate_value : source_id_value;
+
+    char prefix;
+    if (is_community_range(id))        prefix = 'C';
+    else if (is_performance_range(id)) prefix = 'P';
+    else                               prefix = '?';   // defensive (0xFF / corrupt)
+
+    const char* suffix = (state == StartupState::Listening) ? "?" : "";
+    const int n = std::snprintf(buf, buflen, "%c:%02X%s",
+                                prefix, (unsigned)id, suffix);
+    if (n <= 0) {
+        buf[0] = '\0';
+        return 0;
+    }
+    if (static_cast<size_t>(n) >= buflen) {
+        // snprintf truncated. Surface as "no label" rather than a
+        // partial that might mislead the operator.
+        buf[0] = '\0';
+        return 0;
+    }
+    return static_cast<size_t>(n);
+}
+
 uint8_t EspNowBroadcastDriver::pick_performance_id_random() {
 #ifdef ARDUINO
     // Performance range: 0x40..0xFE inclusive = 191 slots.

@@ -108,6 +108,31 @@ public:
     // which ID the audience is locking to.
     uint8_t source_id() const { return source_id_; }
 
+    // The candidate source_id under evaluation during a channel-11
+    // listen window. Meaningful only when startup_state_ == Listening;
+    // returns 0 otherwise. Used by the status formatter so the
+    // operator UI can show the candidate ID (with a tentative suffix)
+    // while the driver is still listening for collisions.
+    uint8_t listen_candidate() const { return listen_candidate_; }
+
+    // Compose a short status label for the operator screen
+    // (Epic 5.5 B5). Format:
+    //   Idle      -> empty string, returns 0
+    //   Active    -> "C:nn" (community-range source_id)
+    //             or "P:nn" (Performance-range source_id)
+    //   Listening -> "P:nn?" (candidate, tentative; trailing '?' means
+    //                         still listening for collisions)
+    //   Out-of-range -> "?:nn" (defensive; shouldn't happen for a
+    //                           conforming Director)
+    // Returns the number of characters written (excluding the trailing
+    // NUL), or 0 if nothing was written (state Idle or buffer too small).
+    // Pure function for unit testability; callers pass driver state in.
+    static size_t format_status_label(StartupState state,
+                                      uint8_t source_id_value,
+                                      uint8_t listen_candidate_value,
+                                      char* buf,
+                                      size_t buflen);
+
     // Per Epic 5.5 B3: source_id allocation depends on the configured
     // channel. Channel 1 uses the community range (stable per device,
     // persisted via persistence::load_director_source_id). Other

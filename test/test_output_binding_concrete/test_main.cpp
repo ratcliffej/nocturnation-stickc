@@ -816,6 +816,91 @@ static void test_listen_ignores_non_matching_heartbeat(void) {
     reset_listen_driver();
 }
 
+// =============================================================================
+// Status-label formatter (Epic 5.5 B5)
+// =============================================================================
+
+using StartupState = dal::EspNowBroadcastDriver::StartupState;
+
+static void test_status_label_idle_returns_empty(void) {
+    char buf[16] = "junk";
+    const size_t n = dal::EspNowBroadcastDriver::format_status_label(
+        StartupState::Idle, 0x07, 0, buf, sizeof(buf));
+    TEST_ASSERT_EQUAL_size_t(0, n);
+    TEST_ASSERT_EQUAL_STRING("", buf);
+}
+
+static void test_status_label_active_community_uses_C_prefix(void) {
+    char buf[16] = {0};
+    const size_t n = dal::EspNowBroadcastDriver::format_status_label(
+        StartupState::Active, 0x03, 0, buf, sizeof(buf));
+    TEST_ASSERT_EQUAL_size_t(4, n);
+    TEST_ASSERT_EQUAL_STRING("C:03", buf);
+}
+
+static void test_status_label_active_performance_uses_P_prefix(void) {
+    char buf[16] = {0};
+    const size_t n = dal::EspNowBroadcastDriver::format_status_label(
+        StartupState::Active, 0x4F, 0, buf, sizeof(buf));
+    TEST_ASSERT_EQUAL_size_t(4, n);
+    TEST_ASSERT_EQUAL_STRING("P:4F", buf);
+}
+
+// Listening shows the candidate (not source_id_) plus a "?" suffix to
+// indicate the value isn't yet settled.
+static void test_status_label_listening_shows_candidate_with_question_mark(void) {
+    char buf[16] = {0};
+    const size_t n = dal::EspNowBroadcastDriver::format_status_label(
+        StartupState::Listening,
+        /*source_id_value=*/0x01,             // placeholder (ignored in Listening)
+        /*listen_candidate_value=*/0x4B,
+        buf, sizeof(buf));
+    TEST_ASSERT_EQUAL_size_t(5, n);
+    TEST_ASSERT_EQUAL_STRING("P:4B?", buf);
+}
+
+// Boundary IDs: 0x00 (min community), 0x3F (max community), 0x40 (min
+// Performance), 0xFE (max Performance).
+static void test_status_label_boundary_ids(void) {
+    char buf[16];
+    dal::EspNowBroadcastDriver::format_status_label(
+        StartupState::Active, 0x00, 0, buf, sizeof(buf));
+    TEST_ASSERT_EQUAL_STRING("C:00", buf);
+
+    dal::EspNowBroadcastDriver::format_status_label(
+        StartupState::Active, 0x3F, 0, buf, sizeof(buf));
+    TEST_ASSERT_EQUAL_STRING("C:3F", buf);
+
+    dal::EspNowBroadcastDriver::format_status_label(
+        StartupState::Active, 0x40, 0, buf, sizeof(buf));
+    TEST_ASSERT_EQUAL_STRING("P:40", buf);
+
+    dal::EspNowBroadcastDriver::format_status_label(
+        StartupState::Active, 0xFE, 0, buf, sizeof(buf));
+    TEST_ASSERT_EQUAL_STRING("P:FE", buf);
+}
+
+// 0xFF (broadcast) and anything else outside the two ranges falls
+// back to "?:" so it's visually obvious something is wrong.
+static void test_status_label_out_of_range_uses_question_prefix(void) {
+    char buf[16];
+    dal::EspNowBroadcastDriver::format_status_label(
+        StartupState::Active, 0xFF, 0, buf, sizeof(buf));
+    TEST_ASSERT_EQUAL_STRING("?:FF", buf);
+}
+
+// Buffer smaller than the formatted output -> no partial label written,
+// returns 0. Operator sees nothing rather than misleading half-text.
+static void test_status_label_truncated_buffer_returns_zero(void) {
+    char tiny[3] = {'a', 'b', '\0'};   // need 5 chars for "C:03"
+    const size_t n = dal::EspNowBroadcastDriver::format_status_label(
+        StartupState::Active, 0x03, 0, tiny, sizeof(tiny));
+    TEST_ASSERT_EQUAL_size_t(0, n);
+    TEST_ASSERT_EQUAL_STRING("", tiny);
+}
+
+// =============================================================================
+
 // stop_broadcast() mid-Listening cleans up state: Idle, no leftover
 // candidate / attempts / collision flag.
 static void test_stop_broadcast_mid_listening_cleans_up(void) {
@@ -881,6 +966,13 @@ int main(int, char**) {
     RUN_TEST(test_listen_one_collision_then_clear);
     RUN_TEST(test_listen_three_collisions_settles_with_warning);
     RUN_TEST(test_listen_ignores_non_matching_heartbeat);
+    RUN_TEST(test_status_label_idle_returns_empty);
+    RUN_TEST(test_status_label_active_community_uses_C_prefix);
+    RUN_TEST(test_status_label_active_performance_uses_P_prefix);
+    RUN_TEST(test_status_label_listening_shows_candidate_with_question_mark);
+    RUN_TEST(test_status_label_boundary_ids);
+    RUN_TEST(test_status_label_out_of_range_uses_question_prefix);
+    RUN_TEST(test_status_label_truncated_buffer_returns_zero);
     RUN_TEST(test_stop_broadcast_mid_listening_cleans_up);
     return UNITY_END();
 }

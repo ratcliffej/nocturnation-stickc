@@ -429,6 +429,24 @@ void DirectorMode::draw() {
 
     // Show owns the screen during normal operation.
     if (active_show_ && ctx_) active_show_->on_render(*ctx_);
+
+    // Source_id status label (Epic 5.5 B5) overlays the bottom-right
+    // corner so the operator can verify which ID the audience is
+    // locking to. Drawn at size 1 (~8 px tall, ~6 px wide); a 5-char
+    // label ("P:4F?") fits inside ~30 px at the right edge. Renders
+    // every draw tick on top of whatever the Show painted; Shows
+    // following the developing-shows.md "reserve ~14 px at the bottom
+    // for a footer hint" convention will not collide.
+    auto* drv = dal::esp_now_broadcast_driver_instance();
+    char status[16];
+    const size_t n = dal::EspNowBroadcastDriver::format_status_label(
+        drv->startup_state(), drv->source_id(), drv->listen_candidate(),
+        status, sizeof(status));
+    if (n > 0) {
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            /*x=*/200, /*y=*/126, /*text=*/status,
+            /*fg=*/WHITE, /*bg=*/BLACK, /*size=*/1});
+    }
 }
 
 void DirectorMode::draw_picker() {
