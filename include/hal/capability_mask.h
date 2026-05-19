@@ -6,10 +6,10 @@
 // declared capabilities (via `HAL::has(...)` over each set bit) and
 // gates the plugin off if any requirement is missing.
 //
-// The Capability enum currently has 13 values (max value
-// `AnalyserSectionDetection` = 12). uint32_t is comfortable headroom
-// for the four reserved slots already in the enum and any near-future
-// additions before we'd need to widen this.
+// The Capability enum currently has 19 values (max value
+// `ImuMotion` = 18 after the Epic-6B IMU sub-cap additions). uint32_t
+// is comfortable headroom for the foreseeable additions before we'd
+// need to widen this.
 
 #pragma once
 

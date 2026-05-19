@@ -91,6 +91,18 @@ public:
     // 6=INSTRUMENTAL_BREAK, 7=DROP.
     virtual void on_section_change(ShowContext&, uint8_t /*section*/) {}
 
+    // IMU events (Epic 6B). Forward-compatible declarations; no M5
+    // backend currently produces these. The Tildagon Director's IMU
+    // adapter fires on_tap_detected (and on_beat_detected alongside,
+    // so beat-driven shows are host-agnostic) and on_motion_event.
+    //
+    // strength: 0..255 normalised by the IMU adapter.
+    // axis: 0=X, 1=Y, 2=Z, 3=magnitude. magnitude: 0..255 normalised.
+    virtual void on_tap_detected(ShowContext&, uint8_t /*strength*/) {}
+    virtual void on_motion_event(ShowContext&,
+                                  uint8_t /*axis*/,
+                                  uint8_t /*magnitude*/) {}
+
     // Input. Cycle / Confirm / CyclePrev reach the show. Picker /
     // Settings actions are consumed by the mode upstream.
     virtual void on_input_action(ShowContext&, const hal::InputEvent&) {}

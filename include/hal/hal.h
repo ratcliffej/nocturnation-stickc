@@ -75,6 +75,24 @@ enum class Capability : uint8_t {
     AnalyserSpectralCentroid, // continuous centroid descriptor
     AnalyserEnergyEnvelope,   // continuous smoothed-RMS descriptor
     AnalyserSectionDetection, // SECTION_CHANGE events (verse/chorus/bridge)
+
+    // -------------------------------------------------------------------------
+    // IMU sub-capabilities (Epic 6B)
+    // -------------------------------------------------------------------------
+    //
+    // Compose what an IMU backend produces. A host with Capability::IMU
+    // declared also declares the subset of these its IMU driver fires
+    // events for. Tap is the highest-value sub-capability for Director-
+    // mode tap-to-beat; Motion supports gesture-driven shows.
+    //
+    // No M5 backend currently produces these events; the flags are
+    // reserved-but-unwired (same posture as the Epic-4.7-reserved
+    // analyser sub-flags above) so Shows that consume them can declare
+    // a stable required_capabilities() mask in the cross-platform
+    // shape. Tildagon (where the IMU adapter does fire these events)
+    // declares them via its own HAL.
+    ImuTap,                   // produces TapDetectedEvent (high-pass-filtered Z onset)
+    ImuMotion,                // produces MotionEvent (3-axis magnitude / per-axis)
 };
 
 // =============================================================================

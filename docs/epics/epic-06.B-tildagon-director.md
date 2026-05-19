@@ -178,7 +178,7 @@ Started 2026-05-19. Estimate 1.5-2 weeks of focused work. No external deadline w
 
 ## Status Notes
 
-2026-05-19: Epic 6B opened. B1 design pre-pass complete and signed off. `ImuFreeFall` dropped from the proposal; Notion page deferred to Epic Done. B2 next.
+2026-05-19: Epic 6B opened. B1 design pre-pass complete and signed off. `ImuFreeFall` dropped from the proposal; Notion page deferred to Epic Done. B2 (Show framework) complete: MicroPython Plugin/Show/ShowContext + folder-per-show registry on Tildagon, M5 capability/hook extension, both firmware envs green, 219 Tildagon tests passing. B3 (render_fx dispatch) next.
 
 ---  
 
@@ -187,7 +187,7 @@ Started 2026-05-19. Estimate 1.5-2 weeks of focused work. No external deadline w
 | Block | Title | Status | Notes |
 |------:|-------|--------|-------|
 | B1 | Capability model design pre-pass | Done | Research-only. Output is the `Block notes / B1` section below. Signed off 2026-05-19. |
-| B2 | Plugin / Show / ShowContext + folder-per-show registry | Not started | |
+| B2 | Plugin / Show / ShowContext + folder-per-show registry | Done | MicroPython framework + M5 enum/hook extension. 62 new Tildagon tests; both M5 firmware envs build clean. |
 | B3 | `ctx.render_fx` dispatch on Tildagon Director | Not started | |
 | B4 | IMU input adapter + sensitivity property | Not started | |
 | B5 | Button-as-tap fallback | Not started | |
@@ -199,6 +199,12 @@ Started 2026-05-19. Estimate 1.5-2 weeks of focused work. No external deadline w
 ## Progress log
 
 2026-05-19 — Epic 6B opened. Working copy drafted; B1 design pre-pass drafted and signed off in the same session. `ImuFreeFall` dropped from the proposal; Notion page creation deferred to Epic Done. B2 next.
+
+2026-05-19 — B2 done. MicroPython Show framework landed on Tildagon + M5-side capability/hook extension.
+  - **M5 (nocturnation-m5)**: `hal::Capability` extended with `ImuTap` (17) + `ImuMotion` (18) at the end of the enum, reserved-but-unwired (no M5 backend produces them yet); `capability_mask.h` headroom comment refreshed. `Show` base class gained `on_tap_detected` / `on_motion_event` hooks with no-op defaults (forward-compatible). Both firmware envs (stickcplus2, stickcs3) build clean; native_plugin + native_show test envs pass (62 cases).
+  - **Tildagon (nocturnation-tildagon)**: new packages — `nocturnation/hal/` (Capability enum + CapabilityMask, 1:1 with the C++ surface incl. subset_of), `nocturnation/plugins/` (Plugin base, PropertyType/PropertyDef/PowerProfile/PluginKind, PropertyBag with JSON persistence at `/nocturnation_plugins.json` sectioned per plug-in id), `nocturnation/shows/` (Show base with all hooks + IMU hooks, ShowContext services surface with render_fx/property/cap-query/time stubs, ShowRegistry + `discover_shows()` folder-walker). New top-level `apps/nocturnation/shows/` concrete-show library dir (empty, ready for B7). 62 new host tests; full suite 219 passing (was 157).
+  - **Deliberate B2 stubs**: `ShowContext.render_fx` returns False with no host (B3 wires the real ESP-NOW + LED + LCD fan-out); `imu_caps()` empty until B4. Surface is final so concrete Shows written against it stay stable.
+  - Show-author contract: a Show is a folder under `apps/nocturnation/shows/<id>/` with `__init__.py` exposing `make_show()`. Discovery is alphabetical; duplicate ids / missing factories / raising factories are skipped without crashing the picker.
 
 ## Block notes
 
