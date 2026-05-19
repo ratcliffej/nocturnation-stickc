@@ -5,7 +5,7 @@ protocol_version: 0x02
 firmware_version: "v0.5"
 notion_url: https://www.notion.so/35ebd067740580378400ec3e0e8a0ca0
 notion_id: 35ebd067740580378400ec3e0e8a0ca0
-last_synced: 2026-05-16
+last_synced: 2026-05-17
 sync_direction: bidirectional
 ---
 
@@ -117,7 +117,7 @@ Every frame begins with an eight-byte header:
 | 0 | `magic[0]` | 1 | Always `0x4E` (ASCII `N`) |
 | 1 | `magic[1]` | 1 | Always `0x4E` (ASCII `N`) |
 | 2 | `protocol_version` | 1 | Always `0x02` at this revision |
-| 3 | `source_id` | 1 | 1..254 = sender id; `0xFF` = broadcast / anonymous |
+| 3 | `source_id` | 1 | Sender id, partitioned by range and channel - see [section 3.4](#34-source-identifier-partitioning). `0xFF` = broadcast / anonymous. |
 | 4 | `sequence_number` | 1 | Wraps 1..255 in monotonic order per source; `0x00` indicates no sequencing |
 | 5 | `hop_count` | 1 | 0 = original transmission; receiver MUST drop frames where hop_count > 3 |
 | 6 | `message_type` | 1 | See [section 3.2](#32-message-types) |
@@ -177,6 +177,36 @@ A receiver whose configured `device_class` matches `target_class` (or `target_cl
 #### 3.3.3 `EXTENSION` (`0xFF`)
 
 Reserved for future use. A receiver MUST silently discard frames of this type at protocol version `0x02`.
+
+### 3.4 Source identifier partitioning
+
+The `source_id` field at offset 3 of the frame header is partitioned by range to support channel-specific access control on the broadcast side and Trust-On-First-Use locking on the receive side. The partition is a convention layered on top of the existing one-byte field; no wire-format change.
+
+| Range | Slots | Use | Director allocation rule | Default channel binding |
+|---|---:|---|---|---|
+| `0x00 - 0x3F` | 64 | Community / hobby | Stable per device: pick a random ID in this range at first boot, persist to NVS, reuse on subsequent boots. | Channel 1. |
+| `0x40 - 0xFE` | 191 | Performance mode | Random per boot: pick a fresh ID in this range at every boot; listen-before-broadcast. | Channel 11. |
+| `0xFF` | 1 | Broadcast / anonymous | Used by senders that intentionally identify as anonymous, or as a wildcard in receiver-side filters. | Any channel. |
+
+**Channel 6** is an advanced operator override and is not constrained by this partition. Operators configuring a Director on channel 6 SHOULD pick a Performance-range source_id, but a Lume on channel 6 MUST accept any source_id (channel 6 is permissive by design).
+
+**Director-side rules:**
+
+- A Director MUST allocate its `source_id` from the range matching its configured channel: community range (`0x00-0x3F`) on channel 1; Performance range (`0x40-0xFE`) on channel 11.
+- On channel 1, the chosen ID MUST be persisted to NVS at first boot and MUST be reused on subsequent boots. The reference firmware uses the NVS key `mst_src_id` (see [annex B](#annex-b-non-volatile-storage-schema)).
+- On channel 11, the chosen ID MUST be regenerated at every boot and MUST NOT be persisted. The Director MUST listen for at least one second before its first transmission to detect a colliding ID. If a `HEARTBEAT` matching its chosen ID arrives during the listen window, the Director MUST re-roll and listen again. After three consecutive collisions the Director MAY proceed with the third pick and SHOULD log a warning; the probability of three consecutive collisions with 191 slots and a small number of concurrent Directors is operationally negligible.
+- A Director SHOULD display its `source_id` on its operator UI so the operator can verify which ID the audience is locking to.
+
+**Lume-side rules (Trust-On-First-Use):**
+
+- A Lume MUST lock to the `source_id` of the first valid `HEARTBEAT` it receives on a channel after scan or rescan. Subsequent frames whose `source_id` differs from the locked value MUST be silently discarded.
+- A Lume on channel 11 MUST consider only Performance-range source_ids (`0x40-0xFE`) eligible for TOFU lock. A `HEARTBEAT` carrying a community-range source_id on channel 11 MUST be silently discarded without locking. This defends Lumes against a misconfigured Director announcing on the wrong channel.
+- A Lume on channel 1 MUST accept any non-broadcast source_id for TOFU lock; channel 1 is the community-permissive channel by design.
+- A Lume MUST release its TOFU lock and resume scanning if no frame from the locked `source_id` has been received for `kRescanMs` milliseconds. The reference firmware uses `kRescanMs = 10000` (ten seconds), shared with the channel re-scan threshold ([section 5.4](#54-lume---re-scan-on-signal-loss)).
+- A Lume MAY expose a "Rescan" operator action that releases the TOFU lock on demand.
+- A Lume SHOULD display the locked `source_id` on its operator UI so the audience can verify which Director it is locked to.
+
+**Tildagon Director-mode constraint (forward-looking):** when Director mode is added to the Tildagon (planned for a later Epic), a Tildagon-class Director MUST NOT broadcast on channel 11; Tildagon Directors are restricted to channel 1 (community range) for transmission. The Tildagon is a community badge distributed at scale; keeping it off channel 11 as a transmitter protects the integrity of curated Performance Mode shows at events like EMF. This restriction is conservative and MAY be revisited in a future protocol revision once the access control model has matured in deployment. The Tildagon remains free to *receive* on channel 11 in Lume mode, with TOFU and cross-range filtering applied as for any other Lume.
 
 ---
 
@@ -238,7 +268,7 @@ This is dispatch-side behaviour and is not visible to the wire; a third-party Di
 
 ### 5.1 Director
 
-The Director is configured for a fixed channel (1, 6, or 11) via non-volatile storage (`mst_chan`; see [annex B](#annex-b-non-volatile-storage-schema)). It MUST NOT change channels during a deployment.
+The Director is configured for a fixed channel (1, 6, or 11) via non-volatile storage (`mst_chan`; see [annex B](#annex-b-non-volatile-storage-schema)). It MUST NOT change channels during a deployment. The Director's `source_id` allocation rule depends on the configured channel; see [section 3.4](#34-source-identifier-partitioning).
 
 ### 5.2 Lume - locked mode
 
@@ -303,6 +333,8 @@ A conforming receiver MUST honour the following:
 - The class-and-group routing rules in [section 4.2](#42-group-filtering).
 - The `LIGHT_COMMAND` payload semantics: RGB triplet, attack/sustain/release envelope stages, chance gate.
 - The protocol-version validation rule in [section 1.4](#14-versioning).
+- Trust-On-First-Use locking to the `source_id` of the first valid `HEARTBEAT` after scan or rescan, and silent discard of subsequent frames whose `source_id` differs from the locked value ([section 3.4](#34-source-identifier-partitioning)).
+- Cross-range filtering on channel 11: silent discard of `HEARTBEAT` frames whose `source_id` is outside the Performance range (`0x40-0xFE`), without TOFU lock ([section 3.4](#34-source-identifier-partitioning)).
 
 ### 7.2 Receiver SHOULD honour
 
@@ -336,6 +368,8 @@ A conforming Director MUST honour:
 - The heartbeat rule and skip-if-recent suppression ([section 6.1](#61-director-heartbeat)).
 - The protocol-version byte at offset 0 of every frame.
 - Channel fixity for the duration of a deployment ([section 5.1](#51-director)).
+- `source_id` allocation from the range matching the configured channel ([section 3.4](#34-source-identifier-partitioning)).
+- Listen-before-broadcast on channel 11: at least one second of receive-only listening before the first transmission, with re-roll on detected collision ([section 3.4](#34-source-identifier-partitioning)).
 
 ---
 
@@ -547,7 +581,7 @@ These hand-derived vectors are illustrative. The authoritative reference vectors
 | 0x01 | 2026 | (superseded) | Initial public protocol. ESP-NOW transport, 6-byte header, two active message types (`HEARTBEAT`, `LIGHT_COMMAND`) plus `EXTENSION` reserved, class-and-group addressing, PixMob IR annex. |
 | 0x02 | 2026 | This document | Added 2-byte magic prefix (`0x4E 0x4E`, ASCII "NN") at frame offset 0..1 to discriminate NocturNation traffic from other ESP-NOW users sharing the channel at event-density deployments. Header grew from 6 to 8 bytes; all other offsets shift +2. Wire-incompatible with v1: v1 and v2 receivers cannot interoperate. |
 
-Future revisions will be appended to this table.
+Future revisions will be appended to this table. Conventions layered on top of an existing protocol version (without a wire-format change) are not tracked here; they are documented inline in the relevant section. The source_id partitioning rules added on 2026-05-17 ([section 3.4](#34-source-identifier-partitioning)) are one such non-wire convention.
 
 ---
 
