@@ -299,6 +299,7 @@ Acceptance criteria:
 Append-only. One entry per state change (block start / block done / decision / bench result / blocker).
 
 - **2026-05-17** — Epic decomposed into 8 blocks (B1–B8) plus B4a design pre-pass. Local working copy created in `docs/epics/`. Notion treated as out-of-date until Epic Done. Next: B1 (spec update).
+- **2026-05-17 — B1 done.** New §3.4 "Source identifier partitioning" added to [docs/manuals/protocol-manual.md](../manuals/protocol-manual.md) (commit `5ea160f`). Director-side allocation rules, Lume-side TOFU + cross-range filter, and Tildagon Director-mode constraint all in §3.4. Smaller cross-references: §3.1 header table source_id row, §5.1 Director, §7.1 Receiver MUST (+2 bullets), §7.5 Director MUST (+2 bullets), Annex D non-wire-convention note. Notion mirror synced via `replace_content`. No wire-format change; protocol_version stays at `0x02`. Next: B2 (protocol constants + helpers, both repos paired).
 
 ---
 
