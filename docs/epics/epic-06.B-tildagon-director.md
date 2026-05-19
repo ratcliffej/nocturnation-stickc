@@ -178,7 +178,7 @@ Started 2026-05-19. Estimate 1.5-2 weeks of focused work. No external deadline w
 
 ## Status Notes
 
-2026-05-19: Epic 6B opened. B1 design pre-pass complete and signed off. `ImuFreeFall` dropped from the proposal; Notion page deferred to Epic Done. B2 (Show framework) complete: MicroPython Plugin/Show/ShowContext + folder-per-show registry on Tildagon, M5 capability/hook extension, both firmware envs green. B3 (render_fx dispatch) complete: frame encoder + RgbPulse + RenderDispatcher (broadcast + perimeter/LCD loopback) + DirectorHost. B4 (IMU adapter) complete: ImuAdapter with gravity-EMA high-pass tap onset + motion envelope + Low/Med/High sensitivity; 284 Tildagon tests passing. B5 (button-as-tap fallback) next.
+2026-05-19: Epic 6B opened. B1 design pre-pass complete and signed off. `ImuFreeFall` dropped from the proposal; Notion page deferred to Epic Done. B2 (Show framework) complete: MicroPython Plugin/Show/ShowContext + folder-per-show registry on Tildagon, M5 capability/hook extension, both firmware envs green. B3 (render_fx dispatch) complete: frame encoder + RgbPulse + RenderDispatcher (broadcast + perimeter/LCD loopback) + DirectorHost. B4 (IMU adapter) complete: ImuAdapter with gravity-EMA high-pass tap onset + motion envelope + Low/Med/High sensitivity. B5 (button-as-tap fallback) complete: ButtonTapSource rising-edge tap + optional auto-repeat; 299 Tildagon tests passing. B6 (DirectorMode FSM in app.py) next.
 
 ---  
 
@@ -190,7 +190,7 @@ Started 2026-05-19. Estimate 1.5-2 weeks of focused work. No external deadline w
 | B2 | Plugin / Show / ShowContext + folder-per-show registry | Done | MicroPython framework + M5 enum/hook extension. 62 new Tildagon tests; both M5 firmware envs build clean. |
 | B3 | `ctx.render_fx` dispatch on Tildagon Director | Done | Frame encoder + RgbPulse + RenderDispatcher (broadcast + perimeter/LCD loopback) + DirectorHost. 47 new tests; suite 266. |
 | B4 | IMU input adapter + sensitivity property | Done | ImuAdapter: gravity-EMA high-pass tap onset + motion envelope + Low/Med/High sensitivity. 18 new tests; suite 284. |
-| B5 | Button-as-tap fallback | Not started | |
+| B5 | Button-as-tap fallback | Done | ButtonTapSource: rising-edge tap + optional auto-repeat metronome. Same on_tap shape as ImuAdapter. 15 new tests; suite 299. |
 | B6 | DirectorMode FSM + picker + settings overlay | Not started | |
 | B7 | `simple_tap` reference Show (+ optional `motion_wave`) | Not started | |
 | B8 | `developing-shows.md` cross-platform refresh | Not started | |
@@ -219,6 +219,10 @@ Started 2026-05-19. Estimate 1.5-2 weeks of focused work. No external deadline w
   - **Sensitivity**: Low/Med/High table scales tap_threshold (9.0 / 6.0 / 3.5 m/s²) + motion_floor (4.0 / 2.5 / 1.5). `set_sensitivity(level)` retunes at runtime (B6 calls it on Show change to honour each Show's `sensitivity` property); unknown level falls back to Medium so a corrupt property can't disable input.
   - **`IMU_ADAPTER_CAPS`** = CapabilityMask(IMU_TAP, IMU_MOTION) exported so B6 can `host.set_imu_caps(IMU_ADAPTER_CAPS)` and Shows requiring IMU_TAP gate on.
   - Thresholds are bench-tuning starting points (refined in B9). Carry-forward: B6 wires `poll(now_ms)` into the app's background_task and routes the tap callback to *both* `on_tap_detected` and `on_beat_detected` on the active Show. 18 new host tests (priming, tap onset, refractory, sensitivity scaling, motion envelope, rate-limit, tap-suppresses-motion, reset); full suite 284 passing (was 266).
+
+2026-05-19 — B5 done (Tildagon-only). Button-as-tap fallback for show development.
+  - **`director/button_tap.py` `ButtonTapSource`**: polled button state → synthetic tap events, same `on_tap(strength)` shape as the ImuAdapter so the host routes both identically. Pure logic: `poll(pressed, now_ms)` (caller reads the physical button; B6 reads the badge button in background_task). Two modes: edge-only (default, `repeat_ms=0`) fires one tap per press — tap the button in time like you'd tap the badge; auto-repeat (`repeat_ms>0`) fires every interval while held — a held-button metronome for sound-check. Fixed strength (default 192, a firm ~75 % tap, since a button has no force info; clamped 0..255). `reset()` clears press/timing state for clean Director-mode entry.
+  - Carry-forward: B6 chooses which button drives it (CONFIRM/C is taken by settings in Lume mode; the DirectorMode FSM owns its own button map) and feeds `poll()` from the app loop. 15 new host tests (edge fire, no-refire-while-held, release/re-press, auto-repeat + stop-on-release, strength clamping, reset, no-callback safety); full suite 299 passing (was 284).
 
 ## Block notes
 
