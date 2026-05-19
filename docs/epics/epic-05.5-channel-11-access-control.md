@@ -1,0 +1,309 @@
+---
+title: "Epic 5.5: Channel 11 access control (source_id partition + TOFU)"
+status: Proposed → In progress (planning, 2026-05-17)
+notion_url: https://www.notion.so/363bd067740581e3bbe1fb077dcb853f
+notion_id: 363bd067740581e3bbe1fb077dcb853f
+notion_status: Proposed
+last_synced: 2026-05-17
+sync_direction: local-canonical-during-implementation
+---
+
+# Epic 5.5: Channel 11 access control (source_id partition + TOFU)
+
+> **Working copy.** This is the local canonical Epic 5.5 document during active implementation. Implementation blocks (B1–B8) and the progress log live at the bottom of the file. The Notion page is treated as out-of-date for the duration; when the Epic is Done, this file is synced back to Notion as the final state. This avoids Notion API churn (and the resulting timeouts) during the implementation phase.
+
+## Related Documents
+
+- [NocturNation Architecture Specification](https://www.notion.so/357bd0677405800b891beab0f4e0a976) - particularly §4.3 (frame header, source_id field), §4.5 (two-channel architecture, dual-channel scan), §16 (security model overview)
+- [Epic 5: Tildagon receiver app (functional)](epic-05-tildagon.md) - the parent Epic this extends. Epic 5 delivered the functional Tildagon Lume; Epic 5.5 hardens its channel 11 listening posture before the app goes public.
+- [Epic 6: NocturNation public launch (EMF 2026)](https://www.notion.so/358bd06774058159916fed66a3f3aaf4) - **Epic 5.5 is a release-blocker for Epic 6.** The Tildagon app cannot ship to the EMF store with channel 11 listening posture until Epic 5.5 lands. Once an app is in the store with hundreds of badges installed, retroactively changing the security model is impractical - app updates are slow and not universally installed. The decision has to be made before submission.
+- [Security architecture (RFC)](https://www.notion.so/358bd0677405817b8a60de0834511ce5) - the longer-term tiered security design. Epic 5.5 explicitly does not implement Tier 1+ crypto; it lands a non-cryptographic protection appropriate for the EMF threat model.
+
+## Goal
+
+Provide lightweight protection for channel 11 (Performance mode) against the most common failure mode at EMF and similar tinkerer-heavy events: someone unknowingly enabling Director mode on channel 11 mid-show, or curious tinkering with their own M5 Stick during a curated performance. The protection uses the existing `source_id` field in the frame header (transport-independent, already in v1 protocol) plus Trust-On-First-Use locking on the Lume side. No cryptography, no key entry, no UI for the festival-goer, no governance burden.
+
+This Epic deliberately does **not** attempt cryptographic protection. Determined attackers reading the open-source firmware can defeat any non-crypto scheme; for the EMF threat model that's acceptable. Crypto is a future Epic if commercial deployments emerge that justify the complexity.
+
+## Business Value
+
+Epic 5.5 is the release-blocker for the project's public launch. The published Tildagon app creates a *deployed listening posture* that is hard to change retroactively. Once hundreds of badges are in the wild with v1 of the app, the security model they shipped with is the security model they have - app updates are slow and not universally installed. Decisions about channel 11 protection have to be made *before* the app ships, not after.
+
+Without this Epic:
+- A curious EMF attendee enabling Director mode on their M5 Stick mid-NullSector-show competes with the curated performance. Every Tildagon in radio range locks to whoever's heartbeat arrives first.
+- NullSector cannot reliably deploy NocturNation as part of a curated performance, because the audience's badges have no defence against unintentional disruption.
+- Channel 11 becomes effectively unusable for performances, undermining the whole two-channel architecture (§4.5).
+
+With this Epic:
+- 95%+ of accidental disruption is prevented automatically.
+- NullSector can deploy NocturNation as part of a curated performance with confidence the audience badges will lock to the intended Director.
+- Channel 11 fulfils its design intent without imposing UX burden on festival-goers or governance burden on the project.
+
+**Honest commercial framing**: this scheme deliberately does not establish a NocturNation-controlled venue allowlist or a commercial moat. Anyone running the open-source firmware can be a Performance Mode Director - their source_id is randomly allocated, no registration required. The commercial story for NocturNation lives in services (installation, calibration, custom hardware, per-event show programming, brand licensing, integration work), not in protocol-level gatekeeping.
+
+## Scope
+
+### source_id partition (protocol)
+
+The existing 1-byte `source_id` field (§4.3) is partitioned into two ranges plus the existing broadcast:
+
+- `0x00 - 0x3F` (64 slots) - **Community / hobby**. Used on channel 1. Director picks a stable ID at first boot from this range (random, persisted to NVS) and reuses it across reboots. Suitable for hackspace gigs, personal use, ongoing community deployments where the same Director comes back repeatedly.
+- `0x40 - 0xFE` (191 slots) - **Performance mode**. Used on channel 11. Director picks a random ID at every boot. Listen-before-broadcast for ~1 second to detect collisions with other concurrent Directors on the same channel; re-roll if a collision is heard. Collision probability with 191 slots and 3 concurrent Directors is ~1.6% chance of any pair colliding, dropping to near-zero with the listen-before-broadcast check.
+- `0xFF` - **Broadcast** (unchanged, existing reserved).
+
+The partition is declared in spec §4.3 (this Epic adds the prose). No wire-format change - just a convention about how the existing field is allocated.
+
+### Director-side behaviour
+
+- **On channel 1 (hobby)**: at first boot, pick a random ID from `0x00-0x3F`, persist to NVS, reuse on subsequent boots. Stable per device so returning Lumes recognise the same Director across reboots.
+- **On channel 11 (Performance mode)**: at every boot, pick a random ID from `0x40-0xFE`. Listen for ~1 second before broadcasting; if a heartbeat with the same ID is heard, re-roll. If still colliding after 3 attempts, log a warning and proceed with the third pick (collision is theoretically possible but operationally extremely rare).
+- Director's chosen source_id is shown prominently on the Director's screen (M5 Stick UI). The operator can verify which Director the audience locks to by comparing the displayed ID to what Lumes report.
+- No UI for manually setting the ID. The randomness is the point; manual configuration would invite collisions and accidental disruption.
+
+**Tildagon Director-mode constraint**: the Tildagon can listen on channel 11 in Lume mode (joining Performance mode performances), but when Director mode is added to the Tildagon (planned for a later Epic), the Tildagon must NOT broadcast on channel 11. Tildagon Directors are restricted to channel 1 (community / hobby) for transmission. Rationale: the Tildagon is a community badge widely distributed in the wild, and keeping it off channel 11 as a transmitter protects the integrity of curated performances at EMF. This restriction is conservative and can be revisited in a future Epic once the access control model has matured in deployment.
+
+### Lume-side behaviour
+
+**Trust-On-First-Use (TOFU)** is the pattern where, on first contact with a previously-unknown peer, the receiver implicitly accepts that peer and then refuses anyone else for the duration of the session. Familiar from SSH host keys: the first time you connect to a new server, the client accepts its key blindly; thereafter it refuses to connect if a different key shows up under the same hostname. The Lume applies the same idea to source_ids on a given channel.
+
+- **Channel scan** (existing dual-channel scan from §4.5) finds heartbeats on either channel.
+- **TOFU lock**: the first valid heartbeat heard locks the Lume to that source_id for the session. All subsequent traffic from other source_ids is ignored. Lock persists until:
+  - Heartbeat timeout (no heartbeat from locked source_id for N seconds, suggesting Director gone) - resume scan
+  - Reboot - lose lock, resume scan
+  - User-initiated rescan (Config menu option) - manually relock
+- **Cross-range filtering**: on channel 11, Lumes only TOFU-lock to source_ids in the Performance range (`0x40-0xFE`). A heartbeat with a hobby-range source_id on channel 11 is ignored (defends against a misconfigured Director). On channel 1, Lumes accept any source_id (community is permissive by design).
+- The locked source_id is shown on the Lume's UI where available (Tildagon screen, M5 Stick screen). Audience members can verify they're locked to the expected Director.
+
+### Operator workflow
+
+A short doc in the repo (`docs/operator-workflow.md`) covering:
+
+- How to run a Director in Performance Mode (channel 11)
+- Why the source_id is random and what that means operationally
+- How to verify audience Lumes are locked to your Director (visual check)
+- What to do if you see a competing Director on the same channel (operational coordination, not a technical defence)
+- The honest residual risk: a Lume powering on after a tinkerer but before NullSector locks to the tinkerer first. Mitigation: boot Director before audience arrival; offer rescan UI.
+
+## Acceptance Criteria
+
+- [ ] Spec §4.3 updated with source_id partition (`0x00-0x3F` community, `0x40-0xFE` Performance mode, `0xFF` broadcast)
+- [ ] M5 Stick Director firmware: stable community-range ID on channel 1, random performance-range ID on channel 11, listen-before-broadcast collision check
+- [ ] M5 Stick Director firmware: source_id visible on Director's screen during operation
+- [ ] Tildagon Lume app: TOFU lock to first valid heartbeat, cross-range filtering on channel 11, heartbeat-timeout-triggers-rescan
+- [ ] Tildagon Lume app: locked source_id visible in app UI
+- [ ] Tildagon Lume app: manual rescan option in Config menu
+- [ ] Operator workflow doc in repo
+- [ ] Test rig: two M5 Stick Directors on channel 11 simultaneously, verify Lumes lock to one and reject the other
+- [ ] Test rig: hobby-range source_id broadcasting on channel 11, verify Lumes ignore it
+- [ ] Honest documentation of the residual risk (first-mover lock, no crypto protection against determined attack)
+
+## Order of work
+
+1. Spec update (§4.3 source_id partition). This is the contract everything else implements against.
+2. M5 Stick Director firmware changes (random performance-range ID, listen-before-broadcast, source_id display).
+3. Tildagon Lume app changes (TOFU lock logic, cross-range filtering, source_id display, manual rescan).
+4. Test rig validation (two Directors, hobby-range-on-channel-11 case).
+5. Operator workflow documentation.
+
+Most work is on the Tildagon Lume side (TOFU logic + UI). M5 Stick changes are smaller.
+
+## Dependencies
+
+| Dependency | Type | Status | Owner |
+|---|---|---|---|
+| Architecture spec §4.3 (frame header, source_id field) | Internal | Done (existing, v0.29) | Jason |
+| Architecture spec §4.5 (two-channel architecture, dual-channel scan) | Internal | Done (existing) | Jason |
+| Epic 5 (functional Tildagon receiver app) | Internal | Done (v0.1 MVP milestone) | Jason |
+| Epic 6 (public launch / Tildagon app submission) | Internal blocking | Epic 5.5 blocks Epic 6 - app cannot ship to store without channel 11 access control resolved | Jason |
+
+## Target Sprint Range
+
+- **Start sprint:** Immediately - this is on the EMF 2026 critical path because Epic 6 cannot ship without it.
+- **End sprint:** 1-2 sprints later - mechanical work, no crypto, no governance, no infrastructure.
+- **Indicative complexity total:** 3-5 points (small Epic).
+
+## Status Notes
+
+Originally scoped as "Epic 6.5" on 2026-05-17. Renumbered to **Epic 5.5** shortly after when it became clear this is a release-blocker for Epic 6 rather than a sub-Epic of it - the Tildagon app cannot go public without this work being complete, so it logically sits before Epic 6 in the dependency chain, alongside Epic 5 which it extends.
+
+Proposed 2026-05-17 after extended design conversation working through the channel 11 protection problem. Several options were considered and rejected:
+
+- **Crypto with public/private keys**: requires Ed25519 support on Tildagon MicroPython (not available in current build); pure-Python implementation too slow; HMAC with PSK fails because keys are public via open source. All forms of crypto run into either the no-UI constraint (festival-goers won't enter keys) or the open-source constraint (firmware-embedded keys are extractable).
+- **MAC-based filtering**: transport-dependent (ESP-NOW only), wouldn't work for future IR / BLE / LoRa carriers. Rejected on architectural grounds.
+- **Venue allowlist with registered source_ids**: introduces governance burden (who maintains the JSON file, who reviews PRs, what if a venue's source_id leaks) without meaningfully stronger protection than random allocation.
+
+The chosen approach (random allocation + TOFU) is honest about its threat model: it protects against accidental disruption and casual tinkering, not against determined attacks. For the EMF 2026 deployment context this is the right trade-off.
+
+**Commercial concession captured explicitly**: the random-allocation scheme removes the *technical* commercial moat the project could have built (controlled venue allowlist with NocturNation-issued source_ids). This is a deliberate choice. The commercial story lives elsewhere (services, hardware, brand) where it belongs. Worth being clear about so future contributors don't re-debate the question.
+
+**Honest residual risk**: a Lume powering on after a tinkerer but before the intended Director locks to the tinkerer. Mitigation is operational (boot Directors before audience arrival) rather than technical. A future Epic with proper crypto could close this gap if commercial deployments warrant it. Until then, the operational discipline is appropriate to the threat model.
+
+---
+
+## Implementation blocks
+
+Approved chunking for Claude Code processing (2026-05-17). Each block is a self-contained session producing one PR with tests, and (where applicable) hardware verification by Jason. Critical path runs B1 → B2 → {B3, B4a, B4, B5} on the M5 side and B2 → {B6, B7} on the Tildagon side, both feeding into B8.
+
+### B1 — Spec: source_id partition in protocol-manual.md
+
+**Repo:** StickC. **Deps:** none.
+
+Scope:
+- Add a subsection to `docs/manuals/protocol-manual.md` (§4.x; pick the right home — likely under "Frame header" / "source_id field" sections) documenting the partition: `0x00-0x3F` community (64 slots), `0x40-0xFE` Performance mode (191 slots), `0xFF` broadcast.
+- Document the channel-to-range binding: channel 1 = community range (stable per device), channel 11 = Performance range (random per boot + listen-before-broadcast).
+- Note the Tildagon Director-mode-must-not-broadcast-on-ch-11 constraint with rationale, marked as conservative and revisitable.
+- Sync to Notion via `replace_content` (covers fenced-code / table edge cases).
+
+Acceptance criteria:
+- §updated; renders correctly in both GitHub markdown and Notion.
+- Local committed and pushed.
+- Notion page reflects new content.
+
+### B2 — Protocol constants + helpers (both repos)
+
+**Repos:** StickC + Tildagon, paired session. **Deps:** B1.
+
+Scope:
+- M5 C++ side (StickC repo): add named constants in `include/transport/espnow/` (existing `protocol.h` or new `source_id.h`):
+  - `kSourceIdCommunityMin = 0x00`, `kSourceIdCommunityMax = 0x3F`
+  - `kSourceIdPerformanceMin = 0x40`, `kSourceIdPerformanceMax = 0xFE`
+  - `kSourceIdBroadcast = 0xFF`
+  - `inline bool is_community_range(u8 id)`, `inline bool is_performance_range(u8 id)`
+- Tildagon Python side: equivalent module (suggest `apps/nocturnation/nocturnation/source_id.py` or extend an existing protocol module) with the same constants + helpers.
+- Native unit tests on both sides asserting boundary values and helper correctness (in / out / boundaries / broadcast).
+
+Acceptance criteria:
+- Constants present on both sides with matching values.
+- Helpers present with consistent semantics.
+- Native tests pass on both sides (`pio test -e native` for M5; `pytest tests/` for Tildagon).
+- No behaviour change yet — pure declarations + tests.
+
+### B3 — M5 Director: community-range stable ID on channel 1
+
+**Repo:** StickC. **Deps:** B2.
+
+Scope:
+- Add NVS key `mst_src_id` under the `noct` namespace. Stores a u8.
+- On Director-mode entry with `mst_chan == 1`: load `mst_src_id`. If absent (first boot post-flash), roll random in `[0x00, 0x3F]` and persist before broadcasting.
+- Wire the resulting ID into the `source_id` field of HEARTBEAT and LIGHT_COMMAND frames.
+- Native tests covering: first-boot roll-and-persist, subsequent-boot reuse, range validation, NVS-load fallback when corrupted.
+
+Acceptance criteria:
+- New NVS key documented in `protocol-manual.md` Annex B (NVS schema).
+- First-boot test: roll lands in `[0x00, 0x3F]` and gets persisted.
+- Subsequent-boot test: persisted value reused, no re-roll.
+- Wire trace test (or native equivalent): emitted HEARTBEAT carries the chosen ID.
+- `pio run -e m5stack-stickcplus2 -e m5stack-stickcs3` clean.
+- 284+ existing tests still pass.
+
+### B4a — M5 Director: ch-11 collision-check design sketch (pre-implementation)
+
+**Repo:** StickC. **Deps:** B2, B3.
+
+Scope (research session, no production code):
+- Read the existing Director-mode boot sequence and ESP-NOW receive path (`src/modes/master_mode.cpp` or equivalent, `src/transport/espnow/`).
+- Document where in the boot sequence the 1-second listen window goes — specifically: at what point is the radio in RX-capable state, when does TX get armed, where does the existing main-loop tick start emitting HEARTBEATs.
+- Sketch the state machine for: "pick ID → listen 1 s → if collision heard, re-roll → after 3 attempts, log warning and proceed".
+- Identify how the receive callback delivers HEARTBEATs to the Director (Director-mode normally doesn't *receive* HEARTBEATs; this Epic adds that path) and whether a temporary subscription is needed.
+- Output: a "Block notes / B4a" section appended to this file with the design, ready for Jason sign-off before B4 starts.
+
+Acceptance criteria:
+- Design note added to "Block notes" section below.
+- Jason signs off (records "approved" in the Progress log) before B4 starts.
+
+### B4 — M5 Director: random Performance-range ID + listen-before-broadcast on channel 11
+
+**Repo:** StickC. **Deps:** B2, B3, B4a (signed off).
+
+Scope:
+- Implement the state machine from B4a's design note.
+- On Director-mode entry with `mst_chan == 11`: roll random in `[0x40, 0xFE]`. Hold TX disabled. Listen for ~1 second for any HEARTBEAT carrying that ID. If detected, re-roll. Max 3 attempts; on third collision, log warning and proceed with attempt 3.
+- Chosen ID is not persisted (per-boot only).
+- Wire into HEARTBEAT + LIGHT_COMMAND source_id.
+- Native tests via synthetic inbound HEARTBEAT injection covering: no-collision path, one-collision-then-clear, three-collisions-warning.
+
+Acceptance criteria:
+- Behaviour matches the B4a design.
+- Three test paths covered.
+- `pio run -e m5stack-stickcplus2 -e m5stack-stickcs3` clean.
+- All existing tests still pass.
+
+### B5 — M5 Director: show source_id on screen
+
+**Repo:** StickC. **Deps:** B3, B4.
+
+Scope:
+- Display the active source_id in Director-mode UI with mode prefix: `ID: C:03` for community 0x03, `ID: P:4F` for Performance 0x4F.
+- Visible during normal Director Mode operation and Test Mode.
+- No layout regression for other screen elements (group, channel, status).
+
+Acceptance criteria:
+- Source_id visible on screen.
+- Format unambiguous (community vs Performance immediately readable).
+- Bench-verified by Jason on both `stickcplus2` and `stickcs3` hardware.
+- Existing UI tests pass; new test for the formatter if practical.
+
+### B6 — Tildagon: TOFU lock + cross-range filtering
+
+**Repo:** Tildagon. **Deps:** B2.
+
+Scope:
+- TOFU state machine in the Lume's frame-observation path. On the first valid HEARTBEAT post-dedup, record its `source_id` as the locked peer. Subsequent frames with a different `source_id` are dropped before fan-out to renderers.
+- Cross-range filtering: on channel 11, only Performance-range IDs (`0x40-0xFE`) are eligible to be locked; hobby-range IDs on ch 11 are dropped without locking. Channel 1 accepts any source_id.
+- Heartbeat timeout: reuse `kRescanMs = 10000` (10 s) as the lock-expiry threshold (decoupled from `kNoSignalMs = 3000`'s display purpose). On expiry: clear lock, resume scan.
+- Pytest coverage: first-lock; second-source-id rejected; ch-11-with-hobby-id ignored; ch-1-with-hobby-id locks; timeout clears lock; reboot clears lock (implicit — fresh state).
+
+Acceptance criteria:
+- State machine implemented per spec above.
+- 108 existing tests still pass; new tests cover the five paths.
+- No regression to channel scan behaviour from Epic 5.
+
+### B7 — Tildagon: UI for locked ID + Rescan menu item
+
+**Repo:** Tildagon. **Deps:** B6.
+
+Scope:
+- Display the locked source_id on the LCD when locked (`C:nn` / `P:nn` format, matching M5). Suggested placement: corner, small font, doesn't conflict with NO SIGNAL overlay.
+- When unlocked / mid-scan: no ID display (or "Scanning…" — implementer's call, document in PR).
+- Config menu: add "Rescan" item before "Back". Selecting it clears the TOFU lock and triggers immediate channel scan.
+- New pytest coverage for the menu item behaviour (selecting "Rescan" → state cleared).
+
+Acceptance criteria:
+- Locked ID visible on hardware when locked; hidden / replaced on unlock.
+- Rescan menu item works: pressing it from a locked state returns the Lume to scanning behaviour.
+- Existing tests + new tests pass.
+- Bench-verified by Jason on hardware.
+
+### B8 — Bench validation + operator workflow doc + CHANGELOGs
+
+**Repos:** both + StickC docs. **Deps:** B3–B7.
+
+Scope:
+- Hardware integration tests:
+  - Two M5 Sticks set to Director mode on channel 11 simultaneously. Tildagon locks to whichever HEARTBEAT it sees first; second Director's frames are ignored.
+  - One M5 misconfigured (via a test-only build flag or temporary code patch) to emit a hobby-range source_id on channel 11. Tildagon ignores entirely.
+- Create `docs/operator-workflow.md` (StickC repo) covering Performance Mode operations, source_id verification visually, what to do on competing Director observed, residual risk, recommended pre-show boot timing. Sync to Notion.
+- CHANGELOG entries on both repos summarising the Epic 5.5 change (wire-compat preserved, new behaviour at the partition level).
+- Update Notion page status: Proposed → In Review → Done as appropriate, and push the final body of this working-copy file back to Notion (replace_content with the full content of this file's "Goal" → "Status Notes" sections, minus the "Implementation blocks" / "Progress log" / "Block notes" sections which stay local).
+
+Acceptance criteria:
+- Two bench scenarios verified; results recorded in the Progress log below.
+- `docs/operator-workflow.md` committed and Notion-synced.
+- CHANGELOG entries on both repos.
+- Notion Epic 5.5 page reflects final state; status updated to Done.
+
+---
+
+## Progress log
+
+Append-only. One entry per state change (block start / block done / decision / bench result / blocker).
+
+- **2026-05-17** — Epic decomposed into 8 blocks (B1–B8) plus B4a design pre-pass. Local working copy created in `docs/epics/`. Notion treated as out-of-date until Epic Done. Next: B1 (spec update).
+
+---
+
+## Block notes
+
+Optional design sketches, decisions, and gotchas surfaced during implementation. Some blocks (e.g., B4a) explicitly produce content here. Others may add notes if non-obvious decisions are made.
+
+*(empty — to be filled as needed)*
