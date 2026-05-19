@@ -178,7 +178,7 @@ Started 2026-05-19. Estimate 1.5-2 weeks of focused work. No external deadline w
 
 ## Status Notes
 
-2026-05-19: Epic 6B opened. B1 design pre-pass complete and signed off. `ImuFreeFall` dropped from the proposal; Notion page deferred to Epic Done. B2 (Show framework) complete: MicroPython Plugin/Show/ShowContext + folder-per-show registry on Tildagon, M5 capability/hook extension, both firmware envs green. B3 (render_fx dispatch) complete: frame encoder + RgbPulse + RenderDispatcher (broadcast + perimeter/LCD loopback) + DirectorHost; 266 Tildagon tests passing. B4 (IMU adapter) next.
+2026-05-19: Epic 6B opened. B1 design pre-pass complete and signed off. `ImuFreeFall` dropped from the proposal; Notion page deferred to Epic Done. B2 (Show framework) complete: MicroPython Plugin/Show/ShowContext + folder-per-show registry on Tildagon, M5 capability/hook extension, both firmware envs green. B3 (render_fx dispatch) complete: frame encoder + RgbPulse + RenderDispatcher (broadcast + perimeter/LCD loopback) + DirectorHost. B4 (IMU adapter) complete: ImuAdapter with gravity-EMA high-pass tap onset + motion envelope + Low/Med/High sensitivity; 284 Tildagon tests passing. B5 (button-as-tap fallback) next.
 
 ---  
 
@@ -189,7 +189,7 @@ Started 2026-05-19. Estimate 1.5-2 weeks of focused work. No external deadline w
 | B1 | Capability model design pre-pass | Done | Research-only. Output is the `Block notes / B1` section below. Signed off 2026-05-19. |
 | B2 | Plugin / Show / ShowContext + folder-per-show registry | Done | MicroPython framework + M5 enum/hook extension. 62 new Tildagon tests; both M5 firmware envs build clean. |
 | B3 | `ctx.render_fx` dispatch on Tildagon Director | Done | Frame encoder + RgbPulse + RenderDispatcher (broadcast + perimeter/LCD loopback) + DirectorHost. 47 new tests; suite 266. |
-| B4 | IMU input adapter + sensitivity property | Not started | |
+| B4 | IMU input adapter + sensitivity property | Done | ImuAdapter: gravity-EMA high-pass tap onset + motion envelope + Low/Med/High sensitivity. 18 new tests; suite 284. |
 | B5 | Button-as-tap fallback | Not started | |
 | B6 | DirectorMode FSM + picker + settings overlay | Not started | |
 | B7 | `simple_tap` reference Show (+ optional `motion_wave`) | Not started | |
@@ -213,6 +213,12 @@ Started 2026-05-19. Estimate 1.5-2 weeks of focused work. No external deadline w
   - **espnow_sender.py**: thin hardware adapter (`make_sender(esp)` registers the broadcast peer + returns a `send_fn`). NOT imported by the package `__init__` so host pytest never needs the badge `espnow` module. Bench-verified in B9, not host-tested.
   - **End-to-end path proven in tests**: a Show's `on_tap_detected` → `ctx.render_fx("01:01", RgbPulse)` → DirectorHost → RenderDispatcher → broadcast frame on the wire + 12 perimeter LEDs armed locally.
   - Deliberate carry-forward: app.py still doesn't instantiate a DirectorHost — wiring the real espnow sender + clock into the app is a B6 concern. B4 (IMU adapter) populates `imu_caps`. 47 new host tests; full suite 266 passing (was 219).
+
+2026-05-19 — B4 done (Tildagon-only). IMU input adapter for the Director.
+  - **`director/imu.py` `ImuAdapter`**: accelerometer → tap / motion events, pure logic with the hardware read injected (`acc_read_fn`, default `imu.acc_read` lazy-imported so host tests stay hardware-free — same pattern as PerimeterRenderer's `rng`). Detection pipeline per ~50 Hz poll: (1) slow EMA (α=0.05) of each axis = gravity vector; (2) high-pass = raw − gravity; (3) tap fires when |high-pass| crosses the sensitivity-scaled threshold past a 120 ms refractory, strength = over-threshold magnitude scaled to 0..255 (floored to ≥1 so an edge tap is still visible); (4) a faster EMA (α=0.30) of the magnitude is the motion envelope — motion fires (dominant axis + 0..255 magnitude) when the envelope sits above the motion floor, rate-limited to 100 ms, and **suppressed during the tap refractory** so one tap doesn't double-report as motion.
+  - **Sensitivity**: Low/Med/High table scales tap_threshold (9.0 / 6.0 / 3.5 m/s²) + motion_floor (4.0 / 2.5 / 1.5). `set_sensitivity(level)` retunes at runtime (B6 calls it on Show change to honour each Show's `sensitivity` property); unknown level falls back to Medium so a corrupt property can't disable input.
+  - **`IMU_ADAPTER_CAPS`** = CapabilityMask(IMU_TAP, IMU_MOTION) exported so B6 can `host.set_imu_caps(IMU_ADAPTER_CAPS)` and Shows requiring IMU_TAP gate on.
+  - Thresholds are bench-tuning starting points (refined in B9). Carry-forward: B6 wires `poll(now_ms)` into the app's background_task and routes the tap callback to *both* `on_tap_detected` and `on_beat_detected` on the active Show. 18 new host tests (priming, tap onset, refractory, sensitivity scaling, motion envelope, rate-limit, tap-suppresses-motion, reset); full suite 284 passing (was 266).
 
 ## Block notes
 
