@@ -199,8 +199,8 @@ The `source_id` field at offset 3 of the frame header is partitioned by range to
 
 **Lume-side rules (Trust-On-First-Use):**
 
-- A Lume MUST lock to the `source_id` of the first valid `HEARTBEAT` it receives on a channel after scan or rescan. Subsequent frames whose `source_id` differs from the locked value MUST be silently discarded.
-- A Lume on channel 11 MUST consider only Performance-range source_ids (`0x40-0xFE`) eligible for TOFU lock. A `HEARTBEAT` carrying a community-range source_id on channel 11 MUST be silently discarded without locking. This defends Lumes against a misconfigured Director announcing on the wrong channel.
+- A Lume MUST lock to the `source_id` of the first valid frame it receives on a channel after scan or rescan. Subsequent frames whose `source_id` differs from the locked value MUST be silently discarded. (Locking on any valid frame rather than `HEARTBEAT` specifically accommodates Lumes that join during active music: the Director's heartbeat is suppressed by skip-if-recent per [section 6.1](#61-director-heartbeat) while `LIGHT_COMMAND` frames flow, so a HEARTBEAT-only rule would leave a mid-song Lume idle for the duration of a song.)
+- A Lume on channel 11 MUST consider only Performance-range source_ids (`0x40-0xFE`) eligible for TOFU lock. A frame carrying a community-range source_id on channel 11 MUST be silently discarded without locking. This defends Lumes against a misconfigured Director announcing on the wrong channel.
 - A Lume on channel 1 MUST accept any non-broadcast source_id for TOFU lock; channel 1 is the community-permissive channel by design.
 - A Lume MUST release its TOFU lock and resume scanning if no frame from the locked `source_id` has been received for `kRescanMs` milliseconds. The reference firmware uses `kRescanMs = 10000` (ten seconds), shared with the channel re-scan threshold ([section 5.4](#54-lume---re-scan-on-signal-loss)).
 - A Lume MAY expose a "Rescan" operator action that releases the TOFU lock on demand.
@@ -333,8 +333,8 @@ A conforming receiver MUST honour the following:
 - The class-and-group routing rules in [section 4.2](#42-group-filtering).
 - The `LIGHT_COMMAND` payload semantics: RGB triplet, attack/sustain/release envelope stages, chance gate.
 - The protocol-version validation rule in [section 1.4](#14-versioning).
-- Trust-On-First-Use locking to the `source_id` of the first valid `HEARTBEAT` after scan or rescan, and silent discard of subsequent frames whose `source_id` differs from the locked value ([section 3.4](#34-source-identifier-partitioning)).
-- Cross-range filtering on channel 11: silent discard of `HEARTBEAT` frames whose `source_id` is outside the Performance range (`0x40-0xFE`), without TOFU lock ([section 3.4](#34-source-identifier-partitioning)).
+- Trust-On-First-Use locking to the `source_id` of the first valid frame after scan or rescan, and silent discard of subsequent frames whose `source_id` differs from the locked value ([section 3.4](#34-source-identifier-partitioning)).
+- Cross-range filtering on channel 11: silent discard of frames whose `source_id` is outside the Performance range (`0x40-0xFE`), without TOFU lock ([section 3.4](#34-source-identifier-partitioning)).
 
 ### 7.2 Receiver SHOULD honour
 
