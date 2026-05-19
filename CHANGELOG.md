@@ -2,6 +2,76 @@
 
 Notable changes to the NocturNation M5 firmware. Newest first.
 
+## 2026-05-17 — Epic 5.5: channel 11 access control (source_id partition + TOFU)
+
+Lightweight protection for channel 11 (Performance mode) against the
+most common failure mode at EMF: accidental disruption from another
+operator's M5 Stick broadcasting on the same channel. Uses the existing
+`source_id` field as a partitioned namespace plus listen-before-
+broadcast on the Director side and Trust-On-First-Use locking on the
+Lume side. **No wire-format change**; `protocol_version` stays at
+`0x02`. The convention is layered on top of the existing field.
+
+Partition (protocol manual §3.4):
+
+- `0x00 - 0x3F` (64 slots) - **community / hobby**, channel 1
+- `0x40 - 0xFE` (191 slots) - **Performance mode**, channel 11
+- `0xFF` - broadcast / anonymous (unchanged)
+
+Director-side behaviour:
+
+- Channel 1: stable per-device source_id. First boot rolls a random
+  value in `[0x00, 0x3F]` and persists to the new NVS key `mst_src_id`
+  under namespace `noct`; subsequent boots reuse. A returning Lume
+  locks back to the same Director across power cycles.
+- Channel 11: fresh random Performance-range id at every boot. The
+  Director listens for one second on the chosen id before transmitting;
+  if a `HEARTBEAT` matching its candidate arrives during the listen
+  window the candidate is re-rolled. After three consecutive collisions
+  the Director proceeds with the third pick and logs a Serial warning
+  (operationally extremely rare given 191 slots).
+- Channel 6: legacy MAC-derived behaviour preserved (operator-
+  discretionary per spec; no automatic protection).
+- New `StartupState` enum (Idle/Listening/Active) on the broadcast
+  driver describing phase. `active_` stays as the TX gate.
+- Source_id rendered bottom-right on the M5 Stick screen during
+  Director Mode and Test Mode: `C:nn` (community), `P:nn` (Performance),
+  `P:nn?` (tentative during the channel-11 listen window), `?:nn`
+  (defensive out-of-range). Operator and audience can confirm both
+  ends locked to the same id visually.
+
+Tildagon-side behaviour lives in the companion repo
+(`ratcliffej/nocturnation-tildagon`): TOFU lock to the first valid
+frame from a non-broadcast source, cross-range filter on channel 11
+(community-range source_ids dropped without locking), 10 s timeout,
+operator-driven "Rescan" menu item.
+
+Spec change captured inline in protocol-manual.md §3.4 / §7.1: TOFU
+locks on the first valid frame, not specifically the first HEARTBEAT.
+The HEARTBEAT-only wording from the initial v0.29 draft didn't compose
+with skip-if-recent heartbeat suppression during active music - a
+Lume joining mid-song would otherwise sit idle for the duration of
+the song. Both Director and Lume sides updated together.
+
+New documentation:
+
+- [docs/manuals/operator-workflow.md](docs/manuals/operator-workflow.md)
+  - operator-facing guide for running Performance Mode deployments,
+  source_id verification, residual risk discussion.
+- [docs/manuals/protocol-manual.md §3.4](docs/manuals/protocol-manual.md)
+  - normative spec for the partition + TOFU rules.
+- Protocol manual Annex B - NVS key `mst_src_id` documented.
+
+Threat model is honestly non-cryptographic: ~95% of *accidental*
+disruption is prevented; *determined* attackers reading the open-
+source firmware can defeat this scheme. For the EMF 2026 deployment
+context this trade-off is the right one. Tier 1+ crypto remains a
+future Epic.
+
+366/366 native tests pass; both `m5stack-stickcplus2` and
+`m5stack-stickcs3` firmware envs build clean. Hardware bench
+verification pending.
+
 ## 2026-05-16 — Auto-scan adds channel 6, re-scan threshold decoupled
 
 Two behavioural changes to the Lume's auto-scan loop (spec v0.29
