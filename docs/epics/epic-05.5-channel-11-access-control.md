@@ -302,6 +302,7 @@ Append-only. One entry per state change (block start / block done / decision / b
 - **2026-05-17 — B1 done.** New §3.4 "Source identifier partitioning" added to [docs/manuals/protocol-manual.md](../manuals/protocol-manual.md) (commit `5ea160f`). Director-side allocation rules, Lume-side TOFU + cross-range filter, and Tildagon Director-mode constraint all in §3.4. Smaller cross-references: §3.1 header table source_id row, §5.1 Director, §7.1 Receiver MUST (+2 bullets), §7.5 Director MUST (+2 bullets), Annex D non-wire-convention note. Notion mirror synced via `replace_content`. No wire-format change; protocol_version stays at `0x02`. Next: B2 (protocol constants + helpers, both repos paired).
 - **2026-05-17 — B2 done.** Paired commits land the partition constants and `is_community_range` / `is_performance_range` predicates on both codebases. StickC: `kSourceIdCommunityMin/Max`, `kSourceIdPerformanceMin/Max` added to [include/transport/espnow/frame.h](../../include/transport/espnow/frame.h) with constexpr predicates; 3 new tests in `test_espnow_frame`; 27/27 native_espnow tests green; both firmware envs build clean (commit `54c199f`). Tildagon: new module `nocturnation/protocol/source_id.py` with `SourceId` class + free functions; re-exported from `nocturnation.protocol`; 22 new pytest cases (including a 256-byte exhaustive partition sweep); 130/130 host tests green (was 108) (commit `ef7bda3`). No behaviour change yet; first consumers land in B3 (M5 Director community-range stable ID on ch 1). Next: B3.
 - **2026-05-17 — B3 done.** Director-mode broadcast on channel 1 now uses a stable community-range source_id loaded from NVS (key `mst_src_id` under `noct` namespace). First-boot pick happens inside `migrate_legacy_nvs_keys` (random in `[0x00, 0x3F]`, persisted); subsequent boots reuse. Channels 6 and 11 retain the legacy MAC-derive behaviour - B4 replaces ch 11 with the Performance-range path. Code: [src/modes/persistence.{h,cpp}](../../src/modes/persistence.cpp) gains `load_director_source_id` / `save_director_source_id` + first-boot roll + native test seam (`set_first_boot_director_src_id_rng`, `plant_raw_director_src_id`); [src/dal/drivers/espnow_broadcast_driver.{h,cpp}](../../src/dal/drivers/espnow_broadcast_driver.cpp) `derive_source_id` grows a channel parameter and dispatches to persistence on ch 1, made public for direct unit testability, plus a public `source_id()` getter for the B5 UI. Spec: [protocol-manual.md](../manuals/protocol-manual.md) Annex B gains the `mst_src_id` key row; Notion synced via `replace_content`. Tests: 6 new cases in `test_output_binding_concrete`; 354/354 native tests green; both firmware envs build clean (commit `c98aa42`). Followed by env updates to seven native test envs that linked DAL without persistence (the driver's new persistence dep cascaded). Next: B4a (collision-check design pre-pass).
+- **2026-05-17 — B4a done (research-only).** Channel-11 listen-before-broadcast design captured in [Block notes § B4a](#b4a--channel-11-listen-before-broadcast-design-signed-off-2026-05-17). Driver-level state machine (Idle → Listening → Active), 1-second RX-only window enforced via `active_` gate (no HAL primitive for RX-only mode), single-slot recv callback during listen, up to 3 attempts then warn-and-settle. Three sign-off questions resolved: Serial-only warning surface, listen happens on ch 11 directly, channel 6 stays MAC-derive. Ready for B4 implementation.
 
 ---
 
@@ -309,4 +310,86 @@ Append-only. One entry per state change (block start / block done / decision / b
 
 Optional design sketches, decisions, and gotchas surfaced during implementation. Some blocks (e.g., B4a) explicitly produce content here. Others may add notes if non-obvious decisions are made.
 
-*(empty — to be filled as needed)*
+### B4a — channel-11 listen-before-broadcast design (signed off 2026-05-17)
+
+**What I read.** `src/modes/director_mode.cpp:94` — Director startup is shows-enter → audio-input → `start_broadcast(channel)` → draw, with the driver bringing the radio up synchronously. `src/dal/drivers/espnow_broadcast_driver.{h,cpp}` — `active_` gates all `send_broadcast`; `loop_tick()` drives retransmits + heartbeat; `start_broadcast` currently does pick-id + `radio->begin` + `active_=true` atomically. `include/hal/hal.h:225-242` — `ESPNow::begin(channel)` brings WiFi STA up + pins channel + registers the receive callback; after it returns the radio is **fully bidirectional**. The Director never calls `set_recv_callback(...)` in current code (Lume does). `src/modes/lume_mode.cpp:113-117` — pattern is `set_recv_callback(cb)` then `radio->begin(channel)`; single-slot replace, most recent caller wins. `src/hal_stickcplus2/esp_now_stickcplus2.cpp:37-77` — `begin()` is ~10 ms in practice, recv callback registered via `esp_now_register_recv_cb` at IRAM level.
+
+**Architectural fact that drove the design.** There is no HAL primitive for "RX-only mode" — the radio is bidirectional the moment `begin()` returns. So the listen window is enforced at the driver level: `active_` stays false, `loop_tick()` short-circuits, no `send_broadcast` call happens. The radio is hot for RX during that 1-second window; we just don't send.
+
+**State machine.** Add to `EspNowBroadcastDriver`:
+
+```
+enum class StartupState : uint8_t {
+    Idle,        // not started
+    Listening,   // ch 11 only: 1-s RX-only window, candidate held in listen_candidate_
+    Active,      // normal operation
+};
+```
+
+`active_` is true only in `Active`. `loop_tick()` short-circuits before retransmits / heartbeat when `startup_state_ == Listening`.
+
+**`start_broadcast(channel)` reshape.**
+
+- Channel 1 or 6: unchanged from B3 — `source_id_ = derive_source_id(channel)`, `radio->begin(channel)`, `active_ = true`, state → `Active`.
+- Channel 11 (new): pick a random candidate in `[0x40, 0xFE]`, install our own receive callback, `radio->begin(11)`, leave `active_` false, state → `Listening`, record `listen_started_ms_`. Three attempts available.
+
+**Listen receive callback.** Installed only during `Listening`. Decodes inbound header; if `message_type == HEARTBEAT` and `source_id == listen_candidate_`, sets `listen_collision_heard_ = true`. Drops everything else (no renderer side effects — Director Mode has no inbound consumer anyway).
+
+**`listen_tick()` (called from `loop_tick`):**
+
+```
+if (now - listen_started_ms_ < kListenWindowMs) return;     // still listening
+
+if (listen_collision_heard_) {
+    if (--listen_attempts_remaining_ == 0) {
+        // Spec §3.4: after 3 collisions, proceed with attempt 3 + warn
+        log_listen_collision_warning();   // Serial only per signoff
+    } else {
+        listen_candidate_         = pick_performance_id_random();
+        listen_collision_heard_   = false;
+        listen_started_ms_        = now;
+        return;
+    }
+}
+// Settle.
+source_id_      = listen_candidate_;
+radio->set_recv_callback(nullptr);
+active_         = true;
+startup_state_  = StartupState::Active;
+```
+
+**New constants.** `kListenWindowMs = 1000` (spec §3.4); `kListenMaxAttempts = 3`.
+
+**Random pick.**
+
+```
+static uint8_t pick_performance_id_random() {
+#ifdef ARDUINO
+    return static_cast<uint8_t>(0x40 + (esp_random() % 191));  // [0x40, 0xFE]
+#else
+    return s_native_performance_pick_seam;
+#endif
+}
+```
+
+**Test seam (B4 work).** `set_next_performance_pick(uint8_t)` controls the next pick; `queue_next_performance_picks({0x4A, 0x4B, 0x4C})` for multi-attempt determinism; `inject_listen_heartbeat(uint8_t source_id)` synthesises an inbound HEARTBEAT into the listen callback. The existing `now_ms()` shim handles synthetic time.
+
+**`stop_broadcast()` reshape.** If called mid-Listening: `set_recv_callback(nullptr)`, reset `startup_state_ = Idle`, then existing `radio->end()` path.
+
+**Affected files for B4.** `src/dal/drivers/espnow_broadcast_driver.{h,cpp}` (state, listen recv cb, listen_tick, pick helper, seams). `test/test_output_binding_concrete/test_main.cpp` — four new cases: no-collision settles to attempt-1; one-collision-then-clear settles to attempt-2; three-collisions logs warning and settles to attempt-3; `stop_broadcast` mid-Listening cleans up.
+
+**Risks / failure modes.**
+
+1. First-tick race: `loop_tick()` runs from the main loop; first call after `start_broadcast(11)` lands in `Listening` and short-circuits. Safe.
+2. Radio "warm-up" silence: ~10 ms typical, but the 1-second window is a comfortable margin.
+3. All 3 attempts collide: vanishingly improbable per spec; settle + log.
+4. Mode switch mid-listen: handled by `stop_broadcast` cleanup.
+5. `radio->begin(11)` fails: same as today — `active_=false`, return false; never enter `Listening`.
+6. Single-slot recv callback: Director never installs one in steady state today, so no contention. Restored to `nullptr` on settle.
+
+**Signoff decisions.**
+
+1. **3-attempt warning surface**: Serial only for now. Odds of this happening are really low. LCD warning may be a B5 add-on if needed.
+2. **Pre-listen channel timing**: listen on the destination channel (ch 11). `radio->begin(11)` pins to 11 and listens, then settles into Active on the same channel.
+3. **Channel 6**: leave alone for now. No listen window for ch 6; keeps MAC-derive behaviour.
+
