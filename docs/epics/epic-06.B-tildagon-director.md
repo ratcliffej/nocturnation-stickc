@@ -178,7 +178,7 @@ Started 2026-05-19. Estimate 1.5-2 weeks of focused work. No external deadline w
 
 ## Status Notes
 
-2026-05-19: Epic 6B opened. B1 design pre-pass complete and signed off. `ImuFreeFall` dropped from the proposal; Notion page deferred to Epic Done. B2 (Show framework) complete: MicroPython Plugin/Show/ShowContext + folder-per-show registry on Tildagon, M5 capability/hook extension, both firmware envs green, 219 Tildagon tests passing. B3 (render_fx dispatch) next.
+2026-05-19: Epic 6B opened. B1 design pre-pass complete and signed off. `ImuFreeFall` dropped from the proposal; Notion page deferred to Epic Done. B2 (Show framework) complete: MicroPython Plugin/Show/ShowContext + folder-per-show registry on Tildagon, M5 capability/hook extension, both firmware envs green. B3 (render_fx dispatch) complete: frame encoder + RgbPulse + RenderDispatcher (broadcast + perimeter/LCD loopback) + DirectorHost; 266 Tildagon tests passing. B4 (IMU adapter) next.
 
 ---  
 
@@ -188,7 +188,7 @@ Started 2026-05-19. Estimate 1.5-2 weeks of focused work. No external deadline w
 |------:|-------|--------|-------|
 | B1 | Capability model design pre-pass | Done | Research-only. Output is the `Block notes / B1` section below. Signed off 2026-05-19. |
 | B2 | Plugin / Show / ShowContext + folder-per-show registry | Done | MicroPython framework + M5 enum/hook extension. 62 new Tildagon tests; both M5 firmware envs build clean. |
-| B3 | `ctx.render_fx` dispatch on Tildagon Director | Not started | |
+| B3 | `ctx.render_fx` dispatch on Tildagon Director | Done | Frame encoder + RgbPulse + RenderDispatcher (broadcast + perimeter/LCD loopback) + DirectorHost. 47 new tests; suite 266. |
 | B4 | IMU input adapter + sensitivity property | Not started | |
 | B5 | Button-as-tap fallback | Not started | |
 | B6 | DirectorMode FSM + picker + settings overlay | Not started | |
@@ -205,6 +205,14 @@ Started 2026-05-19. Estimate 1.5-2 weeks of focused work. No external deadline w
   - **Tildagon (nocturnation-tildagon)**: new packages — `nocturnation/hal/` (Capability enum + CapabilityMask, 1:1 with the C++ surface incl. subset_of), `nocturnation/plugins/` (Plugin base, PropertyType/PropertyDef/PowerProfile/PluginKind, PropertyBag with JSON persistence at `/nocturnation_plugins.json` sectioned per plug-in id), `nocturnation/shows/` (Show base with all hooks + IMU hooks, ShowContext services surface with render_fx/property/cap-query/time stubs, ShowRegistry + `discover_shows()` folder-walker). New top-level `apps/nocturnation/shows/` concrete-show library dir (empty, ready for B7). 62 new host tests; full suite 219 passing (was 157).
   - **Deliberate B2 stubs**: `ShowContext.render_fx` returns False with no host (B3 wires the real ESP-NOW + LED + LCD fan-out); `imu_caps()` empty until B4. Surface is final so concrete Shows written against it stay stable.
   - Show-author contract: a Show is a folder under `apps/nocturnation/shows/<id>/` with `__init__.py` exposing `make_show()`. Discovery is alphabetical; duplicate ids / missing factories / raising factories are skipped without crashing the picker.
+
+2026-05-19 — B3 done (Tildagon-only; no M5 changes). `ctx.render_fx` now has a real dispatch path on the Director.
+  - **Frame encoder** (`protocol/frame.py`): the Tildagon was receive-only, so no encoder existed. Added `encode_light_command(...)` → 17-byte wire frame (8-byte header + 9-byte LIGHT_COMMAND payload), inverse of the parser's LIGHT_COMMAND branch; all fields byte-masked so an out-of-range arg can't corrupt frame length. Added `make_light_command_frame(...)` → builds a `Frame` directly for local loopback (no encode→parse round-trip per render). Both exported from `protocol/__init__.py`.
+  - **RgbPulse** (`render/pulse.py`): the render event a Show hands to `render_fx`. Mirrors `dal::RgbPulseEvent` — r/g/b + PixMob ASR envelope (Time enum indices) + chance. Sensible default envelope (T_0 / T_96 / T_480 / CHANCE_100). Exported from `render/__init__.py`.
+  - **director package** (`nocturnation/director/`): `parse_target("<hex_class>:<hex_group>")` → (class, group), raises ValueError on malformed (Show bug surfaced loudly). `RenderDispatcher` fans one call to (1) ESP-NOW broadcast — always, via injected `send_fn`, radio errors swallowed; (2) perimeter loopback when class ∈ {All, Light, MultiLedScreen}; (3) LCD loopback when class ∈ {All, Screen, MultiLedScreen}. Class-gated only — the Director always sees its own output regardless of group, matching the M5 loopback. Owns a wrapping sequence counter + source_id. `DispatchResult` (truthy if anything happened). `DirectorHost` satisfies the ShowContext host contract (`dispatch_render_fx` / `now_ms` / `analyser_caps` empty / `imu_caps`).
+  - **espnow_sender.py**: thin hardware adapter (`make_sender(esp)` registers the broadcast peer + returns a `send_fn`). NOT imported by the package `__init__` so host pytest never needs the badge `espnow` module. Bench-verified in B9, not host-tested.
+  - **End-to-end path proven in tests**: a Show's `on_tap_detected` → `ctx.render_fx("01:01", RgbPulse)` → DirectorHost → RenderDispatcher → broadcast frame on the wire + 12 perimeter LEDs armed locally.
+  - Deliberate carry-forward: app.py still doesn't instantiate a DirectorHost — wiring the real espnow sender + clock into the app is a B6 concern. B4 (IMU adapter) populates `imu_caps`. 47 new host tests; full suite 266 passing (was 219).
 
 ## Block notes
 
