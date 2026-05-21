@@ -1,16 +1,16 @@
 ---
 title: "Epic 6B: Tildagon Director + Show framework"
-status: In progress
+status: Done
 notion_url: TBD
 notion_id: TBD
-notion_status: Not started
-last_synced: never
-sync_direction: local-canonical-during-implementation
+notion_status: Done
+last_synced: 2026-05-21
+sync_direction: bidirectional
 ---
 
 # Epic 6B: Tildagon Director + Show framework
 
-> **Working copy.** This file is canonical during Epic 6B implementation. No Notion page exists; per 2026-05-19 sign-off, the Notion page will be created at Epic Done with the final body content (down to Status Notes) — avoids two-way sync drift while the Scope / Acceptance Criteria evolve mid-implementation. Implementation Blocks / Progress Log / Block Notes sections stay local for the lifetime of the Epic and are not synced.
+> **Status: Done (bench-verified 2026-05-21).** All nine blocks complete; the Tildagon runs as a Director (IMU tap-to-beat broadcasting `LIGHT_COMMAND`) and as a Lume, bench-verified against the M5 firmware. This file is the canonical local record of the per-block work; the Progress Log captures the full implementation + bench history. The body sections (down to Status Notes) mirror the Notion page; Implementation Blocks / Progress Log / Block Notes stay local.
 
 ## Related Documents
 
@@ -150,15 +150,15 @@ Live deployment: Tildagon Director on channel 1 + one Tildagon Lume + at least o
 
 ## Acceptance Criteria
 
-- [ ] HAL `Capability` enum extended with `ImuTap`, `ImuMotion` (no `ImuFreeFall` — dropped per 2026-05-19 sign-off). M5 declares the existing `IMU` flag plus whichever sub-caps the M5 IMU backend actually produces (none at v1 — declared but unwired, per the Epic 4.5 analyser-reserved pattern). Tildagon declares `IMU` + `ImuTap` + `ImuMotion`.
-- [ ] Tildagon-side `Plugin` / `Show` / `ShowContext` Python classes match the M5 hook surface 1:1 for shared hooks. New IMU hooks added to both.
-- [ ] `apps/nocturnation/shows/` folder-per-show layout discovered at boot; a Show can be added by dropping a new folder in without touching the host.
-- [ ] `simple_tap` reference Show ships; cycles colour on `Cycle`; fires `render_fx` on tap; renders LCD with current palette.
-- [ ] IMU input adapter fires `on_tap_detected` on Director taps; sensitivity property tunes the threshold.
-- [ ] Button C fallback produces synthetic taps when held.
-- [ ] DirectorMode FSM is selectable from the existing Tildagon app entry; show picker + settings overlay function; active show id persists across reboots.
-- [ ] `developing-shows.md` refresh shipped with the host-capabilities matrix and the MicroPython surface.
-- [ ] Bench-verified: Tildagon Director taps light a Tildagon Lume and an M5 Lume on channel 1.
+- [x] HAL `Capability` enum extended with `ImuTap`, `ImuMotion` (no `ImuFreeFall` — dropped per 2026-05-19 sign-off). M5 declares the existing `IMU` flag plus whichever sub-caps the M5 IMU backend actually produces (none at v1 — declared but unwired, per the Epic 4.5 analyser-reserved pattern). Tildagon declares `IMU` + `ImuTap` + `ImuMotion`.
+- [x] Tildagon-side `Plugin` / `Show` / `ShowContext` Python classes match the M5 hook surface 1:1 for shared hooks. New IMU hooks added to both.
+- [x] `apps/nocturnation/shows/` folder-per-show layout discovered at boot; a Show can be added by dropping a new folder in without touching the host.
+- [x] `simple_tap` reference Show ships; cycles colour on `Cycle`; fires `render_fx` on tap; renders LCD with current palette.
+- [x] IMU input adapter fires `on_tap_detected` on Director taps; sensitivity property tunes the threshold. (Thresholds bench-retuned: a hand-held tap is ~1-2.6 m/s²; default sensitivity High.)
+- [x] Button C fallback produces synthetic taps (`ButtonTapSource`).
+- [x] DirectorMode selectable from the idle start menu; picker + per-Show settings overlays function; active show id persists across reboots.
+- [x] `developing-shows.md` refresh shipped with the host-capabilities matrix and the MicroPython surface.
+- [x] Bench-verified: Tildagon Director taps light a Plus2 Lume's bracelet (via IR), and the Tildagon Lume receives M5 broadcasts, on channel 1.
 
 ## Order of work
 
@@ -178,7 +178,9 @@ Started 2026-05-19. Estimate 1.5-2 weeks of focused work. No external deadline w
 
 ## Status Notes
 
-2026-05-19: Epic 6B opened. B1 design pre-pass complete and signed off. `ImuFreeFall` dropped from the proposal; Notion page deferred to Epic Done. B2 (Show framework) complete: MicroPython Plugin/Show/ShowContext + folder-per-show registry on Tildagon, M5 capability/hook extension, both firmware envs green. B3 (render_fx dispatch) complete: frame encoder + RgbPulse + RenderDispatcher (broadcast + perimeter/LCD loopback) + DirectorHost. B4 (IMU adapter) complete: ImuAdapter with gravity-EMA high-pass tap onset + motion envelope + Low/Med/High sensitivity. B5 (button-as-tap fallback) complete: ButtonTapSource rising-edge tap + optional auto-repeat. B6 split into B6a (testable core) + B6b (app.py FSM, bench-only). B6a complete: InputAction, framework-bound Show.context(), Settings.active_show, DirectorController (input routing + show lifecycle/selection + sensitivity + tick). B6b code-complete (foundations host-tested + app.py FSM glue compiling, bench-verified at B9, gated on B7). B7 complete: simple_tap + motion_wave reference Shows, folder-per-show, auto-discovered; 381 Tildagon tests passing. B8 complete: developing-shows.md refreshed cross-platform (hosts-and-capabilities matrix, IMU hooks, MicroPython surface, porting section; Notion sync deferred to Epic Done). Only B9 (bench verification, hardware) remains.
+2026-05-19: Epic 6B opened. B1 design pre-pass complete and signed off. `ImuFreeFall` dropped from the proposal; Notion page deferred to Epic Done. B2 (Show framework) complete: MicroPython Plugin/Show/ShowContext + folder-per-show registry on Tildagon, M5 capability/hook extension, both firmware envs green. B3 (render_fx dispatch) complete: frame encoder + RgbPulse + RenderDispatcher (broadcast + perimeter/LCD loopback) + DirectorHost. B4 (IMU adapter) complete: ImuAdapter with gravity-EMA high-pass tap onset + motion envelope + Low/Med/High sensitivity. B5 (button-as-tap fallback) complete: ButtonTapSource rising-edge tap + optional auto-repeat. B6 split into B6a (testable core) + B6b (app.py FSM, bench-only). B6a complete: InputAction, framework-bound Show.context(), Settings.active_show, DirectorController (input routing + show lifecycle/selection + sensitivity + tick). B6b code-complete (foundations host-tested + app.py FSM glue compiling, bench-verified at B9, gated on B7). B7 complete: simple_tap + motion_wave reference Shows, folder-per-show, auto-discovered; 381 Tildagon tests passing. B8 complete: developing-shows.md refreshed cross-platform (hosts-and-capabilities matrix, IMU hooks, MicroPython surface, porting section). B9 complete: M5↔Tildagon interop bench-verified.
+
+2026-05-21: **Epic 6B Done.** All nine blocks complete and bench-verified. See the B9 progress-log entry for the bench findings (the headline one: the Tildagon ESP-NOW/WiFi channel-sweep coexistence, fixed with `wifi.stop()`).
 
 ---  
 
@@ -192,10 +194,10 @@ Started 2026-05-19. Estimate 1.5-2 weeks of focused work. No external deadline w
 | B4 | IMU input adapter + sensitivity property | Done | ImuAdapter: gravity-EMA high-pass tap onset + motion envelope + Low/Med/High sensitivity. 18 new tests; suite 284. |
 | B5 | Button-as-tap fallback | Done | ButtonTapSource: rising-edge tap + optional auto-repeat metronome. Same on_tap shape as ImuAdapter. 15 new tests; suite 299. |
 | B6a | DirectorController orchestration core + active-show persistence | Done | InputAction enum, framework-bound Show.context(), Settings.active_show, DirectorController (lifecycle/selection/input-routing/sensitivity/tick). 32 new tests; suite 331. |
-| B6b | app.py DirectorMode FSM + picker + per-show settings overlay + Show-owns-screen draw | Code complete (bench-pending) | Foundations host-tested (commit 0a9afe5); app.py glue compiles + suite green but runs only on hardware. Bench-verified in B9. |
+| B6b | app.py DirectorMode FSM + picker + per-show settings overlay + Show-owns-screen draw | Done | Foundations host-tested (commit 0a9afe5); app.py glue bench-verified in B9. Reworked in B9 into an idle-start-menu model. |
 | B7 | `simple_tap` reference Show (+ `motion_wave`) | Done | Two folder-per-show Shows under apps/nocturnation/shows/; auto-discovered. 17 new tests; suite 381. Unblocks Director mode for bench (B9). |
-| B8 | `developing-shows.md` cross-platform refresh | Done | Hosts-and-capabilities matrix, IMU-hooks section, MicroPython surface notes throughout, folder layout, button map, porting section. Notion sync deferred to Epic Done. |
-| B9 | Bench verification | Not started | Hardware: Tildagon Director + Tildagon Lume + M5 Lume. |
+| B8 | `developing-shows.md` cross-platform refresh | Done | Hosts-and-capabilities matrix, IMU-hooks section, MicroPython surface notes throughout, folder layout, button map, porting section. |
+| B9 | Bench verification | Done | M5↔Tildagon interop verified on hardware. Root-caused the ESP-NOW/WiFi channel-sweep coexistence (`wifi.stop()`); idle-mode rework; IMU retune; heartbeat + redundancy; Help/QR. Tildagon commits 9a2a8c3 + b7a175e. |
 
 ## Progress log
 
@@ -252,6 +254,18 @@ Started 2026-05-19. Estimate 1.5-2 weeks of focused work. No external deadline w
   - New **Porting a Show across hosts** section with a what-differs table and practical advice (key fires on `on_beat_detected` for portability; only `on_render` + registration are genuinely host-specific). Submission section gained Tildagon PR guidance.
   - The doc has `sync_direction: bidirectional` to its own Notion page; per the working-copy pattern the Notion push is deferred to Epic Done (avoids mid-Epic table/code-block sync churn). Local doc is canonical meanwhile.
   - **Only B9 (bench verification) remains** — needs hardware (Tildagon Director + Tildagon Lume + M5 Lume on channel 1) and folds in the bench-pending B6b app.py FSM.
+
+2026-05-21 — B9 done. M5↔Tildagon interop bench-verified (Tildagon commits `9a2a8c3` + `b7a175e`). This was a long hardware session that surfaced several real issues; the fixes:
+  - **Show discovery on the badge**: the Show library's absolute imports (`shows.*`, `nocturnation.*`) only resolved under host pytest. Added `/apps/nocturnation` to `sys.path` at app start so they resolve on the badge too — without it the registry was empty and Director mode bounced straight back to idle.
+  - **ESP-NOW / WiFi channel coexistence (the headline finding)**: the badge boots with the WiFi STA active (its `main.py` calls `wifi.connect()`); an *unassociated* STA makes the ESP32 firmware sweep channels hunting for the SSID, which moves the radio out from under ESP-NOW and wrecks reception (~1-in-5 frames, mis-lock onto a neighbour channel that bled a stray frame). Root-caused via per-frame + actual-`wlan.config('channel')` debug logging (the readback swept 2→14, proving the hop). Fix: call the badge **`wifi.stop()`** when entering an active mode so the STA we bring up holds the channel we set; restore WiFi (`wifi.connect()`) on returning to idle / Quit. The earlier "NO SIGNAL despite relaying IR" on a Plus2 Lume turned out to be a *stale M5 firmware* on that unit (current `lume_mode.cpp` clears NO SIGNAL on any frame); confirmed by reading the code.
+  - **Channel pinning**: the Channel setting was a no-op (scanner always ran `(11,1,6)`); now `1`/`11` pin a single channel so the radio can't mis-lock.
+  - **Director TX reliability**: HEARTBEAT beacon at 1 Hz (skip-if-recent) so Lumes discover the channel + keep their TOFU lock between taps; **3× redundant** `LIGHT_COMMAND` (the M5 master sends 3×; the receiver dedups). The TOFU lock confirmed (in `tofu.py`) to lock on the first *valid frame of any type*, not HEARTBEAT-only — so a light command alone locks a Lume.
+  - **IMU retune**: a hand-held badge tap delivers only ~1.0-2.6 m/s² of high-pass accel (measured in the REPL), far below the first-cut thresholds — needed banging the badge. Retuned the table (High tap 0.6 / Med 1.5 / Low 2.2) + saturation, throttled the Director IMU poll to 50 Hz (matches the detector's tuning), and defaulted `simple_tap` to High.
+  - **Group**: `simple_tap` fires `01:00` (all Light) so a stock group-0 Lume lights without group config.
+  - **Idle-mode rework** (Jason's call): launch into an idle start menu (Lume / Director / Settings / Help / Quit) with **WiFi up**; the radio is taken (`wifi.stop()`) only when a mode is actively started. Back (F) stops to idle + restores WiFi; switching badge apps keeps the mode running in the background (Block 6, the lights are the cue). **Quit** releases the radio, restores WiFi, hands the LEDs back, and `RequestStopApp`-terminates so a relaunch starts fresh.
+  - **Help screen**: vendored `uQR.py` (MIT, `JASchilz/uQR`, with an `ure`/`re` import shim) renders a QR to `Settings.help_url` (default `http://www.nocturnation.net`, configurable + persisted), sized + positioned for the round screen.
+  - **`deploy.sh`**: strip host `__pycache__` before copying (CPython bytecode is useless on MicroPython); verify-before-reset ordering fix.
+  - Host suite 399 passing (added `mode` / `active_show` / `help_url` settings tests, heartbeat encode + dispatch tests, redundancy test, retuned IMU tests). `_DEBUG` flag flipped off for ship; the gated `_dbg_radio` / `_dbg_frame` helpers stay for future bench work.
 
 ## Block notes
 

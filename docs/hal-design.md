@@ -76,6 +76,13 @@ public:
 
 `HAL::has(Capability::ESPNow)` returns false on the StickC Plus2 backend; it returns true once Epic 4 lands. Code that depends on a capability checks `has()` (or accepts the nullptr from the accessor) and degrades gracefully.
 
+**Sub-capabilities (post-Epic-4.5).** The enum sketch above is the original coarse set; the canonical enum (`include/hal/hal.h`) has since grown *sub-capability* flags that compose what a coarse capability actually produces, so a plug-in can declare a precise `required_capabilities()` mask:
+
+- **Analyser sub-caps (Epic 4.5)**: `AnalyserBeatDetection`, `AnalyserDropDetection`, `AnalyserSpectrumFrame`, `AnalyserBandSummary` (+ reserved `AnalyserMultiBandOnset` / `AnalyserSpectralCentroid` / `AnalyserEnergyEnvelope` / `AnalyserSectionDetection`). A host with `Mic` declares the subset its analyser operating point produces.
+- **IMU sub-caps (Epic 6B)**: `ImuTap` (the IMU produces tap-onset events) and `ImuMotion` (per-axis motion events). The coarse `IMU` stays as the "hardware present" flag; the sub-caps say which event streams the backend fires. They are **reserved-but-unwired on M5** (no M5 backend emits them yet — same posture as the reserved analyser flags) so a cross-platform Show can declare them in a stable mask; the **Tildagon** declares `IMU` + `ImuTap` + `ImuMotion` (its `ImuAdapter` produces both). Free-fall was considered and dropped (no consumer). The Python mirror (`nocturnation.hal.Capability` / `CapabilityMask` on the Tildagon) carries the identical numeric values so the capability vocabulary is shared across hosts.
+
+A plug-in declares `required_capabilities()` (a `CapabilityMask`); the mode gates plug-in selection on `req.subset_of(host_mask)`. See `docs/developing-shows.md` (Hosts and capabilities) for the cross-platform matrix.
+
 There is no `Clock` capability. `millis()` and `micros()` are framework primitives every supported platform provides; they're imported directly where needed rather than wrapped.
 
 ---

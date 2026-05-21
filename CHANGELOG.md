@@ -2,6 +2,38 @@
 
 Notable changes to the NocturNation M5 firmware. Newest first.
 
+## 2026-05-21 — Epic 6B: Tildagon Director + Show framework (M5-side + docs)
+
+Epic 6B lands the Tildagon Director + Show framework (in the
+`nocturnation-tildagon` repo). The M5-firmware contribution is small —
+the cross-platform capability + hook surface — plus the documentation
+that's shared across both hosts.
+
+- **`hal::Capability`** gains `ImuTap` + `ImuMotion` sub-capabilities
+  ([include/hal/hal.h](include/hal/hal.h)), composing what an IMU
+  backend produces (mirroring the Epic-4.5 analyser sub-cap pattern).
+  **Reserved-but-unwired on M5** — no M5 backend emits them yet — so a
+  cross-platform Show can declare a stable `required_capabilities()`
+  mask; the Tildagon declares + fires them. `ImuFreeFall` was
+  considered and dropped (no consumer).
+- **`Show` base class** gains `on_tap_detected(strength)` +
+  `on_motion_event(axis, magnitude)` hooks with no-op defaults
+  ([include/shows/show.h](include/shows/show.h)) — forward-compatible
+  so a Show consuming IMU input compiles on M5 unchanged (they simply
+  never fire until an M5 IMU backend exists).
+- No behavioural change on M5: nothing declares or fires the new flags
+  / hooks yet. Both firmware envs build clean; native plugin/show tests
+  pass.
+- **Docs**: `docs/developing-shows.md` refreshed cross-platform
+  (hosts-and-capabilities matrix, IMU hooks, MicroPython surface,
+  porting guide); `docs/manuals/operator-workflow.md` gains a Tildagon
+  Director/Lume section (the WiFi-off-while-running constraint, idle
+  menu, channel pinning, Help/QR, button map); `docs/hal-design.md`
+  documents the sub-capability pattern; `docs/architecture.md` corrects
+  the "hosts without a mic can't be a Director" claim (IMU tap-to-beat
+  is a valid beat source) and adds §8.9. Working copy:
+  [docs/epics/epic-06.B-tildagon-director.md](docs/epics/epic-06.B-tildagon-director.md).
+
 ## 2026-05-17 — Epic 5.5: channel 11 access control (source_id partition + TOFU)
 
 Lightweight protection for channel 11 (Performance mode) against the

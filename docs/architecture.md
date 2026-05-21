@@ -722,7 +722,7 @@ The single-device autonomous use case (StickC Plus2 at the Coldplay tribute act,
 <tr>
 <td>**Autonomous Director**</td>
 <td>Run local audio analysis, fire local outputs (IR/LED/screen), broadcast beat events on ESP-NOW for any listeners. Continues running indefinitely whether or not audio is present - silence is treated as a valid state, not a failure. Optional **Audio-silence failover** config (default OFF; see §8.4) demotes the node to Lume Mode after a configurable silence period, intended for unattended deployments only.</td>
-<td>Mic + at least one output. **Hosts without a microphone (e.g. Tildagon) cannot enter Director Mode** and the mode-selection menu should not present it as an option on those platforms.</td>
+<td>Mic + at least one output for the *mic-driven* Director. **A microphone is not the only way to drive a Director**: Epic 6B added an **IMU tap-to-beat** Director on the Tildagon (no mic — the operator taps the badge; onset detection on the accelerometer fires the beat hook and broadcasts `LIGHT_COMMAND`). So Director Mode requires *a beat source (mic analyser or IMU tap) + at least one output*, and the mode-selection menu offers Director on any host with a beat source. See §8.9.</td>
 </tr>
 <tr>
 <td>**Lume**</td>
@@ -856,7 +856,14 @@ Both `ButtonPressEvent` and `InputEvent` fire from the same physical event durin
 
 Both overlays are toggles owned by the mode, not the Show - the Show only learns about gestures it actually receives (`InputAction::Confirm` / `Cycle` / `CyclePrev` while no overlay is open). This keeps each Show's gesture handling minimal while letting the framework UI evolve independently. The fallback "exit to Menu" gesture (Btn2 long historically; now the Picker gesture) is dropped from the Director: the operator returns to the mode menu via `Btn2 long` on the Picker overlay's "back" entry, keeping overlay open/close consistent.
 
-### 8.9 Open design questions
+### 8.9 Tildagon Director + cross-platform Show framework (Epic 6B)
+The Tildagon runs the same `Show` plug-in framework as the M5 firmware, ported to MicroPython with **identical hook names + capability vocabulary** (`docs/developing-shows.md`). A Show is a folder under `apps/nocturnation/shows/<id>/` exposing `make_show()`, auto-discovered at boot — no registration edit. The host-specific bits differ (IMU vs mic input source; `ctx.display()` vs `DAL::fire_display_*`; `RgbPulse` vs `RgbPulseEvent`) but the orchestration model is shared.
+
+- **Input**: with no microphone, the Tildagon Director's beat source is the **IMU** — `ImuAdapter` runs gravity-EMA high-pass onset detection on the accelerometer and fires `on_tap_detected` (+ `on_beat_detected`, so a beat-driven Show is host-agnostic) and `on_motion_event`; a button-tap fallback covers untuned IMUs. Tap sensitivity is a per-Show property.
+- **Output**: `ctx.render_fx("<class>:<group>", RgbPulse)` fans to ESP-NOW broadcast + the Director's own perimeter LEDs + LCD (the Director is its own first Lume), plus a 1 Hz HEARTBEAT beacon and 3× redundancy for delivery. The Tildagon Director transmits on **channel 1 only** (Epic 5.5 reserves channel-11 Performance for M5 Directors).
+- **Radio / WiFi coexistence (platform constraint surfaced at B9)**: the Tildagon's WiFi and ESP-NOW share one radio, and an idle/unassociated WiFi STA makes the ESP32 firmware sweep channels (breaking ESP-NOW). So the app launches into an **idle state with WiFi up**, and only takes the radio (`wifi.stop()`) when a Lume/Director session is actively running; WiFi is restored on stop/Quit. A deployed badge therefore has no WiFi while it's lighting — by design.
+
+### 8.10 Open design questions
 - **Boot countdown duration**: 5s fixed, configurable, or platform-dependent? (Block 13 reduced to 3 s; revisit if user feedback flags it as too short.)
 - **How does a Lume node indicate "I'm not receiving"?** Idle effect after timeout is the default; should there also be a visual cue (flashing red dot on screen, etc.)?
 ---

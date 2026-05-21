@@ -82,6 +82,40 @@ Channel 1 deployments don't carry these access-control mechanics. The Director a
 
 The trade-off is by design: channel 1 prioritises ease of use and "any community member with a NocturNation Director can light up nearby badges" over collision resistance. If two community Directors operate in the same room, the audience badges lock to whichever they hear first — that's not a bug, that's the social contract on channel 1.
 
+## Running NocturNation on a Tildagon badge (Epic 6B)
+
+The EMF Tildagon badge runs the NocturNation app as either a **Lume** (audience receiver) or a **Director** (IMU tap-to-beat, broadcasting to nearby badges on the hobby channel). It launches into an **idle start menu** — Lume Mode / Director Mode / Settings / Help / Quit — and only starts using the radio once you pick a mode.
+
+### WiFi must be off while a mode runs
+
+This is the one thing to know. The badge's WiFi and ESP-NOW share a single radio, and an *idle, unassociated* WiFi connection makes the ESP32 firmware sweep across channels hunting for an access point — which stomps on ESP-NOW reception (frames drop, the badge can't hold a channel). So while a Lume or Director session is **actively running**, the app takes the radio with `wifi.stop()` and the badge has **no WiFi / app-store / internet**. This is normal and expected; the lights are the cue that a session is live.
+
+- In the **idle menu** (before you start a mode), WiFi is up — connect the badge, browse the app store, etc.
+- **Starting** Lume or Director drops WiFi.
+- **Back (F)** stops the mode and **restores WiFi**, returning to the idle menu. Switching to another badge app keeps the session running in the background (WiFi stays off, lights stay live).
+- **Quit** restores WiFi, hands the LEDs back to the badge, and exits to the launcher.
+
+### Channel
+
+The Tildagon Director **transmits on channel 1 only** (Epic 5.5 reserves the channel-11 Performance band for M5 Directors). For a Tildagon **Lume**, pin the channel to match the Director: **Settings → Channel → `1`** (or `11`). Leaving it on `auto` runs a 11→1→6 scan that can mis-lock onto a neighbouring channel in a busy RF environment — pin it for a reliable show. (A change applies on the next launch.)
+
+### Help screen — QR code
+
+**Help** (idle menu) shows a QR code linking to the project site (`http://www.nocturnation.net` by default; configurable via `help_url` in the badge's `/nocturnation_settings.json`). Hand it to a curious attendee to point them at the project.
+
+### Director button map
+
+| Button | Action |
+|---|---|
+| Tap the badge (IMU) | beat — the primary input |
+| C (CONFIRM) | manual tap (button fallback if the IMU isn't tuned) |
+| B (RIGHT) / E (LEFT) | cycle the Show's controls (e.g. palette) |
+| A (UP) | Show picker |
+| D (DOWN) | per-Show settings (incl. tap sensitivity) |
+| F (CANCEL) | stop → idle menu |
+
+If taps feel unresponsive, raise the sensitivity (D → Settings → Sensitivity → High) — a hand-held badge tap is gentle.
+
 ## Where to learn more
 
 - [Protocol manual §3.4](protocol-manual.md#34-source-identifier-partitioning) — normative spec for the source_id partition + TOFU rules.
