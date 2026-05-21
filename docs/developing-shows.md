@@ -4,6 +4,7 @@ status: Draft
 notion_url: https://www.notion.so/362bd0677405812393d7c0f9eee52788
 notion_id: 362bd0677405812393d7c0f9eee52788
 last_synced: 2026-05-17
+notion_status: SYNC PENDING — Epic 6B B8 cross-platform refresh (hosts-and-capabilities matrix, IMU hooks, MicroPython surface, porting section) not yet pushed to Notion; local doc is canonical. Needs a full replace_content (tables + code blocks).
 sync_direction: bidirectional
 ---
 

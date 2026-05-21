@@ -1,8 +1,8 @@
 ---
 title: "Epic 6B: Tildagon Director + Show framework"
 status: Done
-notion_url: TBD
-notion_id: TBD
+notion_url: https://www.notion.so/367bd0677405817c9184d21f99f7e582
+notion_id: 367bd0677405817c9184d21f99f7e582
 notion_status: Done
 last_synced: 2026-05-21
 sync_direction: bidirectional

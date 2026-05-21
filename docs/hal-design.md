@@ -3,7 +3,7 @@ title: NocturNation HAL design
 status: cross-project (interface contract is shared; backend specifics are per-host)
 notion_url: https://www.notion.so/35abd0677405815f9fa3d2842bebd91e
 notion_id: 35abd0677405815f9fa3d2842bebd91e
-last_synced: 2026-05-08
+last_synced: 2026-05-21
 sync_direction: bidirectional
 ---
 

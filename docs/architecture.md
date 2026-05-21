@@ -3,9 +3,9 @@ title: NocturNation Architecture Specification
 status: cross-project (will move to umbrella repo when Tildagon work begins)
 notion_url: https://www.notion.so/357bd0677405800b891beab0f4e0a976
 notion_id: 357bd0677405800b891beab0f4e0a976
-last_synced: 2026-05-11
+last_synced: 2026-05-21
 sync_direction: bidirectional
-notion_status: synced (v0.23, Show plug-in framework + multi-band onset + music descriptors + section detection + widget library)
+notion_status: synced (v0.24, + Epic 6B Sec 8.9 Tildagon Director + cross-platform Show framework)
 ---
 
 **Status:** Draft v0.23 - early architecture document, expect substantial revision.
