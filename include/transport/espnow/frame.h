@@ -1,6 +1,6 @@
 // NocturNation ESP-NOW frame format (v2)
 //
-// Wire format per docs/manuals/protocol-manual.md §3.1. Pure logic; no ESP32
+// Wire format per the protocol manual §3.1 (nocturnation-docs repo). Pure logic; no ESP32
 // / radio dependencies, so this layer compiles and tests on native (laptop).
 //
 // The radio transport (Block 3+ of Epic 4) consumes these encoders to fill

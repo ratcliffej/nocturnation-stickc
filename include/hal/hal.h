@@ -1,6 +1,7 @@
 // NocturNation Hardware Abstraction Layer (HAL)
 //
-// Interface contract per docs/hal-design.md. Each supported host (M5StickC
+// Interface contract per the HAL design notes (nocturnation-docs repo).
+// Each supported host (M5StickC
 // Plus2, Tildagon, generic ESP32 dev kits, future microcontrollers) provides
 // one backend that implements this contract. Layers above the HAL never call
 // vendor SDKs directly.

@@ -1,6 +1,6 @@
 // Native test: HAL capability declaration + query mechanism.
 //
-// Verifies the contract from docs/hal-design.md §2 - that a backend
+// Verifies the contract from the HAL design notes §2 (nocturnation-docs repo) - that a backend
 // declaring a known capability set surfaces the right answers from
 // HAL::has(), HAL::capabilities(), and HAL::capability_count(), and that
 // accessors for un-declared capabilities return nullptr.

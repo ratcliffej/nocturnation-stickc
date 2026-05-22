@@ -1,6 +1,7 @@
 // NocturNation Device Abstraction Layer (DAL)
 //
-// Interface contract per docs/dal-design.md. Sits above the HAL and below
+// Interface contract per the DAL design notes (nocturnation-docs repo).
+// Sits above the HAL and below
 // the Orchestration layer. The DAL is the only thing application code talks
 // to; it owns the HAL's lifecycle and is the only caller of hal::HAL::*.
 //

@@ -31,8 +31,8 @@ that's shared across both hosts.
   menu, channel pinning, Help/QR, button map); `docs/hal-design.md`
   documents the sub-capability pattern; `docs/architecture.md` corrects
   the "hosts without a mic can't be a Director" claim (IMU tap-to-beat
-  is a valid beat source) and adds §8.9. Working copy:
-  [docs/epics/epic-06.B-tildagon-director.md](docs/epics/epic-06.B-tildagon-director.md).
+  is a valid beat source) and adds §8.9. Working plan: Epic 6B
+  (canonical in Notion).
 
 ## 2026-05-17 — Epic 5.5: channel 11 access control (source_id partition + TOFU)
 
@@ -87,11 +87,11 @@ the song. Both Director and Lume sides updated together.
 
 New documentation:
 
-- [docs/manuals/operator-workflow.md](docs/manuals/operator-workflow.md)
-  - operator-facing guide for running Performance Mode deployments,
-  source_id verification, residual risk discussion.
-- [docs/manuals/protocol-manual.md §3.4](docs/manuals/protocol-manual.md)
-  - normative spec for the partition + TOFU rules.
+- `operator-workflow.md` (nocturnation-docs repo) - operator-facing
+  guide for running Performance Mode deployments, source_id
+  verification, residual risk discussion.
+- `protocol-manual.md §3.4` (nocturnation-docs repo) - normative spec
+  for the partition + TOFU rules.
 - Protocol manual Annex B - NVS key `mst_src_id` documented.
 
 Threat model is honestly non-cryptographic: ~95% of *accidental*
