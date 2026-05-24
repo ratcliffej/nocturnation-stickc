@@ -42,9 +42,22 @@ cd nocturnation-stickc
 pio run -e m5stack-stickcs3 -t upload
 ```
 
-Substitute `m5stack-stickcplus2` for a Plus2. Open the folder in VS Code with the [PlatformIO IDE extension](https://marketplace.visualstudio.com/items?itemName=platformio.platformio-ide) for the integrated build/upload flow. The PlatformIO extension ships its own CLI, so a system-wide `pio` install is not required; on macOS it lives at `~/.platformio/penv/bin/pio`.
+Substitute `m5stack-stickcplus2` for a Plus2. Open the folder in VS Code with the [PlatformIO IDE extension](https://marketplace.visualstudio.com/items?itemName=platformio.platformio-ide) for the integrated build/upload flow.
 
-For a more thorough quickstart - including button layout, mode flow, and how to add a second Lume - read the [user manual quickstart](https://github.com/ratcliffej/nocturnation-docs/blob/main/manuals/user-manual.md#quickstart).
+> **If `pio` is "command not found"**, you installed PlatformIO via the VS Code extension rather than as a standalone tool - it bundles its own CLI rather than putting `pio` on your `PATH`. Either invoke it by full path (`~/.platformio/penv/bin/pio run …` on macOS) or use the extension's build/upload buttons instead of the terminal.
+
+> **First flash of a fresh Stick** may need the lower side button held down while you plug in the USB cable, to enter the ROM bootloader; later flashes reset into the bootloader automatically.
+
+## First light - see it fire IR
+
+You can confirm a **single** freshly-flashed Stick is firing IR - no second device or bracelet required. In Director mode a Stick loops its own light commands back through its IR transmitter, so it lights nearby bracelets *and* gives you something to verify.
+
+1. **Power on.** After the boot splash the Stick lands in **Director** mode by default.
+2. **Play music with a clear kick** near the Stick's microphone. The reference test track is Vengaboys, *We Like to Party* (138 BPM). On each detected beat the Stick's screen pulses - that is the render path firing.
+3. **Confirm the IR.** Infra-red is invisible to the eye, so point a phone camera at the Stick: on each beat the IR LED shows up as a faint purple-white flicker on screen. Most **front (selfie) cameras** see IR well; many rear cameras filter it out, so switch to the selfie camera if you see nothing. (Same trick as checking a TV remote.)
+4. **Optional - light a bracelet.** A PixMob Aurora held in front of the Stick wakes and lights on each beat.
+
+Buttons: **Button 1** (the lower button) cycles between the **Simple Beat** and **Dynamic** shows; long-press **Button 2** (upper) opens the show picker. For the full button/mode reference, adding a second Lume, and venue setup, read the [user manual quickstart](https://github.com/ratcliffej/nocturnation-docs/blob/main/manuals/user-manual.md#quickstart).
 
 ---
 
