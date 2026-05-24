@@ -26,7 +26,7 @@ Full documentation lives in the [**nocturnation-docs**](https://github.com/ratcl
 | Item | Notes |
 |---|---|
 | **M5StickC Plus2** or **M5StickS3** | The Stick. Either can run as Director, Lume, or both. The S3 is the current first-class reference; the Plus2 (now end-of-life from M5Stack) remains fully supported. See the [hardware section of the user manual](https://github.com/ratcliffej/nocturnation-docs/blob/main/manuals/user-manual.md#2-hardware) for the comparison. |
-| **PixMob X4 Gen 3.1 bracelets** | The reference target. Distributed at Coldplay's *Music of the Spheres* tour (2022-2024) and widely available second-hand. Earlier generations are partially compatible; later generations have not been bench-tested. |
+| **PixMob Aurora bracelets** | The reference target. Distributed at Coldplay's *Music of the Spheres* tour (2022-2024) and widely available second-hand. Other PixMob product lines are partially compatible but have not been bench-tested. |
 | **USB-C cable** | For flashing the Sticks. |
 | **A speaker playing music** | Anything with a clear kick drum. The reference test track is Vengaboys, *We Like to Party* (138 BPM). |
 
