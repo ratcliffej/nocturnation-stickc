@@ -3,7 +3,7 @@
 namespace nocturnation {
 namespace hal {
 
-IRTxStickCplus2::IRTxStickCplus2() : irsend_(kIRPin) {}
+IRTxStickCplus2::IRTxStickCplus2(uint16_t pin) : irsend_(pin) {}
 
 void IRTxStickCplus2::begin() {
     irsend_.begin();

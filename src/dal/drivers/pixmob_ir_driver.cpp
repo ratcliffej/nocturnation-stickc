@@ -30,13 +30,29 @@ bool PixMobIRDriver::begin() {
 }
 
 // -----------------------------------------------------------------------------
+// Emitter fan-out
+// -----------------------------------------------------------------------------
+
+void PixMobIRDriver::transmit(const uint16_t* pulses_us, size_t count) {
+    // 38 kHz carrier per the PixMob protocol. Internal then external, fired
+    // back-to-back; IRsend::sendRaw blocks per burst, so "both on" emits two
+    // sequential bursts a few ms apart - invisible against PixMob's tens-of-ms
+    // envelopes, and it doubles coverage.
+    if (internal_enabled_) {
+        auto* ir = hal::HAL::ir_tx();
+        if (ir) ir->send_raw(pulses_us, count, 38);
+    }
+    if (external_enabled_) {
+        auto* ir = hal::HAL::ir_tx_ext();
+        if (ir) ir->send_raw(pulses_us, count, 38);
+    }
+}
+
+// -----------------------------------------------------------------------------
 // Output dispatch
 // -----------------------------------------------------------------------------
 
 bool PixMobIRDriver::send(uint8_t group_id, const RgbPulseEvent& ev) {
-    auto* ir = hal::HAL::ir_tx();
-    if (!ir) return false;
-
     uint16_t buf[kPulseBufSize];
     const size_t n = pixmob::buildSingleColor(
         buf, kPulseBufSize,
@@ -46,8 +62,7 @@ bool PixMobIRDriver::send(uint8_t group_id, const RgbPulseEvent& ev) {
         group_id);
     if (n == 0) return false;
 
-    // 38 kHz carrier per the PixMob protocol.
-    ir->send_raw(buf, n, 38);
+    transmit(buf, n);
     return true;
 }
 
@@ -62,8 +77,6 @@ bool PixMobIRDriver::send(uint8_t /*group_id*/, const AssignDeviceGroupEvent& ev
     // the PixMob's group id to 22". The dispatch group_id is not used
     // here - both commands fire as broadcast (restrictGroupId=0) so the
     // target bracelet (physically isolated per protocol) receives them.
-    auto* ir = hal::HAL::ir_tx();
-    if (!ir) return false;
     if (ev.new_group_id < 1 || ev.new_group_id > 31) return false;
 
     uint16_t buf[kPulseBufSize];
@@ -73,7 +86,7 @@ bool PixMobIRDriver::send(uint8_t /*group_id*/, const AssignDeviceGroupEvent& ev
         buf, kPulseBufSize,
         /*groupSel=*/0, ev.new_group_id, /*restrictGroupId=*/0);
     if (n == 0) return false;
-    ir->send_raw(buf, n, 38);
+    transmit(buf, n);
 
     // Brief gap so the bracelet finishes processing the first command
     // before the second one starts arriving on the wire. 30 ms is well
@@ -88,7 +101,7 @@ bool PixMobIRDriver::send(uint8_t /*group_id*/, const AssignDeviceGroupEvent& ev
         buf, kPulseBufSize,
         /*groupSel=*/0, /*restrictGroupId=*/0);
     if (n == 0) return false;
-    ir->send_raw(buf, n, 38);
+    transmit(buf, n);
     return true;
 }
 

@@ -44,6 +44,17 @@ void             save_last_runtime_mode(ModeId m);
 bool             load_ir_enabled();
 void             save_ir_enabled(bool e);
 
+// IR emitter selection. The master ir_en flag above turns the whole PixMob
+// IR path on/off; these two select which physical emitter(s) the enabled
+// driver fans the encoded frame out to. Internal is the built-in LED
+// (default ON - the behaviour every device had before the external option
+// existed); external is an M5Stack IR unit on the Plus2 GPIO 26 header
+// (default OFF - not assumed present on a fresh device).
+bool             load_internal_ir_enabled();
+void             save_internal_ir_enabled(bool e);
+bool             load_external_ir_enabled();
+void             save_external_ir_enabled(bool e);
+
 bool             load_screen_pulse_enabled();
 void             save_screen_pulse_enabled(bool e);
 

@@ -20,6 +20,7 @@
 #include "config_mode.h"
 #include "test_mode.h"
 #include "../dal/drivers/local_driver.h"   // for set_pulse_enabled gating
+#include "../dal/drivers/pixmob_ir_driver.h"   // for internal/external IR gating
 
 #ifdef ARDUINO
 #include <Arduino.h>
@@ -143,6 +144,10 @@ void ModeMachine::begin() {
 
     s_last_runtime = persistence::load_last_runtime_mode();
     DAL::set_driver_enabled("ir-pixmob", persistence::load_ir_enabled());
+    dal::pixmob_ir_driver_instance()->set_internal_enabled(
+        persistence::load_internal_ir_enabled());
+    dal::pixmob_ir_driver_instance()->set_external_enabled(
+        persistence::load_external_ir_enabled());
     dal::local_driver_instance()->set_pulse_enabled(
         persistence::load_screen_pulse_enabled());
     s_calibration  = persistence::load_calibration();

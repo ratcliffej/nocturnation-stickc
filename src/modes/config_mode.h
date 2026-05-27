@@ -236,9 +236,18 @@ private:
     // generated settings overlay, but no longer lives on this screen.
     enum class IRItem : uint8_t {
         EnableDisable = 0,
+        InternalEmitter,   // present only when an external emitter exists
+        ExternalEmitter,   // present only when an external emitter exists
         Protocol,
     };
-    static constexpr size_t kIrFunctionalItemCount = 2;
+    // The IR submenu length is board-dependent: backends with a second
+    // (external) IR emitter expose the Internal/External emitter selection;
+    // backends with only the built-in LED show just Enable + Protocol (the
+    // original layout). ir_item_count()/ir_item_at() map a list position to
+    // the item it represents so the rest of the menu code stays position-
+    // driven. "Has external" is probed via hal::HAL::ir_tx_ext() != nullptr.
+    static size_t ir_item_count();
+    static IRItem ir_item_at(size_t pos);
 
     void handle_ir(const dal::ButtonPressEvent& ev);
     void draw_ir();

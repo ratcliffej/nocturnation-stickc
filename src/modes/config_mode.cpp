@@ -5,7 +5,9 @@
 #include "firmware_version.h"
 #include "persistence.h"
 #include "dal/dal.h"
+#include "hal/hal.h"                        // for ir_tx_ext() emitter probe
 #include "../dal/drivers/local_driver.h"   // for set_pulse_enabled gating
+#include "../dal/drivers/pixmob_ir_driver.h"   // for internal/external IR toggles
 #include "output_bindings/pixmob_ir.h"
 #include "plugins/property_bag.h"
 #include "shows/show.h"
@@ -400,7 +402,7 @@ void ConfigMode::draw_sub() {
 size_t ConfigMode::stub_item_count() const {
     switch (active_sub_) {
         case SubMenu::Display: return kDisplayFunctionalItemCount;
-        case SubMenu::IR:      return kIrFunctionalItemCount;
+        case SubMenu::IR:      return ir_item_count();
         case SubMenu::EspNow:  return kEspNowFunctionalItemCount;
         case SubMenu::WiFi:    return kWifiItemCount;
         case SubMenu::Dmx:     return kDmxItemCount;
@@ -772,20 +774,54 @@ void ConfigMode::draw_display() {
 // overlay, but it confused operators on the IR screen.
 // -------------------------------------------------------------------------
 
+size_t ConfigMode::ir_item_count() {
+    // Enable + Protocol always; Internal + External only where a second
+    // emitter exists (Plus2). hal::HAL::ir_tx_ext() is nullptr otherwise.
+    return (hal::HAL::ir_tx_ext() != nullptr) ? 4 : 2;
+}
+
+ConfigMode::IRItem ConfigMode::ir_item_at(size_t pos) {
+    if (hal::HAL::ir_tx_ext() != nullptr) {
+        // Four items, in enum order: Enable, Internal, External, Protocol.
+        return (IRItem)pos;
+    }
+    // Two items: Enable then Protocol.
+    return (pos == 0) ? IRItem::EnableDisable : IRItem::Protocol;
+}
+
 void ConfigMode::handle_ir(const ButtonPressEvent& ev) {
     if (ev.id == ButtonId::Btn2) {
-        sub_selected_ = (sub_selected_ + 1) % kIrFunctionalItemCount;
+        sub_selected_ = (sub_selected_ + 1) % ir_item_count();
         draw();
         return;
     }
-    if (ev.id == ButtonId::Btn1
-     && (IRItem)sub_selected_ == IRItem::EnableDisable) {
-        const bool next = !DAL::driver_enabled("ir-pixmob");
-        DAL::set_driver_enabled("ir-pixmob", next);
-        persistence::save_ir_enabled(next);
+    if (ev.id == ButtonId::Btn1) {
+        switch (ir_item_at(sub_selected_)) {
+            case IRItem::EnableDisable: {
+                const bool next = !DAL::driver_enabled("ir-pixmob");
+                DAL::set_driver_enabled("ir-pixmob", next);
+                persistence::save_ir_enabled(next);
+                break;
+            }
+            case IRItem::InternalEmitter: {
+                auto* d = dal::pixmob_ir_driver_instance();
+                const bool next = !d->internal_enabled();
+                d->set_internal_enabled(next);
+                persistence::save_internal_ir_enabled(next);
+                break;
+            }
+            case IRItem::ExternalEmitter: {
+                auto* d = dal::pixmob_ir_driver_instance();
+                const bool next = !d->external_enabled();
+                d->set_external_enabled(next);
+                persistence::save_external_ir_enabled(next);
+                break;
+            }
+            case IRItem::Protocol:
+                break;   // info-only - no Btn1 action.
+        }
         draw();
     }
-    // Protocol is info-only - no Btn1 action.
 }
 
 void ConfigMode::draw_ir() {
@@ -793,15 +829,27 @@ void ConfigMode::draw_ir() {
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         10, 5, "IR", WHITE, BLACK, 2});
 
-    char ena[24];
+    const size_t count = ir_item_count();
+
+    char ena[24], intl[24], extl[24];
     std::snprintf(ena, sizeof(ena), "Enable: %s",
                   DAL::driver_enabled("ir-pixmob") ? "ON" : "OFF");
-    const char* lines[kIrFunctionalItemCount] = {
-        ena,
-        "Protocol: PixMob",
-    };
 
-    for (size_t i = 0; i < kIrFunctionalItemCount; ++i) {
+    const char* lines[4];
+    size_t k = 0;
+    lines[k++] = ena;
+    if (hal::HAL::ir_tx_ext() != nullptr) {
+        auto* d = dal::pixmob_ir_driver_instance();
+        std::snprintf(intl, sizeof(intl), "Internal: %s",
+                      d->internal_enabled() ? "ON" : "OFF");
+        std::snprintf(extl, sizeof(extl), "External: %s",
+                      d->external_enabled() ? "ON" : "OFF");
+        lines[k++] = intl;
+        lines[k++] = extl;
+    }
+    lines[k++] = "Protocol: PixMob";
+
+    for (size_t i = 0; i < count; ++i) {
         const bool sel = (i == sub_selected_);
         char buf[40];
         std::snprintf(buf, sizeof(buf), "%s %s",

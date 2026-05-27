@@ -122,6 +122,11 @@ void HAL::loop_tick() {
 
 Mic*     HAL::mic()      { return &s_mic; }
 IRTx*    HAL::ir_tx()    { return &s_ir_tx; }
+// No external IR transmitter on the S3: its GPIO 26-equivalent header pins
+// differ from the Plus2's and an M5Stack IR unit plugged in directly drives
+// a strapping pin that forces the chip into boot mode. External IR is a
+// Plus2-only feature for now.
+IRTx*    HAL::ir_tx_ext() { return nullptr; }
 IRRx*    HAL::ir_rx()    { return &s_ir_rx; }
 ESPNow*  HAL::esp_now()  { return &s_esp_now; }
 Display* HAL::display()  { return &s_display; }
