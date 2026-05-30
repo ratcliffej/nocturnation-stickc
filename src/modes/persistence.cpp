@@ -57,6 +57,36 @@ void save_ir_enabled(bool e) {
     prefs.end();
 }
 
+bool load_internal_ir_enabled() {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/true);
+    bool e = prefs.getBool("ir_int_en", true);    // default ON
+    prefs.end();
+    return e;
+}
+
+void save_internal_ir_enabled(bool e) {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/false);
+    prefs.putBool("ir_int_en", e);
+    prefs.end();
+}
+
+bool load_external_ir_enabled() {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/true);
+    bool e = prefs.getBool("ir_ext_en", false);   // default OFF
+    prefs.end();
+    return e;
+}
+
+void save_external_ir_enabled(bool e) {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/false);
+    prefs.putBool("ir_ext_en", e);
+    prefs.end();
+}
+
 bool load_screen_pulse_enabled() {
     Preferences prefs;
     prefs.begin("noct", /*readOnly=*/true);
@@ -352,6 +382,10 @@ ModeId           load_last_runtime_mode() { return kDefaultRuntimeMode; }
 void             save_last_runtime_mode(ModeId)  {}
 bool             load_ir_enabled()             { return true; }
 void             save_ir_enabled(bool)         {}
+bool             load_internal_ir_enabled()    { return true; }   // default ON
+void             save_internal_ir_enabled(bool) {}
+bool             load_external_ir_enabled()    { return false; }  // default OFF
+void             save_external_ir_enabled(bool) {}
 bool             load_screen_pulse_enabled()    { return true; }
 void             save_screen_pulse_enabled(bool) {}
 uint8_t          load_director_channel()          { return 1; }

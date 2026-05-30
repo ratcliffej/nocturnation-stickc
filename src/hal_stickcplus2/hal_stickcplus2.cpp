@@ -88,7 +88,9 @@ ButtonsStickCplus2 s_buttons;
 IMUStickCplus2     s_imu;
 BatteryStickCplus2 s_battery;
 MicStickCplus2     s_mic;
-IRTxStickCplus2    s_ir_tx;
+IRTxStickCplus2    s_ir_tx;       // built-in IR LED, GPIO 19
+IRTxStickCplus2    s_ir_tx_ext(   // optional external IR unit, GPIO 26 header
+    IRTxStickCplus2::kExternalIRPin);
 ESPNowStickCplus2  s_esp_now;
 }  // namespace
 
@@ -114,6 +116,11 @@ void HAL::begin() {
     // when leaving; the prototype's M5.Mic / M5.Speaker contention pattern
     // is preserved exactly.
     s_ir_tx.begin();
+    // The external IR transmitter is begun unconditionally: IRsend::begin()
+    // just configures GPIO 26 and an RMT channel, which is harmless when no
+    // unit is plugged in. Whether it actually emits is gated at the driver
+    // by the operator's external-IR toggle (default off).
+    s_ir_tx_ext.begin();
 }
 
 void HAL::loop_tick() {
@@ -137,7 +144,8 @@ void HAL::loop_tick() {
 IRRx*    HAL::ir_rx()    { return nullptr; }
 
 Mic*     HAL::mic()      { return &s_mic; }
-IRTx*    HAL::ir_tx()    { return &s_ir_tx; }
+IRTx*    HAL::ir_tx()     { return &s_ir_tx; }
+IRTx*    HAL::ir_tx_ext() { return &s_ir_tx_ext; }
 ESPNow*  HAL::esp_now()  { return &s_esp_now; }
 Display* HAL::display()  { return &s_display; }
 Buttons* HAL::buttons()  { return &s_buttons; }

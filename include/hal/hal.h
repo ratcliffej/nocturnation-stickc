@@ -408,6 +408,10 @@ public:
     // declared by this backend.
     static Mic*      mic();
     static IRTx*     ir_tx();
+    // Optional second IR transmitter for an external emitter (e.g. an
+    // M5Stack IR unit on the Plus2's GPIO 26 header pin). Returns nullptr
+    // on backends with no external transmitter, so callers must null-check.
+    static IRTx*     ir_tx_ext();
     static IRRx*     ir_rx();
     static ESPNow*   esp_now();
     static Display*  display();

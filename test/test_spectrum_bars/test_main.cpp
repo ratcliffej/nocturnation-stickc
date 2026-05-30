@@ -76,6 +76,7 @@ void HAL::loop_tick() {}
 
 Mic*     HAL::mic()      { return nullptr; }
 IRTx*    HAL::ir_tx()    { return nullptr; }
+IRTx*    HAL::ir_tx_ext() { return nullptr; }
 IRRx*    HAL::ir_rx()    { return nullptr; }
 ESPNow*  HAL::esp_now()  { return nullptr; }
 Display* HAL::display()  { return &s_stub_display; }
