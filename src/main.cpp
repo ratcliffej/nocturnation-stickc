@@ -19,6 +19,7 @@
 #include "shows/show_registry.h"
 #include "shows/simple_beat_show.h"
 #include "shows/dynamic_show.h"
+#include "shows/hello_beat_show.h"
 #include "output_bindings/output_binding_registry.h"
 #include "output_bindings/local_display.h"
 #include "output_bindings/pixmob_ir.h"
@@ -45,6 +46,8 @@ void setup() {
         nocturnation::shows::simple_beat_show_instance());
     nocturnation::shows::show_registry().register_plugin(
         nocturnation::shows::dynamic_show_instance());
+    nocturnation::shows::show_registry().register_plugin(
+        nocturnation::shows::hello_beat_show_instance());
 
     // Register Lume-side output bindings (Epic 4.6 Block 9). LumeMode
     // walks this registry on enter() and activates every binding whose
