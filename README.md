@@ -29,6 +29,7 @@ Full documentation lives in the [**nocturnation-docs**](https://github.com/ratcl
 | **PixMob Aurora bracelets** | The reference target. Distributed at Coldplay's *Music of the Spheres* tour (2022-2024) and widely available second-hand. Other PixMob product lines are partially compatible but have not been bench-tested. |
 | **USB-C cable** | For flashing the Sticks. |
 | **A speaker playing music** | Anything with a clear kick drum. The reference test track is Vengaboys, *We Like to Party* (138 BPM). |
+| **Optional: M5Stack IR Transmitter unit** | Plus2 only. Plugged onto the **GPIO 26** header pin, it acts as a second IR emitter alongside the built-in LED, roughly doubling coverage. Toggled from `Config > IR > External`. Not supported on the S3 (header pinout differs and the unit drives a strapping pin → boot mode). |
 
 A useful first deployment is one Director plus one Lume, in a small room with a handful of bracelets. For larger venues see the [IR radiation-pattern guidance in the user manual](https://github.com/ratcliffej/nocturnation-docs/blob/main/manuals/user-manual.md#23-ir-radiation-patterns).
 
