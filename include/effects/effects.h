@@ -22,6 +22,7 @@
 
 #include <cstdint>
 #include "dal/dal.h"
+#include "pulse/envelope.h"   // protocol-neutral Time / Chance descriptors
 
 namespace nocturnation {
 namespace effects {
@@ -83,9 +84,9 @@ public:
 // it for IR fires, Director uses it when packing LIGHT_COMMAND frames
 // for ESP-NOW so Lumes render the same envelope on screen.
 struct PulseEnvelope {
-    pixmob::Time attack;
-    pixmob::Time sustain;
-    pixmob::Time release;
+    pulse::Time attack;
+    pulse::Time sustain;
+    pulse::Time release;
 };
 PulseEnvelope envelope_for_bpm(float bpm);
 
@@ -105,7 +106,7 @@ protected:
 
     const char*    target_;
     uint8_t        r_ = 0xFF, g_ = 0x00, b_ = 0x00;
-    pixmob::Chance chance_ = pixmob::CHANCE_100;
+    pulse::Chance chance_ = pulse::CHANCE_100;
 };
 
 // =============================================================================
@@ -120,7 +121,7 @@ protected:
 class ProbabilityPulse : public Pulse {
 public:
     ProbabilityPulse(const char* target_name,
-                     pixmob::Chance chance = pixmob::CHANCE_50);
+                     pulse::Chance chance = pulse::CHANCE_50);
 
     const char* name() const override { return "ProbabilityPulse"; }
 };
@@ -173,7 +174,7 @@ public:
     Starlight(const char* target_name,
               uint16_t mean_interval_ms = 300,
               uint16_t jitter_ms        = 200,
-              pixmob::Chance chance     = pixmob::CHANCE_16);
+              pulse::Chance chance     = pulse::CHANCE_16);
 
     const char* name() const override { return "Starlight"; }
     void enter() override;
@@ -183,7 +184,7 @@ private:
     const char*     target_;
     uint16_t        mean_interval_ms_;
     uint16_t        jitter_ms_;
-    pixmob::Chance  chance_;
+    pulse::Chance  chance_;
     uint32_t        next_fire_ms_   = 0;
 };
 
