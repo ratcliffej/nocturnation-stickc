@@ -19,7 +19,7 @@
 
 #include "dal/dal.h"
 #include "effects/effects.h"          // PulseEnvelope + envelope_for_bpm
-#include "pixmob_protocol.h"
+#include "pulse/envelope.h"           // protocol-neutral Time / Chance
 
 #include <cstdio>
 #include <cstring>
@@ -228,7 +228,7 @@ void SimpleBeatShow::on_beat_detected(ShowContext& ctx, uint8_t /*strength*/) {
         ev.attack  = env.attack;
         ev.sustain = env.sustain;
         ev.release = env.release;
-        ev.chance  = pixmob::CHANCE_100;
+        ev.chance  = pulse::CHANCE_100;
         DAL::render_fx("00:00", ev);
     }
 

@@ -11,7 +11,7 @@
 #include "dal/dal.h"
 #include "dal/analyser/section_detector.h"
 #include "effects/effects.h"
-#include "pixmob_protocol.h"
+#include "pulse/envelope.h"           // protocol-neutral Time / Chance
 
 #include <cmath>
 #include <cstdio>
@@ -161,14 +161,14 @@ void compute_colour(uint8_t centroid,
     hsv_to_rgb(hue, sat, val, out_r, out_g, out_b);
 }
 
-pixmob::Chance density_to_chance(uint8_t density) {
-    if (density >= 200) return pixmob::CHANCE_100;
-    if (density >= 150) return pixmob::CHANCE_88;
-    if (density >= 100) return pixmob::CHANCE_67;
-    if (density >=  60) return pixmob::CHANCE_50;
-    if (density >=  30) return pixmob::CHANCE_32;
-    if (density >=  10) return pixmob::CHANCE_16;
-    return pixmob::CHANCE_10;
+pulse::Chance density_to_chance(uint8_t density) {
+    if (density >= 200) return pulse::CHANCE_100;
+    if (density >= 150) return pulse::CHANCE_88;
+    if (density >= 100) return pulse::CHANCE_67;
+    if (density >=  60) return pulse::CHANCE_50;
+    if (density >=  30) return pulse::CHANCE_32;
+    if (density >=  10) return pulse::CHANCE_16;
+    return pulse::CHANCE_10;
 }
 
 const char* section_label(uint8_t s) {

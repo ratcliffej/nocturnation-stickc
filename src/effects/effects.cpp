@@ -63,14 +63,14 @@ void Pulse::on_beat(uint32_t /*now_ms*/, float bpm) {
 PulseEnvelope envelope_for_bpm(float bpm) {
     if (bpm > 160.0f) {
         // Very fast: 0+32+96 = 128 ms total.
-        return { pixmob::T_0_MS,  pixmob::T_32_MS,  pixmob::T_96_MS  };
+        return { pulse::T_0_MS,  pulse::T_32_MS,  pulse::T_96_MS  };
     }
     if (bpm > 100.0f || bpm == 0.0f) {
         // Medium / unknown: punchy default (32+96+96 = 224 ms).
-        return { pixmob::T_32_MS, pixmob::T_96_MS,  pixmob::T_96_MS  };
+        return { pulse::T_32_MS, pulse::T_96_MS,  pulse::T_96_MS  };
     }
     // Slow ballad: more presence (32+192+192 = 416 ms).
-    return { pixmob::T_32_MS, pixmob::T_192_MS, pixmob::T_192_MS };
+    return { pulse::T_32_MS, pulse::T_192_MS, pulse::T_192_MS };
 }
 
 void Pulse::fire(uint8_t r, uint8_t g, uint8_t b, float bpm) {
@@ -84,7 +84,7 @@ void Pulse::fire(uint8_t r, uint8_t g, uint8_t b, float bpm) {
 // =============================================================================
 
 ProbabilityPulse::ProbabilityPulse(const char* target_name,
-                                   pixmob::Chance chance)
+                                   pulse::Chance chance)
     : Pulse(target_name) {
     chance_ = chance;     // overrides Pulse's CHANCE_100 default
 }
@@ -141,8 +141,8 @@ void Rainbow::loop_tick(uint32_t now_ms) {
     // into a cycle.
     DAL::fire_rgb_pulse(target_, RgbPulseEvent{
         r, g, b,
-        pixmob::T_0_MS, pixmob::T_96_MS, pixmob::T_0_MS,
-        pixmob::CHANCE_100});
+        pulse::T_0_MS, pulse::T_96_MS, pulse::T_0_MS,
+        pulse::CHANCE_100});
 }
 
 // =============================================================================
@@ -173,7 +173,7 @@ uint16_t random_interval(uint16_t mean, uint16_t jitter) {
 Starlight::Starlight(const char* target_name,
                      uint16_t mean_interval_ms,
                      uint16_t jitter_ms,
-                     pixmob::Chance chance)
+                     pulse::Chance chance)
     : target_           (target_name),
       mean_interval_ms_ (mean_interval_ms),
       jitter_ms_        (jitter_ms),
@@ -199,7 +199,7 @@ void Starlight::loop_tick(uint32_t now_ms) {
     // = 256 ms total, with most of that in the fade.
     DAL::fire_rgb_pulse(target_, RgbPulseEvent{
         c.r, c.g, c.b,
-        pixmob::T_32_MS, pixmob::T_32_MS, pixmob::T_192_MS,
+        pulse::T_32_MS, pulse::T_32_MS, pulse::T_192_MS,
         chance_});
 
     next_fire_ms_ = now_ms + random_interval(mean_interval_ms_, jitter_ms_);
