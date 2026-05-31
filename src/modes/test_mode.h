@@ -17,6 +17,14 @@
 //                         DAL capability. Belongs in Config > IR > Group ID
 //                         assignment when Config lands; here for now to
 //                         support hardware setup of new bracelets.
+//   8. Wash Test        - Epic 6C: manual fire/cancel for the WASH wire
+//                         family. Btn2 cycles Fire / Cancel; Btn1 broadcasts
+//                         render_wash (orange<->purple 5 s drift) or
+//                         render_wash_end (1 s release) to 00:00. The Stick's
+//                         own LCD won't show the wash (LCD is UI here, not
+//                         a light surface - that's only true in Lume mode);
+//                         verify visually on a second Stick in Lume mode or
+//                         on a Tildagon Lume.
 
 #pragma once
 
@@ -49,10 +57,11 @@ private:
         WhiteOut,
         AudioLive,
         Calibrate,
+        WashTest,
     };
 
     struct MenuItem { SubTest test; const char* label; };
-    static constexpr MenuItem kSubTests[7] = {
+    static constexpr MenuItem kSubTests[8] = {
         { SubTest::PulseTest,   "Pulse"        },
         { SubTest::FadeTest,    "Fade"         },
         { SubTest::RainbowTest, "Rainbow"      },
@@ -60,6 +69,7 @@ private:
         { SubTest::WhiteOut,    "White Out"    },
         { SubTest::AudioLive,   "Audio Live"   },
         { SubTest::Calibrate,   "Calibrate"    },
+        { SubTest::WashTest,    "Wash Test"    },
     };
     static constexpr size_t kSubTestCount = sizeof(kSubTests) / sizeof(kSubTests[0]);
 
@@ -169,6 +179,17 @@ private:
     void tick_calibrate(uint32_t now);
     void handle_button_calibrate(const dal::ButtonPressEvent& ev);
     void draw_calibrate();
+
+    // Wash Test (Epic 6C). Two-item sub-screen (Fire / Cancel) that
+    // broadcasts render_wash / render_wash_end. step_index_ doubles as
+    // the Fire/Cancel cursor (0 = Fire, 1 = Cancel); last_step_ms_ stamps
+    // the most recent transmit so the "Sent!" confirmation lingers ~800
+    // ms after Btn1.
+    static constexpr size_t   kWashTestItemCount = 2;
+    static constexpr uint32_t kWashConfirmFlashMs = 800;
+    void enter_wash_test();
+    void handle_button_wash_test(const dal::ButtonPressEvent& ev);
+    void draw_wash_test();
 };
 
 }  // namespace modes
