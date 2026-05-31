@@ -45,6 +45,19 @@ public:
 
     hal::CapabilityMask required_capabilities() const override;
 
+    // PixMob bracelets are fire-and-forget ASR pulses; they cannot hold
+    // a colour between commands and have no state for a wash baseline
+    // to sit on. Pulse-only per Epic 6C Phase B / design doc. The
+    // dispatch layer uses this to silently drop WASH-family frames
+    // before they reach this binding.
+    BindingCapabilities capabilities() const override {
+        return BindingCapabilities{
+            /*can_pulse=*/   true,
+            /*can_wash=*/    false,
+            /*can_overlay=*/ false,
+        };
+    }
+
     void on_light_command(OutputBindingContext&,
                            const dal::RgbPulseEvent&) override;
 };

@@ -45,6 +45,25 @@ namespace output_bindings {
 
 class OutputBindingContext;   // forward declaration
 
+// Per-binding capability surface (Epic 6C Phase B). Each OutputBinding
+// declares what it can physically do with light. The Lume-side dispatch
+// uses these flags to silently drop messages a binding cannot act on
+// (e.g. WASH-family frames on PixMob-class bindings that cannot hold
+// state). Extensible: future flags (can_strobe, can_text, etc.) slot in
+// without breaking existing bindings - they default-init to false.
+//
+// Capability vocabulary:
+//   can_pulse   - fire an ASR pulse (universal; every binding sets true).
+//   can_wash    - hold a persistent background wash (LIGHT_WASH family).
+//   can_overlay - render a PULSE additively on top of an active WASH.
+//
+// See docs/lume-capabilities-design.md for the full contract.
+struct BindingCapabilities {
+    bool can_pulse;
+    bool can_wash;
+    bool can_overlay;
+};
+
 class OutputBinding : public plugins::Plugin {
 public:
     plugins::PluginKind kind() const override { return plugins::PluginKind::OutputBinding; }
@@ -86,6 +105,14 @@ public:
     // Optional: time-driven binding work (e.g. fade-out after a pulse).
     // Default no-op; framework calls only if power().tick_hz > 0.
     virtual void tick(OutputBindingContext&, uint32_t now_ms) {}
+
+    // Capability surface (Epic 6C Phase B). Pure-virtual so every
+    // binding declares its physical capabilities explicitly - silent
+    // defaults would let a new binding inherit "{true, true, true}"
+    // by accident, which the dispatch layer then interprets as "the
+    // binding can hold a wash" and a wash will be silently lost.
+    // See BindingCapabilities above for the vocabulary.
+    virtual BindingCapabilities capabilities() const = 0;
 };
 
 }  // namespace output_bindings

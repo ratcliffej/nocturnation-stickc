@@ -107,6 +107,7 @@ using nocturnation::plugins::PropertyValue;
 using nocturnation::plugins::Span;
 using nocturnation::output_bindings::OutputBinding;
 using nocturnation::output_bindings::OutputBindingContext;
+using nocturnation::output_bindings::BindingCapabilities;
 using nocturnation::output_bindings::OutputBindingRegistry;
 using nocturnation::output_bindings::output_binding_registry;
 
@@ -130,6 +131,11 @@ public:
     const char* id()           const override { return "stub-bind"; }
     const char* display_name() const override { return "Stub Binding"; }
     DeviceClass device_class() const override { return DeviceClass::Light; }
+
+    // Safe baseline for a test stand-in; tests can override per case.
+    BindingCapabilities capabilities() const override {
+        return BindingCapabilities{ true, false, false };
+    }
 
     Span<const PropertyDef> properties() const override {
         return Span<const PropertyDef>(kStubSchema,
@@ -171,6 +177,9 @@ public:
     DeviceClass device_class() const override { return DeviceClass::Light; }
     CapabilityMask required_capabilities() const override {
         return make_capability_mask(Capability::ESPNow);
+    }
+    BindingCapabilities capabilities() const override {
+        return BindingCapabilities{ true, false, false };
     }
 };
 
@@ -429,6 +438,9 @@ public:
     const char* id()           const override { return "bare"; }
     const char* display_name() const override { return "Bare"; }
     DeviceClass device_class() const override { return DeviceClass::Light; }
+    BindingCapabilities capabilities() const override {
+        return BindingCapabilities{ true, false, false };
+    }
 };
 }  // namespace
 

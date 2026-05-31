@@ -34,6 +34,18 @@ public:
 
     hal::CapabilityMask required_capabilities() const override;
 
+    // The Stick's LCD is a screen-as-light surface: it can hold a
+    // colour persistently (wash), and a PULSE-overlay on top of an
+    // active wash is just a brighter frame for a moment via the same
+    // draw path. Full capability set per Epic 6C Phase B / design doc.
+    BindingCapabilities capabilities() const override {
+        return BindingCapabilities{
+            /*can_pulse=*/   true,
+            /*can_wash=*/    true,
+            /*can_overlay=*/ true,
+        };
+    }
+
     void on_light_command(OutputBindingContext&,
                            const dal::RgbPulseEvent&) override;
 };
