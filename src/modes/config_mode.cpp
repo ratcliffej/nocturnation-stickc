@@ -72,7 +72,7 @@ size_t scroll_offset(size_t selected, size_t total, size_t max_visible) {
 // Out-of-class definitions for the ODR-used static constexpr members.
 constexpr ConfigMode::TopEntry    ConfigMode::kTop[6];
 constexpr ConfigMode::PickerEntry ConfigMode::kConnectivity[4];
-constexpr ConfigMode::PickerEntry ConfigMode::kUtilities[2];
+constexpr ConfigMode::PickerEntry ConfigMode::kUtilities[3];
 constexpr const char* ConfigMode::kWifiItems[];
 constexpr const char* ConfigMode::kDmxItems[];
 
@@ -370,6 +370,7 @@ void ConfigMode::handle_sub(const ButtonPressEvent& ev) {
         case SubMenu::EspNow:      handle_espnow(ev);      break;
         case SubMenu::PixMob:      handle_pixmob(ev);      break;
         case SubMenu::LevelTuning: handle_level_tuning(ev); break;
+        case SubMenu::WashTest:    handle_wash_test(ev);    break;
         case SubMenu::WiFi:
         case SubMenu::Dmx:
             // Stub submenus accept Btn2 cycling for read-only browsing
@@ -394,6 +395,7 @@ void ConfigMode::draw_sub() {
         case SubMenu::Dmx:         draw_stub("DMX",  kDmxItems,  kDmxItemCount,  "Epic 7"); break;
         case SubMenu::PixMob:      draw_pixmob(); break;
         case SubMenu::LevelTuning: draw_level_tuning(); break;
+        case SubMenu::WashTest:    draw_wash_test(); break;
         case SubMenu::System:      draw_system(); break;
         default: break;
     }
@@ -406,6 +408,7 @@ size_t ConfigMode::stub_item_count() const {
         case SubMenu::EspNow:  return kEspNowFunctionalItemCount;
         case SubMenu::WiFi:    return kWifiItemCount;
         case SubMenu::Dmx:     return kDmxItemCount;
+        case SubMenu::WashTest: return kWashTestItemCount;
         default:               return 1;
     }
 }
@@ -860,6 +863,73 @@ void ConfigMode::draw_ir() {
     }
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         10, 122, "B: cycle  A: select  B-hold: back",
+        WHITE, BLACK, 1});
+}
+
+// -------------------------------------------------------------------------
+// Wash Test submenu (Epic 6C Phase E). Two-entry manual-fire utility for
+// hardware verification of the WASH wire family. Fire broadcasts an
+// orange<->purple 5 s drift to 00:00; Cancel broadcasts a LIGHT_WASH_END
+// with a 1.0 s release. Complements the Wash Demo Show by exercising the
+// operator-direct fire path (the Show exercises the Show-API path).
+// -------------------------------------------------------------------------
+
+void ConfigMode::handle_wash_test(const ButtonPressEvent& ev) {
+    if (ev.id == ButtonId::Btn2) {
+        sub_selected_ = (sub_selected_ + 1) % kWashTestItemCount;
+        draw();
+        return;
+    }
+    if (ev.id == ButtonId::Btn1) {
+        if ((WashTestItem)sub_selected_ == WashTestItem::Fire) {
+            dal::LightWashEvent w{};
+            w.r1 = 255; w.g1 =  60; w.b1 =   0;     // warm orange
+            w.r2 = 120; w.g2 =  30; w.b2 = 200;     // deep purple
+            w.attack         = 20;                  // 2.0 s
+            w.release        = 10;                  // 1.0 s
+            w.intensity      = 200;
+            w.cycle_ms       = 5000;
+            w.ttl_seconds    = 0;                   // infinite
+            w.pulse_response = 1;
+            DAL::render_wash("00:00", w);
+        } else {
+            DAL::render_wash_end("00:00", /*release_time=*/10);   // 1.0 s
+        }
+        confirm_until_ms_ = millis() + kConfirmFlashMs;
+        draw();
+    }
+}
+
+void ConfigMode::draw_wash_test() {
+    DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 5, "Wash Test", WHITE, BLACK, 2});
+
+    const char* lines[kWashTestItemCount] = {
+        "Fire test wash",
+        "Cancel wash",
+    };
+    for (size_t i = 0; i < kWashTestItemCount; ++i) {
+        const bool sel = (i == sub_selected_);
+        char buf[40];
+        std::snprintf(buf, sizeof(buf), "%s %s",
+                      sel ? ">" : " ", lines[i]);
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 35 + (int)i * 18, buf,
+            sel ? YELLOW : WHITE, BLACK, 2});
+    }
+    // Short context line explaining the target.
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 80, "broadcast to 00:00",
+        WHITE, BLACK, 1});
+
+    if (millis() < confirm_until_ms_) {
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 100, "Sent!", GREEN, BLACK, 2});
+    }
+
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 122, "B: cycle  A: fire  B-hold: back",
         WHITE, BLACK, 1});
 }
 

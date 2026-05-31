@@ -48,6 +48,18 @@ bool ShowContext::render_fx(const char* target,
     return dal::DAL::render_fx(target, ev);
 }
 
+bool ShowContext::render_wash(const char* target,
+                               const dal::LightWashEvent& ev) {
+    return dal::DAL::render_wash(target, ev);
+}
+bool ShowContext::render_wash_end(const char* target, uint8_t release_time) {
+    return dal::DAL::render_wash_end(target, release_time);
+}
+bool ShowContext::render_wash_pulse(const char* target,
+                                     const dal::RgbPulseEvent& ev) {
+    return dal::DAL::render_wash_pulse(target, ev);
+}
+
 plugins::PropertyValue ShowContext::get_property(const char* key) const {
     return bag_->get(key);
 }

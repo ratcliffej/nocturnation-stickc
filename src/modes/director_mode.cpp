@@ -112,6 +112,10 @@ void DirectorMode::loop_tick() {
         draw();
         last_draw_ms_ = now;
     }
+    // Epic 6C Phase E: re-broadcast active washes periodically. The DAL
+    // helper enforces its own ~10 s per-target cadence + capability gate,
+    // so this call is cheap from the 20 Hz loop.
+    DAL::refresh_active_washes(now);
 }
 
 void DirectorMode::resolve_active_show_from_nvs() {

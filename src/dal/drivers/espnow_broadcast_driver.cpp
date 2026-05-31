@@ -107,6 +107,81 @@ bool EspNowBroadcastDriver::send(uint8_t target_class,
 }
 
 // -----------------------------------------------------------------------------
+// WASH-family senders (Epic 6C Phase E)
+// -----------------------------------------------------------------------------
+
+bool EspNowBroadcastDriver::send_wash(uint8_t target_class,
+                                       uint8_t target_group,
+                                       const LightWashEvent& ev) {
+    if (!active_) return false;
+    using namespace transport::espnow;
+    Header h{};
+    h.source_id       = source_id_;
+    h.sequence_number = next_seq();
+    h.hop_count       = 0;
+    LightWashPayload p{};
+    p.target_class   = target_class;
+    p.target_group   = target_group;
+    p.r1 = ev.r1; p.g1 = ev.g1; p.b1 = ev.b1;
+    p.r2 = ev.r2; p.g2 = ev.g2; p.b2 = ev.b2;
+    p.attack         = ev.attack;
+    p.release        = ev.release;
+    p.intensity      = ev.intensity;
+    p.cycle_ms       = ev.cycle_ms;
+    p.ttl_seconds    = ev.ttl_seconds;
+    p.pulse_response = ev.pulse_response;
+    uint8_t buf[kHeaderSize + kLightWashPayloadLen];
+    const size_t n = encode_light_wash(buf, sizeof(buf), h, p);
+    if (n == 0) return false;
+    send_frame_bytes(buf, n, "WASH");
+    return true;
+}
+
+bool EspNowBroadcastDriver::send_wash_end(uint8_t target_class,
+                                          uint8_t target_group,
+                                          uint8_t release_time) {
+    if (!active_) return false;
+    using namespace transport::espnow;
+    Header h{};
+    h.source_id       = source_id_;
+    h.sequence_number = next_seq();
+    h.hop_count       = 0;
+    LightWashEndPayload p{};
+    p.target_class = target_class;
+    p.target_group = target_group;
+    p.release_time = release_time;
+    uint8_t buf[kHeaderSize + kLightWashEndPayloadLen];
+    const size_t n = encode_light_wash_end(buf, sizeof(buf), h, p);
+    if (n == 0) return false;
+    send_frame_bytes(buf, n, "WEND");
+    return true;
+}
+
+bool EspNowBroadcastDriver::send_wash_pulse(uint8_t target_class,
+                                             uint8_t target_group,
+                                             const RgbPulseEvent& ev) {
+    if (!active_) return false;
+    using namespace transport::espnow;
+    Header h{};
+    h.source_id       = source_id_;
+    h.sequence_number = next_seq();
+    h.hop_count       = 0;
+    LightWashPulsePayload p{};
+    p.target_class = target_class;
+    p.target_group = target_group;
+    p.r = ev.r; p.g = ev.g; p.b = ev.b;
+    p.attack  = static_cast<uint8_t>(ev.attack);
+    p.sustain = static_cast<uint8_t>(ev.sustain);
+    p.release = static_cast<uint8_t>(ev.release);
+    p.chance  = static_cast<uint8_t>(ev.chance);
+    uint8_t buf[kHeaderSize + kLightWashPulsePayloadLen];
+    const size_t n = encode_light_wash_pulse(buf, sizeof(buf), h, p);
+    if (n == 0) return false;
+    send_frame_bytes(buf, n, "WPUL");
+    return true;
+}
+
+// -----------------------------------------------------------------------------
 // Driver-specific lifecycle / protocol entry points
 // -----------------------------------------------------------------------------
 

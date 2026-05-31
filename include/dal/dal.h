@@ -99,6 +99,23 @@ struct RgbPulseEvent {
     pixmob::Chance chance;
 };
 
+// LightWashEvent (Epic 6C Phase E) - Show-side describe-a-wash event.
+// Mirrors the LIGHT_WASH wire payload (transport::espnow::LightWashPayload)
+// but omits target_class / target_group (those come from the target string
+// parsed by render_wash). Attack and release are in 100 ms units (0-25.5 s)
+// per the design doc - longer scale than the pixmob::Time enum which tops
+// out at 3.84 s.
+struct LightWashEvent {
+    uint8_t  r1, g1, b1;           // start colour
+    uint8_t  r2, g2, b2;           // end colour (ignored at render when cycle_ms == 0)
+    uint8_t  attack;               // 100 ms units; ramp from current to wash baseline
+    uint8_t  release;              // 100 ms units; default fade-out (overridden by LIGHT_WASH_END)
+    uint8_t  intensity;            // 0-255 brightness scalar applied to wash baseline
+    uint16_t cycle_ms;             // one full A<->B<->A oscillation; 0 = no cycle (hold r1g1b1)
+    uint16_t ttl_seconds;          // 0 = infinite (held until LIGHT_WASH_END or supersede)
+    uint8_t  pulse_response;       // 0 = ignore PULSE while washing; 1 = accept PULSE as additive overlay
+};
+
 struct RgbStaticEvent {
     uint8_t r, g, b;
 };
@@ -399,6 +416,36 @@ public:
     // light".
     // -------------------------------------------------------------------------
     static bool render_fx(const char* target, const RgbPulseEvent& ev);
+
+    // -------------------------------------------------------------------------
+    // WASH-family render API (Epic 6C Phase E). Mirrors render_fx semantics:
+    // `target` is the structured "<class>:<group>" hex string (e.g. "01:00"
+    // for all-Light-class targets). On success the encoder builds the
+    // corresponding wire frame and the broadcast driver retransmits it.
+    //
+    // render_wash also tracks the wash internally so refresh_active_washes()
+    // can re-broadcast it periodically (Lume-restart robustness). A new
+    // render_wash to the same target supersedes the previous wash; a
+    // render_wash_end clears it.
+    //
+    // PixMob-class targets (target_class = 0x01) silently no-op for wash:
+    // PixMob bracelets are pulse-only by capability (BindingCapabilities
+    // can_wash = false), so refreshing a wash to them wastes radio time.
+    // (Phase F adds the receive-side gate too; the no-op here is the
+    // sender-side counterpart.) target_class = 0x00 (All) still routes the
+    // wash on the wire; receive-side dispatch on each Lume decides whether
+    // to act on it.
+    // -------------------------------------------------------------------------
+    static bool render_wash      (const char* target, const LightWashEvent& ev);
+    static bool render_wash_end  (const char* target, uint8_t release_time);
+    static bool render_wash_pulse(const char* target, const RgbPulseEvent& ev);
+
+    // Periodic re-broadcast of every currently-active wash. Called from
+    // DirectorMode::loop_tick; the implementation enforces a ~10 s cadence
+    // per target so the call is cheap from a 20 Hz loop. Gated by binding
+    // capability: if no registered OutputBinding declares can_wash = true,
+    // refresh is a no-op (no Lume in range can act on the frame anyway).
+    static void refresh_active_washes(uint32_t now_ms);
 
     // -------------------------------------------------------------------------
     // Input subscription. Returns false on unknown target or capability not
