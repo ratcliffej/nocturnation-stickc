@@ -204,6 +204,18 @@ static void test_local_display_requires_display_capability(void) {
     TEST_ASSERT_FALSE(req.subset_of(host_no_display));
 }
 
+// Epic 6C Phase B: LocalDisplayBinding can pulse, wash, and overlay -
+// the LCD is a stateful render surface that paints whatever it's last
+// told to paint. The dispatch layer reads these flags to decide whether
+// WASH-family messages reach this binding.
+static void test_local_display_capabilities_full(void) {
+    LocalDisplayBinding* b = local_display_instance();
+    const auto caps = b->capabilities();
+    TEST_ASSERT_TRUE(caps.can_pulse);
+    TEST_ASSERT_TRUE(caps.can_wash);
+    TEST_ASSERT_TRUE(caps.can_overlay);
+}
+
 // =============================================================================
 // PixMobIrBinding identity / schema / caps
 // =============================================================================
@@ -232,6 +244,19 @@ static void test_pixmob_ir_requires_irtx_capability(void) {
     TEST_ASSERT_TRUE(req.subset_of(host));
     const auto host_no_ir = make_capability_mask(Capability::Display);
     TEST_ASSERT_FALSE(req.subset_of(host_no_ir));
+}
+
+// Epic 6C Phase B: PixMob bracelets are fire-and-forget IR pulses with
+// no state between commands - pulse-only, no wash, no overlay. The
+// dispatch layer reads these flags to silently drop WASH-family
+// messages on this binding (i.e. no IR frame is built or transmitted
+// for a LIGHT_WASH inbound on a PixMob target).
+static void test_pixmob_ir_capabilities_pulse_only(void) {
+    PixMobIrBinding* b = pixmob_ir_instance();
+    const auto caps = b->capabilities();
+    TEST_ASSERT_TRUE (caps.can_pulse);
+    TEST_ASSERT_FALSE(caps.can_wash);
+    TEST_ASSERT_FALSE(caps.can_overlay);
 }
 
 // =============================================================================
@@ -936,9 +961,11 @@ int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_local_display_identity);
     RUN_TEST(test_local_display_requires_display_capability);
+    RUN_TEST(test_local_display_capabilities_full);
     RUN_TEST(test_pixmob_ir_identity);
     RUN_TEST(test_pixmob_ir_has_no_properties);
     RUN_TEST(test_pixmob_ir_requires_irtx_capability);
+    RUN_TEST(test_pixmob_ir_capabilities_pulse_only);
     RUN_TEST(test_pixmob_ir_default_power);
     RUN_TEST(test_local_display_fires_local);
     RUN_TEST(test_pixmob_ir_target_group_zero_fires_all_pixmobs);
