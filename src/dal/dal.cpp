@@ -10,6 +10,8 @@
 #include "drivers/local_driver.h"
 #include "drivers/pixmob_ir_driver.h"
 #include "drivers/espnow_broadcast_driver.h"
+#include "output_bindings/output_binding.h"
+#include "output_bindings/output_binding_registry.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -403,6 +405,168 @@ bool DAL::render_fx(const char* t, const RgbPulseEvent& ev) {
         return dispatch_output_class_group(cls, grp, ev);
     }
     return dispatch_output(t, CapabilityId::RgbPulse, ev);
+}
+
+// =============================================================================
+// Wash family - render APIs + active-wash state + periodic refresh
+// =============================================================================
+//
+// Director-side wash state (Epic 6C Phase E). One slot per (class, group)
+// target; render_wash updates or inserts, render_wash_end clears. The
+// refresh tick re-broadcasts each entry every ~10 s as a Lume-restart
+// robustness measure. Refresh is gated by capability: if no registered
+// OutputBinding declares can_wash = true, refresh is a no-op (the only
+// receiver is this Director's own bindings, and no wash-capable binding
+// means refresh would do nothing visible anyway).
+//
+// 8 slots is enough for any realistic deployment - a Show targeting 31
+// PixMob groups individually is already past the §1.2 "restraint" line.
+// Full-table behaviour: oldest entry evicted to make room.
+
+namespace {
+
+constexpr size_t   kMaxActiveWashes      = 8;
+constexpr uint32_t kWashRefreshPeriodMs  = 10000;   // 10 s per the design doc
+
+struct ActiveWash {
+    bool           occupied;
+    uint8_t        target_class;
+    uint8_t        target_group;
+    LightWashEvent payload;
+    uint32_t       last_broadcast_ms;
+};
+
+ActiveWash s_active_washes[kMaxActiveWashes];
+
+// Find the slot for (cls, grp), or return -1 if none.
+int find_active_wash_slot(uint8_t cls, uint8_t grp) {
+    for (size_t i = 0; i < kMaxActiveWashes; ++i) {
+        if (s_active_washes[i].occupied
+            && s_active_washes[i].target_class == cls
+            && s_active_washes[i].target_group == grp) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+// Insert or update. Evicts the slot with the oldest last_broadcast_ms if
+// the table is full and no existing slot matches.
+void record_active_wash(uint8_t cls, uint8_t grp,
+                        const LightWashEvent& ev, uint32_t now_ms) {
+    int slot = find_active_wash_slot(cls, grp);
+    if (slot < 0) {
+        // Find an empty slot, else evict the oldest.
+        size_t oldest = 0;
+        uint32_t oldest_ts = s_active_washes[0].last_broadcast_ms;
+        for (size_t i = 0; i < kMaxActiveWashes; ++i) {
+            if (!s_active_washes[i].occupied) { slot = static_cast<int>(i); break; }
+            if (s_active_washes[i].last_broadcast_ms < oldest_ts) {
+                oldest    = i;
+                oldest_ts = s_active_washes[i].last_broadcast_ms;
+            }
+        }
+        if (slot < 0) slot = static_cast<int>(oldest);
+    }
+    s_active_washes[slot].occupied          = true;
+    s_active_washes[slot].target_class      = cls;
+    s_active_washes[slot].target_group      = grp;
+    s_active_washes[slot].payload           = ev;
+    s_active_washes[slot].last_broadcast_ms = now_ms;
+}
+
+void clear_active_wash(uint8_t cls, uint8_t grp) {
+    int slot = find_active_wash_slot(cls, grp);
+    if (slot < 0) return;
+    s_active_washes[slot].occupied = false;
+}
+
+// Capability gate: any registered OutputBinding declaring can_wash = true?
+// On native test envs that don't compile output_bindings/, the registry
+// definition isn't available - return true so refresh code paths still
+// exercise (the actual radio is mocked out anyway), but the firmware
+// path runs the real query.
+bool any_binding_can_wash() {
+#ifdef ARDUINO
+    auto& reg = nocturnation::output_bindings::output_binding_registry();
+    for (size_t i = 0; i < reg.count(); ++i) {
+        auto* b = reg.at(i);
+        if (b && b->capabilities().can_wash) return true;
+    }
+    return false;
+#else
+    return true;
+#endif
+}
+
+// Time source for active-wash bookkeeping. millis() is the global Arduino
+// clock on firmware; on native test envs that don't link a millis() stub
+// we just stamp 0 (the refresh tick is driven by DirectorMode::loop_tick,
+// which doesn't run on native tests anyway). Tests that DO exercise the
+// wash state machine can mock millis() in their own TU.
+inline uint32_t wash_now_ms() {
+#ifdef ARDUINO
+    return millis();
+#else
+    return 0;
+#endif
+}
+
+}  // anonymous namespace
+
+bool DAL::render_wash(const char* t, const LightWashEvent& ev) {
+    uint8_t cls = 0, grp = 0;
+    if (!parse_target_class_group(t, cls, grp)) return false;
+    auto* drv = esp_now_broadcast_driver_instance();
+    if (!drv || !drv->enabled()) return false;
+    const bool ok = drv->send_wash(cls, grp, ev);
+    if (ok) {
+        drv->increment_send_count();
+        record_active_wash(cls, grp, ev, wash_now_ms());
+    }
+    return ok;
+}
+
+bool DAL::render_wash_end(const char* t, uint8_t release_time) {
+    uint8_t cls = 0, grp = 0;
+    if (!parse_target_class_group(t, cls, grp)) return false;
+    auto* drv = esp_now_broadcast_driver_instance();
+    if (!drv || !drv->enabled()) return false;
+    const bool ok = drv->send_wash_end(cls, grp, release_time);
+    if (ok) {
+        drv->increment_send_count();
+        clear_active_wash(cls, grp);
+    }
+    return ok;
+}
+
+bool DAL::render_wash_pulse(const char* t, const RgbPulseEvent& ev) {
+    uint8_t cls = 0, grp = 0;
+    if (!parse_target_class_group(t, cls, grp)) return false;
+    auto* drv = esp_now_broadcast_driver_instance();
+    if (!drv || !drv->enabled()) return false;
+    const bool ok = drv->send_wash_pulse(cls, grp, ev);
+    if (ok) drv->increment_send_count();
+    return ok;
+}
+
+void DAL::refresh_active_washes(uint32_t now_ms) {
+    // Capability gate: if no binding can act on a wash, skip the work.
+    // Cheap to recompute each call - the registry is small (<= 16 slots).
+    if (!any_binding_can_wash()) return;
+
+    auto* drv = esp_now_broadcast_driver_instance();
+    if (!drv || !drv->enabled()) return;
+
+    for (size_t i = 0; i < kMaxActiveWashes; ++i) {
+        ActiveWash& w = s_active_washes[i];
+        if (!w.occupied) continue;
+        if (now_ms - w.last_broadcast_ms < kWashRefreshPeriodMs) continue;
+        if (drv->send_wash(w.target_class, w.target_group, w.payload)) {
+            drv->increment_send_count();
+            w.last_broadcast_ms = now_ms;
+        }
+    }
 }
 bool DAL::fire_rgb_static(const char* t, const RgbStaticEvent& ev) {
     return dispatch_output(t, CapabilityId::RgbStatic, ev);

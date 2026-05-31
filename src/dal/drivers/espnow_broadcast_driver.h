@@ -90,6 +90,17 @@ public:
     // LightPulsePayload; target_group at offset 1.
     bool send(uint8_t target_class, uint8_t target_group, const RgbPulseEvent& ev);
 
+    // WASH-family senders (Epic 6C Phase E). Each builds the corresponding
+    // wire payload and broadcasts; the receiver-side dispatch (Phase F)
+    // gates on BindingCapabilities.can_wash. Returns false when the radio
+    // is not currently started or the encode fails.
+    bool send_wash      (uint8_t target_class, uint8_t target_group,
+                         const LightWashEvent& ev);
+    bool send_wash_end  (uint8_t target_class, uint8_t target_group,
+                         uint8_t release_time);
+    bool send_wash_pulse(uint8_t target_class, uint8_t target_group,
+                         const RgbPulseEvent& ev);
+
     // ---- Driver-specific lifecycle / protocol entry points ----
     //
     // These aren't part of the generic Driver contract; they expose

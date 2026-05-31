@@ -37,6 +37,17 @@ public:
     //   ctx.render_fx("01:01", ev);   // Light-class, group 1 only
     bool render_fx(const char* target, const dal::RgbPulseEvent& ev);
 
+    // -- WASH-family output (Epic 6C Phase E) -----------------------------
+    // Thin forwarders to DAL::render_wash / render_wash_end /
+    // render_wash_pulse. Same target-string format as render_fx; same
+    // class+group semantics. The Director-side wash state machine in DAL
+    // also records this so the wash is re-broadcast every ~10 s for
+    // Lume-restart robustness. See lume-capabilities-design.md for the
+    // full contract.
+    bool render_wash      (const char* target, const dal::LightWashEvent& ev);
+    bool render_wash_end  (const char* target, uint8_t release_time);
+    bool render_wash_pulse(const char* target, const dal::RgbPulseEvent& ev);
+
     // -- Property bag -----------------------------------------------------
     plugins::PropertyValue get_property(const char* key) const;
     bool                   set_property(const char* key, plugins::PropertyValue value);
