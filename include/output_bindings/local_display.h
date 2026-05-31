@@ -17,6 +17,8 @@
 
 #pragma once
 
+#include <cstdint>
+
 #include "output_bindings/output_binding.h"
 #include "plugins/property_bag.h"
 
@@ -48,6 +50,51 @@ public:
 
     void on_light_pulse(OutputBindingContext&,
                            const dal::RgbPulseEvent&) override;
+
+    // Epic 6C Phase F: WASH-family hooks. on_light_wash captures the
+    // params + stamps wash_start_ms; tick() drives the attack ramp,
+    // cosine-eased ping-pong drift, TTL, and release fade. Pulses that
+    // arrive during an active wash are rendered as additive overlay
+    // (or silently dropped when pulse_response == 0).
+    void on_light_wash      (OutputBindingContext&,
+                              const transport::espnow::LightWashPayload&) override;
+    void on_light_wash_end  (OutputBindingContext&, uint8_t release_time) override;
+    void on_light_wash_pulse(OutputBindingContext&,
+                              const dal::RgbPulseEvent&) override;
+    void tick(OutputBindingContext&, uint32_t now_ms) override;
+
+private:
+    enum class WashPhase : uint8_t { Inactive, Attacking, Holding, Releasing };
+
+    // Wash state machine.
+    WashPhase  wash_phase_           = WashPhase::Inactive;
+    uint32_t   wash_started_ms_      = 0;       // when current wash began (for cosine phase)
+    uint32_t   wash_phase_started_ms_= 0;       // when current phase began (for fades)
+    uint8_t    wash_r1_              = 0,  wash_g1_ = 0,  wash_b1_ = 0;
+    uint8_t    wash_r2_              = 0,  wash_g2_ = 0,  wash_b2_ = 0;
+    uint8_t    wash_attack_units_    = 0;       // 100 ms units
+    uint8_t    wash_release_units_   = 0;       // 100 ms units (default; LIGHT_WASH_END may override)
+    uint8_t    wash_intensity_       = 255;
+    uint16_t   wash_cycle_ms_        = 0;
+    uint16_t   wash_ttl_seconds_     = 0;
+    uint8_t    wash_pulse_response_  = 0;
+    // The colour the binding was rendering before this wash started -
+    // used as the attack-lerp source. Defaults to black on a cold start.
+    uint8_t    pre_wash_r_           = 0, pre_wash_g_ = 0, pre_wash_b_ = 0;
+    // The release fade end-state. For LIGHT_WASH_END this is always black
+    // (per design); kept here so the same fade-out code path serves both
+    // TTL-expiry and explicit cancel.
+    uint8_t    release_units_active_ = 0;       // active release duration, in 100 ms units
+    uint8_t    release_end_r_        = 0, release_end_g_ = 0, release_end_b_ = 0;
+
+    // Pulse overlay state. The pulse contribution is additively blended
+    // onto the live wash baseline each tick, then fades over its release
+    // window. Only meaningful while a wash is active; the existing
+    // non-wash on_light_pulse path falls through to render_fx as before.
+    bool       pulse_active_         = false;
+    uint32_t   pulse_started_ms_     = 0;
+    uint16_t   pulse_total_ms_       = 0;       // attack + sustain + release in ms
+    uint8_t    pulse_r_              = 0, pulse_g_ = 0, pulse_b_ = 0;
 };
 
 // Singletons. main.cpp registers via:

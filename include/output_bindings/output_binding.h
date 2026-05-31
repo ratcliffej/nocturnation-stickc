@@ -39,6 +39,7 @@
 #include "hal/device_class.h"
 #include "dal/dal.h"
 #include "hal/input_action.h"
+#include "transport/espnow/frame.h"   // LightWashPayload for on_light_wash hook
 
 namespace nocturnation {
 namespace output_bindings {
@@ -96,6 +97,27 @@ public:
     // output surface.
     virtual void on_light_pulse(OutputBindingContext&,
                                    const dal::RgbPulseEvent&) {}
+
+    // WASH-family hooks (Epic 6C Phase F). The Lume-side dispatch
+    // capability-gates these on `can_wash = true` - bindings that
+    // declare can_wash = false never receive them, so default no-op
+    // is harmless for pulse-only bindings. See
+    // lume-capabilities-design.md for the semantic contract.
+    //
+    //   on_light_wash       - enter or refresh wash state. The binding
+    //                          stamps its own wash_start_ms on receipt
+    //                          for the cosine-eased drift phase. A
+    //                          second call to the same target supersedes.
+    //   on_light_wash_end   - cancel the active wash, fading to black
+    //                          over release_time (100 ms units).
+    //   on_light_wash_pulse - fire as additive overlay on the live wash
+    //                          baseline. Drops silently if no wash active.
+    virtual void on_light_wash(OutputBindingContext&,
+                                const transport::espnow::LightWashPayload&) {}
+    virtual void on_light_wash_end(OutputBindingContext&,
+                                    uint8_t /*release_time*/) {}
+    virtual void on_light_wash_pulse(OutputBindingContext&,
+                                      const dal::RgbPulseEvent&) {}
 
     // Optional: bindings that need to react to user input (e.g. a
     // diagnostic test-fire button). Default no-op.
