@@ -102,6 +102,13 @@ private:
     enum class Overlay : uint8_t { None = 0, Picker = 1, Settings = 2 };
     Overlay   overlay_           = Overlay::None;
     size_t    overlay_cursor_    = 0;
+    // Top-of-window for the overlay's visible scroll region. draw_picker
+    // and draw_settings render at most kOverlayMaxVisible rows starting
+    // from this index; update_overlay_view_offset() keeps the cursor
+    // inside the window after every cursor advance.
+    size_t    overlay_view_offset_ = 0;
+    static constexpr size_t kOverlayMaxVisible = 5;
+    void update_overlay_view_offset(size_t row_count);
 
     void resolve_active_show_from_nvs();
 

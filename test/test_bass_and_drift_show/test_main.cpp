@@ -244,7 +244,7 @@ static void test_properties_schema(void) {
 
     // Types.
     TEST_ASSERT_EQUAL_INT((int)PropertyType::Enum, (int)props.data[0].type);
-    TEST_ASSERT_EQUAL_INT((int)PropertyType::U8,   (int)props.data[1].type);
+    TEST_ASSERT_EQUAL_INT((int)PropertyType::Enum, (int)props.data[1].type);   // chance is Enum
     TEST_ASSERT_EQUAL_INT((int)PropertyType::Enum, (int)props.data[2].type);
     TEST_ASSERT_EQUAL_INT((int)PropertyType::Bool, (int)props.data[3].type);
     TEST_ASSERT_EQUAL_INT((int)PropertyType::Bool, (int)props.data[4].type);
@@ -255,8 +255,8 @@ static void test_property_defaults_match_B0(void) {
     auto& ctx = bass_and_drift_show_context();
     // palette_set = Warm (0)
     TEST_ASSERT_EQUAL_UINT8(0, ctx.get_property("palette_set").as_enum());
-    // chance = 64 (~25 %)
-    TEST_ASSERT_EQUAL_UINT8(64, ctx.get_property("chance").as_u8());
+    // chance = index 4 = "32%" (~25 % target from §1.2)
+    TEST_ASSERT_EQUAL_UINT8(4, ctx.get_property("chance").as_enum());
     // wash_speed = Beat x8 (6)
     TEST_ASSERT_EQUAL_UINT8(6, ctx.get_property("wash_speed").as_enum());
     // respond_to_sections = true
@@ -307,27 +307,27 @@ static void test_paused_skips_pulse(void) {
     ctx.set_paused(false);
 }
 
-static void test_chance_u8_maps_to_chance_enum(void) {
+static void test_chance_enum_indices_map_to_chance_values(void) {
     BassAndDriftShow* s = bass_and_drift_show_instance();
     auto& ctx = bass_and_drift_show_context();
     auto& bag = bass_and_drift_show_property_bag();
 
     s->enter(ctx);
 
-    // Default 64 -> CHANCE_32 (~25 %).
-    bag.set("chance", PropertyValue::from_u8(64));
+    // Index 0 -> CHANCE_100 (100 %).
+    bag.set("chance", PropertyValue::from_enum(0));
     s->on_beat_detected(ctx, 100);
     auto ev = g_espnow_driver.last_rgb_pulse();
-    TEST_ASSERT_EQUAL_INT((int)pulse::CHANCE_32, (int)ev.chance);
-
-    // 255 -> CHANCE_100.
-    bag.set("chance", PropertyValue::from_u8(255));
-    s->on_beat_detected(ctx, 100);
-    ev = g_espnow_driver.last_rgb_pulse();
     TEST_ASSERT_EQUAL_INT((int)pulse::CHANCE_100, (int)ev.chance);
 
-    // 0 -> CHANCE_4.
-    bag.set("chance", PropertyValue::from_u8(0));
+    // Index 4 -> CHANCE_32 (32 %, the default).
+    bag.set("chance", PropertyValue::from_enum(4));
+    s->on_beat_detected(ctx, 100);
+    ev = g_espnow_driver.last_rgb_pulse();
+    TEST_ASSERT_EQUAL_INT((int)pulse::CHANCE_32, (int)ev.chance);
+
+    // Index 7 -> CHANCE_4 (4 %).
+    bag.set("chance", PropertyValue::from_enum(7));
     s->on_beat_detected(ctx, 100);
     ev = g_espnow_driver.last_rgb_pulse();
     TEST_ASSERT_EQUAL_INT((int)pulse::CHANCE_4, (int)ev.chance);
@@ -526,7 +526,7 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_property_defaults_match_B0);
     RUN_TEST(test_on_beat_fires_pulse_with_warm_colour);
     RUN_TEST(test_paused_skips_pulse);
-    RUN_TEST(test_chance_u8_maps_to_chance_enum);
+    RUN_TEST(test_chance_enum_indices_map_to_chance_values);
     RUN_TEST(test_bpm_tracking_from_ibi);
     RUN_TEST(test_cycle_advances_palette_set);
     RUN_TEST(test_cycle_wraps_at_palette_count);

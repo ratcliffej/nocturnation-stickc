@@ -220,6 +220,32 @@ const char* const kPaletteSetNames[] = { "Warm", "Cool", "Vivid", "Mono" };
 const char* const kWashSpeedNames[]  = {
     "Glacial", "Slow", "Medium", "Fast", "Snappy", "Beat x4", "Beat x8"
 };
+const char* const kChanceNames[] = {
+    "100%", "88%", "67%", "50%", "32%", "16%", "10%", "4%"
+};
+
+// `chance` is an Enum picking one of the wire protocol's eight discrete
+// Chance steps. Index 0..7 maps directly to the pixmob::Chance enum value
+// in descending percentage order, which matches how the property displays
+// in the Settings overlay. Default index 4 = CHANCE_32 (~25 %), matching
+// the §1.2 "fire on selected beats" guidance ("10-25 %").
+constexpr pulse::Chance kChanceTable[] = {
+    pulse::CHANCE_100,
+    pulse::CHANCE_88,
+    pulse::CHANCE_67,
+    pulse::CHANCE_50,
+    pulse::CHANCE_32,
+    pulse::CHANCE_16,
+    pulse::CHANCE_10,
+    pulse::CHANCE_4,
+};
+constexpr uint8_t kChanceCount = sizeof(kChanceTable) / sizeof(kChanceTable[0]);
+constexpr uint8_t kChanceDefaultIdx = 4;   // CHANCE_32 (~25 %)
+
+pulse::Chance chance_from_idx(uint8_t idx) {
+    if (idx >= kChanceCount) idx = kChanceDefaultIdx;
+    return kChanceTable[idx];
+}
 
 const PropertyDef kProps[] = {
     PropertyDef{
@@ -234,13 +260,13 @@ const PropertyDef kProps[] = {
     },
     PropertyDef{
         /*key=*/"chance",
-        /*type=*/PropertyType::U8,
-        /*default_value=*/PropertyValue::from_u8(64),        // ~25 % per B0
-        /*min_value=*/    PropertyValue::from_u8(0),
-        /*max_value=*/    PropertyValue::from_u8(255),
+        /*type=*/PropertyType::Enum,
+        /*default_value=*/PropertyValue::from_enum(kChanceDefaultIdx),  // 32 %
+        /*min_value=*/    PropertyValue::from_enum(0),
+        /*max_value=*/    PropertyValue::from_enum(kChanceCount - 1),
         /*display_name=*/"Beat chance",
-        /*unit=*/"/255",
-        /*enum_names=*/nullptr,
+        /*unit=*/nullptr,
+        /*enum_names=*/kChanceNames,
     },
     PropertyDef{
         /*key=*/"wash_speed",
@@ -300,22 +326,6 @@ void build_target(char* buf, size_t buf_size, uint8_t group) {
 // Beat-locked recompute debounce thresholds (Epic 6D B0.2).
 constexpr uint32_t kBeatLockedRecomputeMinGapMs = 3000;
 constexpr float    kBeatLockedRecomputeDriftPct = 0.10f;
-
-// `chance` is U8 0..255 on the property (Epic 6D B0.4) but the wire
-// protocol's Chance enum has eight discrete steps (100/88/67/50/32/16/
-// 10/4 %). Map the U8 to the nearest enum by midpoints between adjacent
-// percentages, scaled to U8 (* 2.55). Default 64 lands on CHANCE_32
-// (~25 %), exactly the B0 documented value.
-pulse::Chance u8_to_chance(uint8_t u) {
-    if (u >= 240) return pulse::CHANCE_100;
-    if (u >= 196) return pulse::CHANCE_88;
-    if (u >= 148) return pulse::CHANCE_67;
-    if (u >= 105) return pulse::CHANCE_50;
-    if (u >=  61) return pulse::CHANCE_32;
-    if (u >=  33) return pulse::CHANCE_16;
-    if (u >=  18) return pulse::CHANCE_10;
-    return pulse::CHANCE_4;
-}
 
 }  // namespace
 
@@ -577,7 +587,7 @@ void BassAndDriftShow::fire_pulse_for_section(ShowContext& ctx,
     ev.attack  = pulse::T_0_MS;
     ev.sustain = (section == kSectionDrop) ? pulse::T_192_MS : pulse::T_96_MS;
     ev.release = pulse::T_192_MS;
-    ev.chance  = u8_to_chance(ctx.get_property("chance").as_u8());
+    ev.chance  = chance_from_idx(ctx.get_property("chance").as_enum());
 
     char target[8];
     build_target(target, sizeof(target),
@@ -664,9 +674,13 @@ void BassAndDriftShow::on_render(ShowContext& ctx) {
         case kSectionVerse:     section_name = "Verse";     break;
         default:                section_name = "Unknown";   break;
     }
+    const uint8_t chance_idx = ctx.get_property("chance").as_enum();
+    const char* chance_name = (chance_idx < kChanceCount)
+        ? kChanceNames[chance_idx]
+        : "?";
     char sec_line[40];
-    std::snprintf(sec_line, sizeof(sec_line), " %s  ch:%d",
-                  section_name, (int)ctx.get_property("chance").as_u8());
+    std::snprintf(sec_line, sizeof(sec_line), " %s  ch:%s",
+                  section_name, chance_name);
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         10, 75, sec_line, WHITE, BLACK, 2});
 
