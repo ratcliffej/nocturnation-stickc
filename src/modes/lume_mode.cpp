@@ -432,6 +432,61 @@ void LumeMode::on_recv(const hal::ESPNowMessage& m) {
             pending_light_ = true;
         }
     }
+
+    // Epic 6C Phase D: WASH-family receive stubs. Decode + log + discard.
+    // Real dispatch lands in Phase F (capability-aware fan-out to bindings
+    // declaring can_wash: true). Until then, the protocol decoder is
+    // exercised end-to-end here but no render happens.
+    if (hdr.message_type == MessageType::LightWash
+        && m.len == kHeaderSize + kLightWashPayloadLen) {
+        LightWashPayload p{};
+        if (decode_light_wash(hdr, m.data + kHeaderSize,
+                              m.len - kHeaderSize, p) == DecodeResult::Ok) {
+#ifdef ARDUINO
+            Serial.printf("[espnow RX LIGHT_WASH] target=%02X:%02X "
+                          "r1=%u,%u,%u r2=%u,%u,%u "
+                          "att=%u rel=%u int=%u cycle_ms=%u ttl_s=%u "
+                          "pulse_resp=%u (Phase D: discarded; render lands Phase F)\n",
+                          p.target_class, p.target_group,
+                          p.r1, p.g1, p.b1, p.r2, p.g2, p.b2,
+                          p.attack, p.release, p.intensity,
+                          p.cycle_ms, p.ttl_seconds, p.pulse_response);
+#else
+            (void)p;
+#endif
+        }
+    }
+    if (hdr.message_type == MessageType::LightWashEnd
+        && m.len == kHeaderSize + kLightWashEndPayloadLen) {
+        LightWashEndPayload p{};
+        if (decode_light_wash_end(hdr, m.data + kHeaderSize,
+                                  m.len - kHeaderSize, p) == DecodeResult::Ok) {
+#ifdef ARDUINO
+            Serial.printf("[espnow RX LIGHT_WASH_END] target=%02X:%02X release_time=%u "
+                          "(Phase D: discarded; render lands Phase F)\n",
+                          p.target_class, p.target_group, p.release_time);
+#else
+            (void)p;
+#endif
+        }
+    }
+    if (hdr.message_type == MessageType::LightWashPulse
+        && m.len == kHeaderSize + kLightWashPulsePayloadLen) {
+        LightWashPulsePayload p{};
+        if (decode_light_wash_pulse(hdr, m.data + kHeaderSize,
+                                    m.len - kHeaderSize, p) == DecodeResult::Ok) {
+#ifdef ARDUINO
+            Serial.printf("[espnow RX LIGHT_WASH_PULSE] target=%02X:%02X "
+                          "rgb=%u,%u,%u env=%u,%u,%u chance=%u "
+                          "(Phase D: discarded; render lands Phase F)\n",
+                          p.target_class, p.target_group,
+                          p.r, p.g, p.b,
+                          p.attack, p.sustain, p.release, p.chance);
+#else
+            (void)p;
+#endif
+        }
+    }
 }
 
 // ---------------------------------------------------------------------

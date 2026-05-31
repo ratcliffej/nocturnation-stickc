@@ -73,14 +73,16 @@ constexpr uint8_t kMaxPayloadSize = kMaxFrameSize - kHeaderSize;   // = 24
 // removed from earlier drafts" for the per-ID rationale. 0x07-0xFE
 // are unassigned; 0xFF is the Extension slot for v2.
 enum class MessageType : uint8_t {
-    Heartbeat    = 0x00,
+    Heartbeat      = 0x00,
     // 0x01 reserved - was BEAT_DETECTED (no Lume-side consumer ever existed)
     // 0x02 reserved - was MODE_CHANGE (mode transitions are implicit in LIGHT_PULSE traffic)
-    LightPulse = 0x03,
+    LightPulse     = 0x03,
     // 0x04 reserved - was CLOCK_SYNC (folded into HEARTBEAT.tick)
     // 0x05 reserved - was TIME_SYNC (folded into HEARTBEAT.days_since_2026 + .centiseconds_today)
-    // 0x06 reserved - was MUSIC_EVENT (Director no longer emits DROP/BREAKDOWN/BUILD)
-    Extension    = 0xFF,
+    LightWash      = 0x06,   // Epic 6C Phase D - reclaims the v0.27-deprecated MUSIC_EVENT slot
+    LightWashEnd   = 0x07,
+    LightWashPulse = 0x08,
+    Extension      = 0xFF,
 };
 
 struct Header {
@@ -122,6 +124,60 @@ struct LightPulsePayload {
 };
 constexpr uint8_t kLightPulsePayloadLen = 9;
 
+// LIGHT_WASH payload (Epic 6C Phase D). A persistent background wash on
+// capable Lumes - the §1.2 lighting-design baseline that PULSE punctuates.
+// Two RGB triplets + cycle_ms produce a cosine-eased ping-pong drift
+// between the two colours; cycle_ms = 0 holds r1/g1/b1 only. Attack and
+// release are in 100 ms units (0..25.5 s) - wash-scale durations, longer
+// than the pulse Time enum's 3.84 s cap. See lume-capabilities-design.md
+// §4.1 for the renderer contract.
+struct LightWashPayload {
+    uint8_t  target_class;
+    uint8_t  target_group;
+    uint8_t  r1, g1, b1;           // start colour
+    uint8_t  r2, g2, b2;           // end colour (ignored when cycle_ms == 0)
+    uint8_t  attack;               // 100 ms units; ramp from current to wash baseline
+    uint8_t  release;              // 100 ms units; default fade-out (may be overridden by LIGHT_WASH_END)
+    uint8_t  intensity;            // 0-255 brightness scalar applied to the wash baseline
+    uint16_t cycle_ms;             // little-endian; one full A<->B<->A oscillation; 0 = no cycle (hold r1g1b1)
+    uint16_t ttl_seconds;          // little-endian; 0 = infinite
+    uint8_t  pulse_response;       // 0 = ignore PULSE while washing; 1 = accept PULSE as additive overlay
+};
+// Wire layout (16 bytes): class(1) + group(1) + r1g1b1(3) + r2g2b2(3)
+// + attack(1) + release(1) + intensity(1) + cycle_ms(2 LE) + ttl_seconds(2 LE)
+// + pulse_response(1). (The Notion source-prompt v0.3 mis-stated this as
+// 17 - arithmetic error; corrected here and in the design doc.)
+constexpr uint8_t kLightWashPayloadLen = 16;
+
+// LIGHT_WASH_END payload (Epic 6C Phase D). Explicit cancel of an active
+// wash on the addressed target(s). release_time (100 ms units) overrides
+// the active wash's own release field.
+struct LightWashEndPayload {
+    uint8_t target_class;
+    uint8_t target_group;
+    uint8_t release_time;          // 100 ms units; fade from instantaneous wash to black over this duration
+};
+constexpr uint8_t kLightWashEndPayloadLen = 3;
+
+// LIGHT_WASH_PULSE payload (Epic 6C Phase D). Identical to LightPulsePayload
+// on the wire; differs only in dispatch semantics - it fires only on Lumes
+// currently in wash state (non-washing Lumes silently drop). The struct
+// is a separate type from LightPulsePayload to keep the call sites
+// type-distinguishable; the byte layout is intentionally the same so the
+// encoder can share format with light_pulse if desirable later.
+struct LightWashPulsePayload {
+    uint8_t target_class;
+    uint8_t target_group;
+    uint8_t r;
+    uint8_t g;
+    uint8_t b;
+    uint8_t attack;
+    uint8_t sustain;
+    uint8_t release;
+    uint8_t chance;
+};
+constexpr uint8_t kLightWashPulsePayloadLen = 9;
+
 // =============================================================================
 // Result codes
 // =============================================================================
@@ -146,10 +202,16 @@ enum class DecodeResult : uint8_t {
 // sequence_number, and hop_count on the Header passed in.
 // =============================================================================
 
-size_t encode_heartbeat    (uint8_t* buf, size_t buf_len, const Header& hdr,
-                            const HeartbeatPayload& p);
-size_t encode_light_pulse(uint8_t* buf, size_t buf_len, const Header& hdr,
-                            const LightPulsePayload& p);
+size_t encode_heartbeat       (uint8_t* buf, size_t buf_len, const Header& hdr,
+                               const HeartbeatPayload& p);
+size_t encode_light_pulse     (uint8_t* buf, size_t buf_len, const Header& hdr,
+                               const LightPulsePayload& p);
+size_t encode_light_wash      (uint8_t* buf, size_t buf_len, const Header& hdr,
+                               const LightWashPayload& p);
+size_t encode_light_wash_end  (uint8_t* buf, size_t buf_len, const Header& hdr,
+                               const LightWashEndPayload& p);
+size_t encode_light_wash_pulse(uint8_t* buf, size_t buf_len, const Header& hdr,
+                               const LightWashPulsePayload& p);
 
 // =============================================================================
 // Decoders
@@ -165,12 +227,21 @@ size_t encode_light_pulse(uint8_t* buf, size_t buf_len, const Header& hdr,
 
 DecodeResult decode_header(const uint8_t* buf, size_t buf_len, Header& out_hdr);
 
-DecodeResult decode_heartbeat   (const Header& hdr,
-                                 const uint8_t* payload, size_t payload_len,
-                                 HeartbeatPayload& out);
-DecodeResult decode_light_pulse(const Header& hdr,
-                                  const uint8_t* payload, size_t payload_len,
-                                  LightPulsePayload& out);
+DecodeResult decode_heartbeat       (const Header& hdr,
+                                     const uint8_t* payload, size_t payload_len,
+                                     HeartbeatPayload& out);
+DecodeResult decode_light_pulse     (const Header& hdr,
+                                     const uint8_t* payload, size_t payload_len,
+                                     LightPulsePayload& out);
+DecodeResult decode_light_wash      (const Header& hdr,
+                                     const uint8_t* payload, size_t payload_len,
+                                     LightWashPayload& out);
+DecodeResult decode_light_wash_end  (const Header& hdr,
+                                     const uint8_t* payload, size_t payload_len,
+                                     LightWashEndPayload& out);
+DecodeResult decode_light_wash_pulse(const Header& hdr,
+                                     const uint8_t* payload, size_t payload_len,
+                                     LightWashPulsePayload& out);
 
 }  // namespace espnow
 }  // namespace transport
