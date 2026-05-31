@@ -60,13 +60,13 @@ constexpr uint8_t kHeaderSize        = 8;     // 2 magic + 1 version + 5 metadat
 constexpr uint8_t kMaxHopCount       = 3;
 
 // ESP-NOW supports up to 250-byte payloads. We cap NocturNation frames much
-// smaller; the largest active v2 payload is LIGHT_COMMAND at 9 bytes, so a
+// smaller; the largest active v2 payload is LIGHT_PULSE at 9 bytes, so a
 // 32-byte working ceiling leaves room for future message types.
 constexpr uint8_t kMaxFrameSize   = 32;
 constexpr uint8_t kMaxPayloadSize = kMaxFrameSize - kHeaderSize;   // = 24
 
 // Per spec v0.29 §4.3, the protocol has exactly two active message
-// types: HEARTBEAT and LIGHT_COMMAND. Numeric IDs 0x01, 0x02, 0x04,
+// types: HEARTBEAT and LIGHT_PULSE. Numeric IDs 0x01, 0x02, 0x04,
 // 0x05, 0x06 are RESERVED (do not reuse) - they were assigned to
 // earlier-draft message types that never had a real consumer or
 // were folded into HEARTBEAT's payload. See spec §4.3 "Messages
@@ -75,8 +75,8 @@ constexpr uint8_t kMaxPayloadSize = kMaxFrameSize - kHeaderSize;   // = 24
 enum class MessageType : uint8_t {
     Heartbeat    = 0x00,
     // 0x01 reserved - was BEAT_DETECTED (no Lume-side consumer ever existed)
-    // 0x02 reserved - was MODE_CHANGE (mode transitions are implicit in LIGHT_COMMAND traffic)
-    LightCommand = 0x03,
+    // 0x02 reserved - was MODE_CHANGE (mode transitions are implicit in LIGHT_PULSE traffic)
+    LightPulse = 0x03,
     // 0x04 reserved - was CLOCK_SYNC (folded into HEARTBEAT.tick)
     // 0x05 reserved - was TIME_SYNC (folded into HEARTBEAT.days_since_2026 + .centiseconds_today)
     // 0x06 reserved - was MUSIC_EVENT (Director no longer emits DROP/BREAKDOWN/BUILD)
@@ -109,7 +109,7 @@ struct HeartbeatPayload {
 };
 constexpr uint8_t kHeartbeatPayloadLen = 9;   // 4 + 2 + 3
 
-struct LightCommandPayload {
+struct LightPulsePayload {
     uint8_t target_class;          // 0 = all classes; see hal::DeviceClass enum (Epic 4.65)
     uint8_t target_group;          // 0 = all groups; 1-255 specific (PixMob enforces its own 0-31 cap)
     uint8_t r;
@@ -120,7 +120,7 @@ struct LightCommandPayload {
     uint8_t release;               // pixmob::Time index
     uint8_t chance;                // pixmob::Chance index
 };
-constexpr uint8_t kLightCommandPayloadLen = 9;
+constexpr uint8_t kLightPulsePayloadLen = 9;
 
 // =============================================================================
 // Result codes
@@ -148,8 +148,8 @@ enum class DecodeResult : uint8_t {
 
 size_t encode_heartbeat    (uint8_t* buf, size_t buf_len, const Header& hdr,
                             const HeartbeatPayload& p);
-size_t encode_light_command(uint8_t* buf, size_t buf_len, const Header& hdr,
-                            const LightCommandPayload& p);
+size_t encode_light_pulse(uint8_t* buf, size_t buf_len, const Header& hdr,
+                            const LightPulsePayload& p);
 
 // =============================================================================
 // Decoders
@@ -168,9 +168,9 @@ DecodeResult decode_header(const uint8_t* buf, size_t buf_len, Header& out_hdr);
 DecodeResult decode_heartbeat   (const Header& hdr,
                                  const uint8_t* payload, size_t payload_len,
                                  HeartbeatPayload& out);
-DecodeResult decode_light_command(const Header& hdr,
+DecodeResult decode_light_pulse(const Header& hdr,
                                   const uint8_t* payload, size_t payload_len,
-                                  LightCommandPayload& out);
+                                  LightPulsePayload& out);
 
 }  // namespace espnow
 }  // namespace transport

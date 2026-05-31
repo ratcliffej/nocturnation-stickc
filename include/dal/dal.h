@@ -297,7 +297,7 @@ public:
     // 2-arg send dropping the class - test drivers and protocols that
     // don't carry a class field still see the pulse, just without class
     // discrimination. EspNowBroadcastDriver overrides to write both
-    // bytes into the LIGHT_COMMAND payload.
+    // bytes into the LIGHT_PULSE payload.
     virtual bool send(uint8_t /*target_class*/, uint8_t target_group,
                        const RgbPulseEvent& ev) {
         return send(target_group, ev);

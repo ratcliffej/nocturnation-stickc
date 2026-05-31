@@ -74,7 +74,7 @@ bool is_known_message_type(uint8_t raw) {
     // types should be silently discarded.
     switch (raw) {
         case static_cast<uint8_t>(MessageType::Heartbeat):
-        case static_cast<uint8_t>(MessageType::LightCommand):
+        case static_cast<uint8_t>(MessageType::LightPulse):
         case static_cast<uint8_t>(MessageType::Extension):
             return true;
         default:
@@ -99,11 +99,11 @@ size_t encode_heartbeat(uint8_t* buf, size_t buf_len, const Header& hdr,
     return total;
 }
 
-size_t encode_light_command(uint8_t* buf, size_t buf_len, const Header& hdr,
-                            const LightCommandPayload& p) {
-    constexpr size_t total = kHeaderSize + kLightCommandPayloadLen;
+size_t encode_light_pulse(uint8_t* buf, size_t buf_len, const Header& hdr,
+                            const LightPulsePayload& p) {
+    constexpr size_t total = kHeaderSize + kLightPulsePayloadLen;
     if (buf_len < total) return 0;
-    write_header(buf, hdr, MessageType::LightCommand, kLightCommandPayloadLen);
+    write_header(buf, hdr, MessageType::LightPulse, kLightPulsePayloadLen);
     buf[kHeaderSize + 0] = p.target_class;
     buf[kHeaderSize + 1] = p.target_group;
     buf[kHeaderSize + 2] = p.r;
@@ -165,14 +165,14 @@ DecodeResult decode_heartbeat(const Header& hdr,
     return DecodeResult::Ok;
 }
 
-DecodeResult decode_light_command(const Header& hdr,
+DecodeResult decode_light_pulse(const Header& hdr,
                                   const uint8_t* payload, size_t payload_len,
-                                  LightCommandPayload& out) {
-    if (hdr.message_type != MessageType::LightCommand) {
+                                  LightPulsePayload& out) {
+    if (hdr.message_type != MessageType::LightPulse) {
         return DecodeResult::InvalidMessageType;
     }
-    if (hdr.payload_len != kLightCommandPayloadLen ||
-        payload_len    != kLightCommandPayloadLen) {
+    if (hdr.payload_len != kLightPulsePayloadLen ||
+        payload_len    != kLightPulsePayloadLen) {
         return DecodeResult::PayloadLenMismatch;
     }
     out.target_class = payload[0];

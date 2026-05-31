@@ -102,10 +102,10 @@ static void test_heartbeat_round_trip(void) {
     TEST_ASSERT_EQUAL_UINT32(p_in.centiseconds_today, p_out.centiseconds_today);
 }
 
-static void test_light_command_round_trip(void) {
+static void test_light_pulse_round_trip(void) {
     uint8_t buf[kMaxFrameSize] = {};
     const Header in = make_header();
-    const LightCommandPayload p_in{
+    const LightPulsePayload p_in{
         /*target_class=*/0x01,         // Light class (Epic 4.65)
         /*target_group=*/5,
         /*r=*/0xFF, /*g=*/0x80, /*b=*/0x10,
@@ -113,9 +113,9 @@ static void test_light_command_round_trip(void) {
         /*chance=*/3,
     };
 
-    const size_t n = encode_light_command(buf, sizeof(buf), in, p_in);
-    TEST_ASSERT_EQUAL_size_t(kHeaderSize + kLightCommandPayloadLen, n);
-    assert_header_bytes(buf, MessageType::LightCommand, kLightCommandPayloadLen);
+    const size_t n = encode_light_pulse(buf, sizeof(buf), in, p_in);
+    TEST_ASSERT_EQUAL_size_t(kHeaderSize + kLightPulsePayloadLen, n);
+    assert_header_bytes(buf, MessageType::LightPulse, kLightPulsePayloadLen);
     TEST_ASSERT_EQUAL_UINT8(0x01, buf[kHeaderSize + 0]);   // target_class
     TEST_ASSERT_EQUAL_UINT8(5,    buf[kHeaderSize + 1]);   // target_group
     TEST_ASSERT_EQUAL_UINT8(0xFF, buf[kHeaderSize + 2]);
@@ -129,9 +129,9 @@ static void test_light_command_round_trip(void) {
     Header decoded{};
     TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
                       static_cast<int>(decode_header(buf, n, decoded)));
-    LightCommandPayload p_out{};
+    LightPulsePayload p_out{};
     TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
-                      static_cast<int>(decode_light_command(decoded,
+                      static_cast<int>(decode_light_pulse(decoded,
                                                             buf + kHeaderSize,
                                                             decoded.payload_len,
                                                             p_out)));
@@ -157,7 +157,7 @@ static void test_encode_buffer_too_small(void) {
     TEST_ASSERT_EQUAL_size_t(0,
         encode_heartbeat(buf, sizeof(buf), in, HeartbeatPayload{}));
     TEST_ASSERT_EQUAL_size_t(0,
-        encode_light_command(buf, sizeof(buf), in, LightCommandPayload{}));
+        encode_light_pulse(buf, sizeof(buf), in, LightPulsePayload{}));
 }
 
 // ---------------------------------------------------------------------------
@@ -201,7 +201,7 @@ static void test_decode_header_unknown_message_type(void) {
 static void test_decode_header_payload_len_overruns_buffer(void) {
     // Header claims 32 bytes of payload but only 0 follow.
     uint8_t buf[kHeaderSize] = { kMagic0, kMagic1, kProtocolVersion, 1, 2, 0,
-                                 static_cast<uint8_t>(MessageType::LightCommand), 32 };
+                                 static_cast<uint8_t>(MessageType::LightPulse), 32 };
     Header h{};
     TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::BufferTooShort),
                       static_cast<int>(decode_header(buf, sizeof(buf), h)));
@@ -220,10 +220,10 @@ static void test_payload_decoder_wrong_message_type(void) {
     TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
                       static_cast<int>(decode_header(buf, sizeof(buf), h)));
 
-    // Ask the LightCommand decoder to decode a Heartbeat frame.
-    LightCommandPayload p{};
+    // Ask the LightPulse decoder to decode a Heartbeat frame.
+    LightPulsePayload p{};
     TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::InvalidMessageType),
-                      static_cast<int>(decode_light_command(h,
+                      static_cast<int>(decode_light_pulse(h,
                                                             buf + kHeaderSize,
                                                             h.payload_len,
                                                             p)));
@@ -238,7 +238,7 @@ static void test_payload_decoder_wrong_payload_len_in_header(void) {
     buf[3] = 1;  // source_id
     buf[4] = 1;  // sequence_number
     buf[5] = 0;  // hop_count
-    buf[6] = static_cast<uint8_t>(MessageType::LightCommand);
+    buf[6] = static_cast<uint8_t>(MessageType::LightPulse);
     buf[7] = 7;  // wrong; expected 9
     // 7 bytes of "payload" (zeros).
     const size_t total = kHeaderSize + 7;
@@ -247,9 +247,9 @@ static void test_payload_decoder_wrong_payload_len_in_header(void) {
     TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
                       static_cast<int>(decode_header(buf, total, h)));
 
-    LightCommandPayload p{};
+    LightPulsePayload p{};
     TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::PayloadLenMismatch),
-                      static_cast<int>(decode_light_command(h,
+                      static_cast<int>(decode_light_pulse(h,
                                                             buf + kHeaderSize,
                                                             h.payload_len,
                                                             p)));
@@ -258,16 +258,16 @@ static void test_payload_decoder_wrong_payload_len_in_header(void) {
 static void test_payload_decoder_caller_payload_len_argument_mismatch(void) {
     uint8_t buf[kMaxFrameSize] = {};
     const Header in = make_header();
-    encode_light_command(buf, sizeof(buf), in, LightCommandPayload{});
+    encode_light_pulse(buf, sizeof(buf), in, LightPulsePayload{});
 
     Header h{};
     TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
                       static_cast<int>(decode_header(buf, sizeof(buf), h)));
 
-    LightCommandPayload p{};
+    LightPulsePayload p{};
     // Caller passes a wrong payload_len (e.g. truncated by an outer protocol).
     TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::PayloadLenMismatch),
-                      static_cast<int>(decode_light_command(h,
+                      static_cast<int>(decode_light_pulse(h,
                                                             buf + kHeaderSize,
                                                             /*payload_len=*/5,
                                                             p)));
@@ -290,7 +290,7 @@ static void test_decode_header_extension_type_recognised(void) {
 // ---------------------------------------------------------------------------
 // Wire-format spot check: a fully hand-encoded HEARTBEAT frame matches the
 // spec v2 §3.1 layout byte-for-byte. Guards against accidental field-order
-// regressions on the only Director-emitted broadcast besides LIGHT_COMMAND.
+// regressions on the only Director-emitted broadcast besides LIGHT_PULSE.
 // ---------------------------------------------------------------------------
 
 static void test_heartbeat_wire_format_byte_for_byte(void) {
@@ -368,7 +368,7 @@ static void test_is_performance_range(void) {
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_heartbeat_round_trip);
-    RUN_TEST(test_light_command_round_trip);
+    RUN_TEST(test_light_pulse_round_trip);
     RUN_TEST(test_encode_buffer_too_small);
     RUN_TEST(test_decode_header_buffer_too_short);
     RUN_TEST(test_decode_header_invalid_magic_rejects_non_nocturnation_frame);

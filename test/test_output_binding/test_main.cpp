@@ -90,7 +90,7 @@ Battery* HAL::battery()  { return nullptr; }
 // StubOutputBinding
 // =============================================================================
 //
-// Records every hook invocation. on_light_command captures the
+// Records every hook invocation. on_light_pulse captures the
 // RgbPulseEvent payload so tests can assert it round-tripped intact.
 
 using namespace nocturnation;
@@ -144,7 +144,7 @@ public:
 
     void enter(OutputBindingContext&)                                   override { ++enter_calls; }
     void exit (OutputBindingContext&)                                   override { ++exit_calls;  }
-    void on_light_command(OutputBindingContext&,
+    void on_light_pulse(OutputBindingContext&,
                            const dal::RgbPulseEvent& ev)                 override {
         ++light_calls;
         last_event = ev;
@@ -373,10 +373,10 @@ static void test_context_host_caps_reflects_hal(void) {
 }
 
 // =============================================================================
-// on_light_command forwards the event payload intact
+// on_light_pulse forwards the event payload intact
 // =============================================================================
 
-static void test_on_light_command_forwards_payload(void) {
+static void test_on_light_pulse_forwards_payload(void) {
     StubOutputBinding b;
     PropertyBag bag(b);
     OutputBindingContext ctx(b, bag);
@@ -384,7 +384,7 @@ static void test_on_light_command_forwards_payload(void) {
     dal::RgbPulseEvent ev{200, 100, 50,
                           pixmob::T_32_MS, pixmob::T_96_MS,
                           pixmob::T_192_MS, pixmob::CHANCE_50};
-    b.on_light_command(ctx, ev);
+    b.on_light_pulse(ctx, ev);
 
     TEST_ASSERT_EQUAL_INT(1, b.light_calls);
     TEST_ASSERT_EQUAL_UINT8(200, b.last_event.r);
@@ -397,7 +397,7 @@ static void test_on_light_command_forwards_payload(void) {
 }
 
 // =============================================================================
-// Stub hooks: enter / exit / on_light_command / on_input_action / tick
+// Stub hooks: enter / exit / on_light_pulse / on_input_action / tick
 // all dispatch through cleanly.
 // =============================================================================
 
@@ -412,7 +412,7 @@ static void test_stub_hooks_recorded(void) {
     dal::RgbPulseEvent ev{10, 20, 30,
                           pixmob::T_32_MS, pixmob::T_32_MS,
                           pixmob::T_32_MS, pixmob::CHANCE_100};
-    b.on_light_command(ctx, ev);
+    b.on_light_pulse(ctx, ev);
     TEST_ASSERT_EQUAL_INT(1, b.light_calls);
     TEST_ASSERT_EQUAL_UINT8(10, b.last_event.r);
 
@@ -453,7 +453,7 @@ static void test_default_hooks_are_no_ops(void) {
     b.enter(ctx);
     b.exit(ctx);
     dal::RgbPulseEvent ev{};
-    b.on_light_command(ctx, ev);
+    b.on_light_pulse(ctx, ev);
     hal::InputEvent ie{};
     b.on_input_action(ctx, ie);
     b.tick(ctx, 0);
@@ -492,7 +492,7 @@ int main(int, char**) {
     RUN_TEST(test_context_identity_accessors);
     RUN_TEST(test_context_since_enter_ms_after_mark_entered);
     RUN_TEST(test_context_host_caps_reflects_hal);
-    RUN_TEST(test_on_light_command_forwards_payload);
+    RUN_TEST(test_on_light_pulse_forwards_payload);
     RUN_TEST(test_stub_hooks_recorded);
     RUN_TEST(test_default_hooks_are_no_ops);
     RUN_TEST(test_output_binding_default_power_profile);

@@ -393,7 +393,7 @@ bool DAL::fire_rgb_pulse(const char* t, const RgbPulseEvent& ev) {
 
 bool DAL::render_fx(const char* t, const RgbPulseEvent& ev) {
     // Epic 4.65 Block 4: structured "<hex_class>:<hex_group>" targets
-    // route to the ESP-NOW broadcaster with both fields on the LIGHT_COMMAND
+    // route to the ESP-NOW broadcaster with both fields on the LIGHT_PULSE
     // payload, bypassing the legacy name-based device lookup. Legacy names
     // ("local", "all-pixmobs", "group-N", "esp-now-broadcast") fall
     // through to dispatch_output for now; Block 9 removes them once vis
@@ -671,10 +671,10 @@ const DeviceProfile PixMobX4Gen3_1 = DeviceProfile{
 
 // EspNowBroadcast: the Director->Lumes wire target. Profile declares
 // RgbPulse so render_fx("esp-now-broadcast", RgbPulseEvent{...}) routes
-// through EspNowBroadcastDriver and emits a LIGHT_COMMAND frame.
+// through EspNowBroadcastDriver and emits a LIGHT_PULSE frame.
 // supports_groups + max_group_id=31 lets future code register
 // esp-now-broadcast-group-N devices that pass the group id into the
-// LIGHT_COMMAND target_group field without driver changes.
+// LIGHT_PULSE target_group field without driver changes.
 const DeviceProfile EspNowBroadcast = DeviceProfile{
     /* type_id                  = */ "EspNowBroadcast",
     /* version                  = */ "1.0",

@@ -57,12 +57,12 @@ public:
     void     mark_entered(uint32_t now_ms);
 
     // -- Inbound-frame addressing (Epic 4.65 Block 5) ---------------------
-    // LumeMode sets these on every LIGHT_COMMAND fan-out before calling
-    // the binding's on_light_command. Relay bindings (e.g. PixMobIrBinding)
+    // LumeMode sets these on every LIGHT_PULSE fan-out before calling
+    // the binding's on_light_pulse. Relay bindings (e.g. PixMobIrBinding)
     // read current_target_group() to thread the inbound group code into
     // their downstream protocol. Local bindings can ignore both - the
     // slv_group filter has already gated their fan-out at the Lume level.
-    // Default 0 when no LIGHT_COMMAND is in flight (broadcast semantics).
+    // Default 0 when no LIGHT_PULSE is in flight (broadcast semantics).
     uint8_t current_target_class() const { return current_target_class_; }
     uint8_t current_target_group() const { return current_target_group_; }
     void    set_current_target(uint8_t target_class, uint8_t target_group) {

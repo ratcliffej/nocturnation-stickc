@@ -69,7 +69,7 @@ void loop() {
     // FreeRTOS tick (~1 ms on the default tick rate), which is the
     // shortest yield the Arduino framework exposes and well below the
     // shortest cadence any mode needs (audio FFT is ~30 Hz, ESP-NOW
-    // RX is interrupt-driven, LIGHT_COMMAND fires top out at ~8 Hz).
+    // RX is interrupt-driven, LIGHT_PULSE fires top out at ~8 Hz).
     // Cuts roughly an order of magnitude off the loop frequency and
     // a meaningful chunk off baseline current draw - particularly
     // load-bearing for Lume mode on battery (spec v0.29 §8.2). All

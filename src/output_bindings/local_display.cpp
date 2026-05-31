@@ -24,7 +24,7 @@ hal::CapabilityMask LocalDisplayBinding::required_capabilities() const {
     return hal::make_capability_mask(hal::Capability::Display);
 }
 
-void LocalDisplayBinding::on_light_command(OutputBindingContext& /*ctx*/,
+void LocalDisplayBinding::on_light_pulse(OutputBindingContext& /*ctx*/,
                                             const RgbPulseEvent& ev) {
     // Local light surface (screen on the StickC). Future hosts with
     // both an LCD and onboard LEDs (e.g. Tildagon) get both via the

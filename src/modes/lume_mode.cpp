@@ -39,7 +39,7 @@ namespace {
 // instance + property_bag accessors). The walk in enter() pairs each
 // binding with its own context here. Falls back to nullptr for any
 // binding that wasn't expected at registration time - those still get
-// activated but with no per-binding context (their on_light_command
+// activated but with no per-binding context (their on_light_pulse
 // has to operate context-free or skip work; the two we ship today
 // always have a context).
 OutputBindingContext* context_for(const OutputBinding* binding) {
@@ -63,7 +63,7 @@ void LumeMode::enter() {
     // picks hobby (1) / show (11) / advanced (6) / auto-scan (0) per
     // spec §4.5. The slv_ir_grp setting moved to PixMobIrBinding's
     // property bag in Block 9; ConfigMode > IR > Lume Group mutates
-    // it there and on_light_command reads it inline.
+    // it there and on_light_pulse reads it inline.
     lume_channel_pref_  = persistence::load_lume_channel();
     lume_repeat_en_     = persistence::load_lume_repeat_enabled();
     lume_group_           = persistence::load_lume_group();
@@ -153,12 +153,12 @@ void LumeMode::exit() {
 void LumeMode::loop_tick() {
     const uint32_t now = millis();
 
-    // Drain any LIGHT_COMMAND queued by the ESP-NOW callback. Doing
+    // Drain any LIGHT_PULSE queued by the ESP-NOW callback. Doing
     // this here (main task context) keeps IRsend::sendRaw off the
     // WiFi task where it would crash the S3.
     if (pending_light_) {
         pending_light_ = false;
-        fan_out_light_command(pending_light_payload_);
+        fan_out_light_pulse(pending_light_payload_);
     }
 
     // Drain any pending repeater rebroadcast. Same deferred pattern -
@@ -288,7 +288,7 @@ void LumeMode::mark_seen(uint8_t src, uint8_t seq) {
 }
 
 // -------------------------------------------------------------------------
-// Lume-as-target-device: an inbound LIGHT_COMMAND fans out to every
+// Lume-as-target-device: an inbound LIGHT_PULSE fans out to every
 // active OutputBinding. Each binding owns one render surface (e.g.
 // LocalDisplayBinding -> screen on the StickC; PixMobIrBinding -> IR
 // to bracelets in the Lume's configured group). Bindings are
@@ -298,7 +298,7 @@ void LumeMode::mark_seen(uint8_t src, uint8_t seq) {
 // gates the ir-pixmob driver via DAL::set_driver_enabled).
 // -------------------------------------------------------------------------
 
-void LumeMode::fan_out_light_command(const transport::espnow::LightCommandPayload& p) {
+void LumeMode::fan_out_light_pulse(const transport::espnow::LightPulsePayload& p) {
     RgbPulseEvent ev{};
     ev.r       = p.r;
     ev.g       = p.g;
@@ -331,7 +331,7 @@ void LumeMode::fan_out_light_command(const transport::espnow::LightCommandPayloa
 
         // Thread the inbound addressing through to the binding via ctx.
         slot.ctx->set_current_target(p.target_class, p.target_group);
-        slot.binding->on_light_command(*slot.ctx, ev);
+        slot.binding->on_light_pulse(*slot.ctx, ev);
     }
 }
 
@@ -413,7 +413,7 @@ void LumeMode::on_recv(const hal::ESPNowMessage& m) {
         pending_repeat_        = true;
     }
 
-    // Display-as-light: defer LIGHT_COMMAND rendering to loop_tick.
+    // Display-as-light: defer LIGHT_PULSE rendering to loop_tick.
     // This callback runs on the ESP-NOW / WiFi task; render_light
     // fans out to render_fx("all-pixmobs"), which calls into
     // IRsend::sendRaw - a ~30 ms blocking GPIO toggle loop unsafe
@@ -422,10 +422,10 @@ void LumeMode::on_recv(const hal::ESPNowMessage& m) {
     // pumps it from main task context. Newer arrivals replace
     // older ones - dropping a stale beat is fine when a fresh one
     // is already on the way.
-    if (hdr.message_type == MessageType::LightCommand
-        && m.len == kHeaderSize + kLightCommandPayloadLen) {
-        LightCommandPayload p{};
-        if (decode_light_command(hdr, m.data + kHeaderSize,
+    if (hdr.message_type == MessageType::LightPulse
+        && m.len == kHeaderSize + kLightPulsePayloadLen) {
+        LightPulsePayload p{};
+        if (decode_light_pulse(hdr, m.data + kHeaderSize,
                                  m.len - kHeaderSize, p)
             == DecodeResult::Ok) {
             pending_light_payload_ = p;

@@ -271,7 +271,7 @@ static void test_pixmob_ir_default_power(void) {
 }
 
 // =============================================================================
-// LocalDisplayBinding::on_light_command fires render_fx("local", ev)
+// LocalDisplayBinding::on_light_pulse fires render_fx("local", ev)
 // =============================================================================
 //
 // LocalDriver is registered by DAL::begin() and claims the "local"
@@ -286,13 +286,13 @@ static void test_local_display_fires_local(void) {
     RgbPulseEvent ev{0x11, 0x22, 0x33,
                      pixmob::T_32_MS, pixmob::T_96_MS,
                      pixmob::T_192_MS, pixmob::CHANCE_100};
-    b->on_light_command(ctx, ev);
+    b->on_light_pulse(ctx, ev);
 
     TEST_ASSERT_EQUAL_UINT32(before + 1, dal::DAL::driver_send_count("local"));
 }
 
 // =============================================================================
-// PixMobIrBinding::on_light_command maps group->target name
+// PixMobIrBinding::on_light_pulse maps group->target name
 // =============================================================================
 
 // Relay routing: inbound target_group=0 fires the "all-pixmobs" target,
@@ -307,7 +307,7 @@ static void test_pixmob_ir_target_group_zero_fires_all_pixmobs(void) {
     RgbPulseEvent ev{0xAA, 0xBB, 0xCC,
                      pixmob::T_192_MS, pixmob::T_480_MS,
                      pixmob::T_480_MS, pixmob::CHANCE_50};
-    b->on_light_command(ctx, ev);
+    b->on_light_pulse(ctx, ev);
 
     TEST_ASSERT_EQUAL_INT(1, g_ir_driver.rgb_pulse_count());
     TEST_ASSERT_EQUAL_UINT8(0, g_ir_driver.last_group_id());
@@ -333,14 +333,14 @@ static void test_pixmob_ir_target_group_n_fires_group_n(void) {
     RgbPulseEvent ev2{0x10, 0x20, 0x30,
                       pixmob::T_32_MS, pixmob::T_96_MS,
                       pixmob::T_96_MS, pixmob::CHANCE_100};
-    b->on_light_command(ctx, ev2);
+    b->on_light_pulse(ctx, ev2);
     TEST_ASSERT_EQUAL_INT(1, g_ir_driver.rgb_pulse_count());
     TEST_ASSERT_EQUAL_UINT8(2, g_ir_driver.last_group_id());
 
     // target_group=31 (top of PixMob native range)
     g_ir_driver.reset();
     ctx.set_current_target(0x01, 31);
-    b->on_light_command(ctx, ev2);
+    b->on_light_pulse(ctx, ev2);
     TEST_ASSERT_EQUAL_INT(1, g_ir_driver.rgb_pulse_count());
     TEST_ASSERT_EQUAL_UINT8(31, g_ir_driver.last_group_id());
 }
@@ -354,7 +354,7 @@ static void test_pixmob_ir_target_group_over_31_falls_back_to_all(void) {
 
     g_ir_driver.reset();
     RgbPulseEvent ev{};
-    b->on_light_command(ctx, ev);
+    b->on_light_pulse(ctx, ev);
     TEST_ASSERT_EQUAL_INT(1, g_ir_driver.rgb_pulse_count());
     TEST_ASSERT_EQUAL_UINT8(0, g_ir_driver.last_group_id());
 }
@@ -375,7 +375,7 @@ static void test_registry_register_both(void) {
 }
 
 // =============================================================================
-// Fan-out: both bindings registered and entered, a single on_light_command
+// Fan-out: both bindings registered and entered, a single on_light_pulse
 // per binding fires both transport surfaces with the SAME byte-identical
 // RgbPulseEvent. This is the LumeMode shell's primary behaviour
 // (preserved byte-for-byte from the pre-Block-9 render_light() path).
@@ -406,7 +406,7 @@ static void test_pixmob_ir_uses_current_target_group(void) {
     g_ir_driver.reset();
     RgbPulseEvent ev{0x11, 0x22, 0x33, pixmob::T_32_MS, pixmob::T_96_MS,
                      pixmob::T_96_MS, pixmob::CHANCE_100};
-    b->on_light_command(ctx, ev);
+    b->on_light_pulse(ctx, ev);
 
     TEST_ASSERT_EQUAL_INT(1, g_ir_driver.rgb_pulse_count());
     TEST_ASSERT_EQUAL_UINT8(5, g_ir_driver.last_group_id());
@@ -438,10 +438,10 @@ static void test_fan_out_both_bindings_fire_with_same_event(void) {
                      pixmob::T_96_MS, pixmob::CHANCE_100};
 
     // Manual fan-out using the same ev for both - this mirrors what
-    // LumeMode::fan_out_light_command does over the active_bindings_
+    // LumeMode::fan_out_light_pulse does over the active_bindings_
     // list.
-    local_display_instance()->on_light_command(local_display_context(), ev);
-    pixmob_ir_instance()->on_light_command(pixmob_ir_context(),       ev);
+    local_display_instance()->on_light_pulse(local_display_context(), ev);
+    pixmob_ir_instance()->on_light_pulse(pixmob_ir_context(),       ev);
 
     // Local target fired once.
     TEST_ASSERT_EQUAL_UINT32(local_before + 1, dal::DAL::driver_send_count("local"));

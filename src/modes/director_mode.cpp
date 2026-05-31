@@ -1,7 +1,7 @@
 // DirectorMode implementation (Epic 4.7 Block 1).
 //
 // Thin shell over the active Show. Mode owns: pause flag, music_event
-// broadcast (transport concern, separate from the LIGHT_COMMAND
+// broadcast (transport concern, separate from the LIGHT_PULSE
 // fan-out), lifecycle (audio input + ESP-NOW broadcast), and the
 // picker / settings overlays. The per-beat render fan-out, BPM
 // tracking, flux meter, and full screen rendering live in the Show.
