@@ -1,11 +1,11 @@
 // LocalDisplayBinding - Lume-side local-screen render of inbound
-// LIGHT_COMMAND events.
+// LIGHT_PULSE events.
 //
 // Migrated from LumeMode::render_light's first `DAL::render_fx("local",
 // ev)` line in Epic 4.6 Block 9. The pre-migration LumeMode fired
 // render_fx("local", ev) unconditionally for every decoded
-// LIGHT_COMMAND payload, which routed through LocalDriver to paint the
-// pulse rect. This binding owns that responsibility now: on_light_command
+// LIGHT_PULSE payload, which routed through LocalDriver to paint the
+// pulse rect. This binding owns that responsibility now: on_light_pulse
 // forwards the same event to the same "local" target.
 //
 // No properties yet. Future blocks may add brightness / pulse-rect
@@ -46,7 +46,7 @@ public:
         };
     }
 
-    void on_light_command(OutputBindingContext&,
+    void on_light_pulse(OutputBindingContext&,
                            const dal::RgbPulseEvent&) override;
 };
 

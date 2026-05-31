@@ -96,7 +96,7 @@ private:
     // -------------------------------------------------------------------------
     // RgbPulse animation state. The screen IS this host's primary "light",
     // so an inbound RgbPulseEvent (whether from local effect code or
-    // forwarded from an ESP-NOW LIGHT_COMMAND on a Lume) becomes a timed
+    // forwarded from an ESP-NOW LIGHT_PULSE on a Lume) becomes a timed
     // attack/sustain/release fade rather than an instant paint.
     //
     // Throttled to ~30 Hz: any faster and the SPI display can't keep up;

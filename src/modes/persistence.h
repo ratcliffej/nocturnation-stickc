@@ -75,7 +75,7 @@ bool             load_lume_repeat_enabled();
 void             save_lume_repeat_enabled(bool e);
 
 // Lume NocturNation group ID. Device-wide value used by LumeMode's
-// receive filter: a non-relay binding fires when LIGHT_COMMAND
+// receive filter: a non-relay binding fires when LIGHT_PULSE
 // target_group is 0 (the broadcast group; everyone responds) OR
 // matches this value exactly. A device with slv_group == 0 has no
 // group and only responds to broadcasts; it does not act as a

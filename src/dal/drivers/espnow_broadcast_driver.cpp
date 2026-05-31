@@ -91,7 +91,7 @@ bool EspNowBroadcastDriver::send(uint8_t target_class,
     h.source_id       = source_id_;
     h.sequence_number = next_seq();
     h.hop_count       = 0;
-    LightCommandPayload p{};
+    LightPulsePayload p{};
     p.target_class = target_class;
     p.target_group = target_group;
     p.r = ev.r; p.g = ev.g; p.b = ev.b;
@@ -99,8 +99,8 @@ bool EspNowBroadcastDriver::send(uint8_t target_class,
     p.sustain = static_cast<uint8_t>(ev.sustain);
     p.release = static_cast<uint8_t>(ev.release);
     p.chance  = static_cast<uint8_t>(ev.chance);
-    uint8_t buf[kHeaderSize + kLightCommandPayloadLen];
-    const size_t n = encode_light_command(buf, sizeof(buf), h, p);
+    uint8_t buf[kHeaderSize + kLightPulsePayloadLen];
+    const size_t n = encode_light_pulse(buf, sizeof(buf), h, p);
     if (n == 0) return false;
     send_frame_bytes(buf, n, "LIGHT");
     return true;

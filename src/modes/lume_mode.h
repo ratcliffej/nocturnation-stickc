@@ -85,8 +85,8 @@ private:
     // output_binding_registry(): each binding whose
     // required_capabilities() are a subset of host_caps() gets added
     // here paired with its own context, and its enter() called. Drained
-    // in exit(). Inbound LIGHT_COMMAND frames decoded in on_recv fan
-    // out via loop_tick() to every active binding's on_light_command.
+    // in exit(). Inbound LIGHT_PULSE frames decoded in on_recv fan
+    // out via loop_tick() to every active binding's on_light_pulse.
     // Soft cap of 4 - we ship two concrete bindings (LocalDisplay +
     // PixMobIr) today; the headroom covers near-future additions
     // (DMX-out, Tildagon LED ring) without resizing.
@@ -136,13 +136,13 @@ private:
     // way it does ESP-NOW today.
     transport::SignalQuality quality_;
 
-    // Deferred LIGHT_COMMAND queue (single slot; new arrivals replace).
+    // Deferred LIGHT_PULSE queue (single slot; new arrivals replace).
     // The ESP-NOW receive callback runs on the WiFi task; calling
     // IRsend::sendRaw (~30 ms blocking GPIO loop) from that context
     // crashes the chip. We copy the payload here in on_recv and drain
     // in loop_tick (main task context, safe for the IR send timing).
     volatile bool                            pending_light_ = false;
-    transport::espnow::LightCommandPayload   pending_light_payload_{};
+    transport::espnow::LightPulsePayload   pending_light_payload_{};
 
     // Repeater mode (per spec §4.3, configurable per-Lume via
     // Config > ESP-NOW > Repeat). When enabled, each unique inbound
@@ -151,7 +151,7 @@ private:
     // exactly so dedup works across the mesh - other Lumes receiving
     // both the original and the repeat see them as duplicates.
     //
-    // Queue same shape as the LIGHT_COMMAND queue: copy in on_recv,
+    // Queue same shape as the LIGHT_PULSE queue: copy in on_recv,
     // drain in loop_tick (off the WiFi callback context).
     bool          lume_repeat_en_      = false;
     volatile bool pending_repeat_       = false;
@@ -180,12 +180,12 @@ private:
     bool seen_recently(uint8_t src, uint8_t seq) const;
     void mark_seen(uint8_t src, uint8_t seq);
 
-    // Convert a decoded LIGHT_COMMAND payload into an RgbPulseEvent
+    // Convert a decoded LIGHT_PULSE payload into an RgbPulseEvent
     // and fan out to every active OutputBinding. The fan-out is the
     // pre-migration render_light() body's two render_fx calls, now
     // owned by LocalDisplayBinding + PixMobIrBinding respectively
     // (Block 9).
-    void fan_out_light_command(const transport::espnow::LightCommandPayload& p);
+    void fan_out_light_pulse(const transport::espnow::LightPulsePayload& p);
 
     void on_recv(const hal::ESPNowMessage& m);
 

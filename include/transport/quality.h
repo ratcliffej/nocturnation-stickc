@@ -3,7 +3,7 @@
 // Counts received-vs-expected frames per source from sequence numbers and
 // maps the rolling-window loss percentage onto a 0-4 bar quality indicator.
 // Any sequenced protocol whose sender increments per-frame can use this -
-// ESP-NOW LIGHT_COMMAND/HEARTBEAT today, future IR ack protocols and BLE
+// ESP-NOW LIGHT_PULSE/HEARTBEAT today, future IR ack protocols and BLE
 // links plug in the same way.
 //
 // "Quality" rather than "strength": tracks delivered fidelity (frames

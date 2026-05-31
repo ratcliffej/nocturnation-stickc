@@ -11,8 +11,8 @@
 //
 // Lifetime:
 //   - enter(ctx) / exit(ctx) bracket the active period.
-//   - on_light_command fires for every render event the Lume decodes
-//     from incoming ESP-NOW LIGHT_COMMAND frames while this binding
+//   - on_light_pulse fires for every render event the Lume decodes
+//     from incoming ESP-NOW LIGHT_PULSE frames while this binding
 //     is active. This is the primary hook - bindings turn the colour
 //     event into a hardware action (paint LCD, transmit PixMob IR
 //     pulse, forward over DMX, drive a Tildagon LED ring, ...).
@@ -69,7 +69,7 @@ public:
     plugins::PluginKind kind() const override { return plugins::PluginKind::OutputBinding; }
 
     // Device-class taxonomy (Epic 4.65). Director encodes the chosen class
-    // into LIGHT_COMMAND.target_class; LumeMode filters inbound frames
+    // into LIGHT_PULSE.target_class; LumeMode filters inbound frames
     // against this value per active binding. Pure-virtual so every
     // binding declares its class explicitly - silent defaults would let
     // bindings drift untagged and break the addressing contract. Never
@@ -83,7 +83,7 @@ public:
     // own level), so the Lume's slv_group filter is BYPASSED for this
     // binding - it fires whenever the target_class matches, regardless
     // of whether target_group matches the Lume's own group. The
-    // binding's on_light_command reads OutputBindingContext::
+    // binding's on_light_pulse reads OutputBindingContext::
     // current_target_group() to relay the inbound group code into the
     // downstream protocol. Default: false (local binding; slv_group
     // filter applies). PixMobIrBinding overrides to true.
@@ -94,7 +94,7 @@ public:
 
     // Primary hook: render the incoming colour event on this binding's
     // output surface.
-    virtual void on_light_command(OutputBindingContext&,
+    virtual void on_light_pulse(OutputBindingContext&,
                                    const dal::RgbPulseEvent&) {}
 
     // Optional: bindings that need to react to user input (e.g. a

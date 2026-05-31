@@ -2,7 +2,7 @@
 //
 // Migrated from LumeMode::render_light in Epic 4.6 Block 9, then
 // refactored to a pure relay binding in Epic 4.65 Block 5 / follow-up.
-// LumeMode threads the inbound LIGHT_COMMAND target_group through
+// LumeMode threads the inbound LIGHT_PULSE target_group through
 // OutputBindingContext::current_target_group(); this binding passes it
 // straight through as the PixMob protocol group code on the outgoing
 // IR frame. PixMob bracelets do their own group filtering at the
@@ -58,7 +58,7 @@ public:
         };
     }
 
-    void on_light_command(OutputBindingContext&,
+    void on_light_pulse(OutputBindingContext&,
                            const dal::RgbPulseEvent&) override;
 };
 

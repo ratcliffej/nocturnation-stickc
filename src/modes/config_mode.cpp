@@ -768,7 +768,7 @@ void ConfigMode::draw_display() {
 //
 // The "Lume Group" item that used to surface PixMobIrBinding's `group`
 // property here was dropped post-Epic-4.65: the protocol IR group is
-// now relay-driven via inbound LIGHT_COMMAND target_group (Block 5);
+// now relay-driven via inbound LIGHT_PULSE target_group (Block 5);
 // the per-binding group property still exists as broadcast fallback
 // (target_group=0) and is reachable via the auto-generated settings
 // overlay, but it confused operators on the IR screen.

@@ -6,7 +6,7 @@
 // 4.6 Block 2: Director broadcast logic now lives behind a single DAL
 // driver registered under transport "esp-now-broadcast", and orchestration
 // reaches the wire via DAL::render_fx("esp-now-broadcast", ev) for
-// LIGHT_COMMAND, plus driver-specific entry points for protocol concepts
+// LIGHT_PULSE, plus driver-specific entry points for protocol concepts
 // (heartbeat, music events, lifecycle) that don't fit the generic Driver
 // surface.
 //
@@ -44,7 +44,7 @@ public:
     static constexpr uint8_t  kRedundantGapMaxMs  = 15;
 
     // Maximum frame size we ever buffer for retransmit. Matches the
-    // transport-level cap so the LIGHT_COMMAND frame (largest at 14
+    // transport-level cap so the LIGHT_PULSE frame (largest at 14
     // bytes including header) fits comfortably.
     static constexpr size_t   kRetransmitBufSize  = 32;
 
@@ -74,7 +74,7 @@ public:
     bool begin() override;
     void loop_tick() override;
 
-    // Generic RgbPulse dispatch: encodes LIGHT_COMMAND with the active
+    // Generic RgbPulse dispatch: encodes LIGHT_PULSE with the active
     // device's group_id and broadcasts. Returns false when the radio is
     // not currently started (active_ == false) or the encode/send fails.
     // Legacy entry point: forwards to send(0, group_id, ev) with
@@ -87,7 +87,7 @@ public:
     // string "<hex_class>:<hex_group>" passed to DAL::render_fx parses
     // into these two bytes and bypasses the device-name lookup, going
     // straight through here. target_class lands at offset 0 of
-    // LightCommandPayload; target_group at offset 1.
+    // LightPulsePayload; target_group at offset 1.
     bool send(uint8_t target_class, uint8_t target_group, const RgbPulseEvent& ev);
 
     // ---- Driver-specific lifecycle / protocol entry points ----
@@ -174,7 +174,7 @@ private:
 
     // Director loop_tick equivalent: if no frame has gone out within
     // kHeartbeatPeriodMs, sends one. During music with BEAT_DETECTED
-    // / LIGHT_COMMAND firing every 350-500 ms, this short-circuits and
+    // / LIGHT_PULSE firing every 350-500 ms, this short-circuits and
     // heartbeat traffic stays at zero.
     bool maybe_send_heartbeat();
 
