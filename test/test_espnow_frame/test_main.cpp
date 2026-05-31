@@ -147,6 +147,166 @@ static void test_light_pulse_round_trip(void) {
 }
 
 // ---------------------------------------------------------------------------
+// Epic 6C Phase D: LIGHT_WASH family round-trips
+// ---------------------------------------------------------------------------
+
+static void test_light_wash_round_trip_with_drift(void) {
+    uint8_t buf[kMaxFrameSize] = {};
+    const Header in = make_header();
+    const LightWashPayload p_in{
+        /*target_class=*/0x01, /*target_group=*/5,
+        /*r1=*/255, /*g1=*/60,  /*b1=*/  0,
+        /*r2=*/120, /*g2=*/30,  /*b2=*/200,
+        /*attack=*/   20,
+        /*release=*/  10,
+        /*intensity=*/200,
+        /*cycle_ms=*/  5000,
+        /*ttl_seconds=*/0,
+        /*pulse_response=*/1,
+    };
+
+    const size_t n = encode_light_wash(buf, sizeof(buf), in, p_in);
+    TEST_ASSERT_EQUAL_size_t(kHeaderSize + kLightWashPayloadLen, n);
+    assert_header_bytes(buf, MessageType::LightWash, kLightWashPayloadLen);
+    TEST_ASSERT_EQUAL_UINT8(0x01, buf[kHeaderSize +  0]);
+    TEST_ASSERT_EQUAL_UINT8(   5, buf[kHeaderSize +  1]);
+    TEST_ASSERT_EQUAL_UINT8( 255, buf[kHeaderSize +  2]);
+    TEST_ASSERT_EQUAL_UINT8(  60, buf[kHeaderSize +  3]);
+    TEST_ASSERT_EQUAL_UINT8(   0, buf[kHeaderSize +  4]);
+    TEST_ASSERT_EQUAL_UINT8( 120, buf[kHeaderSize +  5]);
+    TEST_ASSERT_EQUAL_UINT8(  30, buf[kHeaderSize +  6]);
+    TEST_ASSERT_EQUAL_UINT8( 200, buf[kHeaderSize +  7]);
+    TEST_ASSERT_EQUAL_UINT8(  20, buf[kHeaderSize +  8]);
+    TEST_ASSERT_EQUAL_UINT8(  10, buf[kHeaderSize +  9]);
+    TEST_ASSERT_EQUAL_UINT8( 200, buf[kHeaderSize + 10]);
+    // cycle_ms 5000 = 0x1388 -> little-endian: 0x88, 0x13
+    TEST_ASSERT_EQUAL_UINT8(0x88, buf[kHeaderSize + 11]);
+    TEST_ASSERT_EQUAL_UINT8(0x13, buf[kHeaderSize + 12]);
+    TEST_ASSERT_EQUAL_UINT8(0x00, buf[kHeaderSize + 13]);
+    TEST_ASSERT_EQUAL_UINT8(0x00, buf[kHeaderSize + 14]);
+    TEST_ASSERT_EQUAL_UINT8(   1, buf[kHeaderSize + 15]);
+
+    Header decoded{};
+    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
+                      static_cast<int>(decode_header(buf, n, decoded)));
+    LightWashPayload p_out{};
+    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
+                      static_cast<int>(decode_light_wash(decoded,
+                                                          buf + kHeaderSize,
+                                                          decoded.payload_len,
+                                                          p_out)));
+    TEST_ASSERT_EQUAL_UINT8 (p_in.target_class,   p_out.target_class);
+    TEST_ASSERT_EQUAL_UINT8 (p_in.target_group,   p_out.target_group);
+    TEST_ASSERT_EQUAL_UINT8 (p_in.r1, p_out.r1);
+    TEST_ASSERT_EQUAL_UINT8 (p_in.g1, p_out.g1);
+    TEST_ASSERT_EQUAL_UINT8 (p_in.b1, p_out.b1);
+    TEST_ASSERT_EQUAL_UINT8 (p_in.r2, p_out.r2);
+    TEST_ASSERT_EQUAL_UINT8 (p_in.g2, p_out.g2);
+    TEST_ASSERT_EQUAL_UINT8 (p_in.b2, p_out.b2);
+    TEST_ASSERT_EQUAL_UINT8 (p_in.attack,         p_out.attack);
+    TEST_ASSERT_EQUAL_UINT8 (p_in.release,        p_out.release);
+    TEST_ASSERT_EQUAL_UINT8 (p_in.intensity,      p_out.intensity);
+    TEST_ASSERT_EQUAL_UINT16(p_in.cycle_ms,       p_out.cycle_ms);
+    TEST_ASSERT_EQUAL_UINT16(p_in.ttl_seconds,    p_out.ttl_seconds);
+    TEST_ASSERT_EQUAL_UINT8 (p_in.pulse_response, p_out.pulse_response);
+}
+
+static void test_light_wash_round_trip_cycle_ms_zero(void) {
+    // cycle_ms=0 means "no cycle, hold r1/g1/b1". r2/g2/b2 are still on
+    // the wire (the renderer ignores them); round-trip must preserve them.
+    uint8_t buf[kMaxFrameSize] = {};
+    const Header in = make_header();
+    const LightWashPayload p_in{
+        /*target_class=*/0x00, /*target_group=*/0,
+        /*r1=*/40, /*g1=*/80, /*b1=*/160,
+        /*r2=*/99, /*g2=*/77, /*b2=*/ 55,
+        /*attack=*/30, /*release=*/30,
+        /*intensity=*/255,
+        /*cycle_ms=*/0,
+        /*ttl_seconds=*/3600,
+        /*pulse_response=*/0,
+    };
+
+    const size_t n = encode_light_wash(buf, sizeof(buf), in, p_in);
+    TEST_ASSERT_EQUAL_size_t(kHeaderSize + kLightWashPayloadLen, n);
+
+    Header decoded{};
+    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
+                      static_cast<int>(decode_header(buf, n, decoded)));
+    LightWashPayload p_out{};
+    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
+                      static_cast<int>(decode_light_wash(decoded,
+                                                          buf + kHeaderSize,
+                                                          decoded.payload_len,
+                                                          p_out)));
+    TEST_ASSERT_EQUAL_UINT16(0,    p_out.cycle_ms);
+    TEST_ASSERT_EQUAL_UINT16(3600, p_out.ttl_seconds);
+    TEST_ASSERT_EQUAL_UINT8 (99,   p_out.r2);
+    TEST_ASSERT_EQUAL_UINT8 (77,   p_out.g2);
+    TEST_ASSERT_EQUAL_UINT8 (55,   p_out.b2);
+}
+
+static void test_light_wash_end_round_trip(void) {
+    uint8_t buf[kMaxFrameSize] = {};
+    const Header in = make_header();
+    const LightWashEndPayload p_in{0x00, 0, 10};
+
+    const size_t n = encode_light_wash_end(buf, sizeof(buf), in, p_in);
+    TEST_ASSERT_EQUAL_size_t(kHeaderSize + kLightWashEndPayloadLen, n);
+    assert_header_bytes(buf, MessageType::LightWashEnd, kLightWashEndPayloadLen);
+    TEST_ASSERT_EQUAL_UINT8(0x00, buf[kHeaderSize + 0]);
+    TEST_ASSERT_EQUAL_UINT8(   0, buf[kHeaderSize + 1]);
+    TEST_ASSERT_EQUAL_UINT8(  10, buf[kHeaderSize + 2]);
+
+    Header decoded{};
+    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
+                      static_cast<int>(decode_header(buf, n, decoded)));
+    LightWashEndPayload p_out{};
+    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
+                      static_cast<int>(decode_light_wash_end(decoded,
+                                                              buf + kHeaderSize,
+                                                              decoded.payload_len,
+                                                              p_out)));
+    TEST_ASSERT_EQUAL_UINT8(p_in.target_class, p_out.target_class);
+    TEST_ASSERT_EQUAL_UINT8(p_in.target_group, p_out.target_group);
+    TEST_ASSERT_EQUAL_UINT8(p_in.release_time, p_out.release_time);
+}
+
+static void test_light_wash_pulse_round_trip(void) {
+    uint8_t buf[kMaxFrameSize] = {};
+    const Header in = make_header();
+    const LightWashPulsePayload p_in{
+        0x01, 2,
+        255, 255, 255,
+        0, 1, 3,
+        0,
+    };
+
+    const size_t n = encode_light_wash_pulse(buf, sizeof(buf), in, p_in);
+    TEST_ASSERT_EQUAL_size_t(kHeaderSize + kLightWashPulsePayloadLen, n);
+    assert_header_bytes(buf, MessageType::LightWashPulse, kLightWashPulsePayloadLen);
+
+    Header decoded{};
+    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
+                      static_cast<int>(decode_header(buf, n, decoded)));
+    LightWashPulsePayload p_out{};
+    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
+                      static_cast<int>(decode_light_wash_pulse(decoded,
+                                                                buf + kHeaderSize,
+                                                                decoded.payload_len,
+                                                                p_out)));
+    TEST_ASSERT_EQUAL_UINT8(p_in.target_class, p_out.target_class);
+    TEST_ASSERT_EQUAL_UINT8(p_in.target_group, p_out.target_group);
+    TEST_ASSERT_EQUAL_UINT8(p_in.r,            p_out.r);
+    TEST_ASSERT_EQUAL_UINT8(p_in.g,            p_out.g);
+    TEST_ASSERT_EQUAL_UINT8(p_in.b,            p_out.b);
+    TEST_ASSERT_EQUAL_UINT8(p_in.attack,       p_out.attack);
+    TEST_ASSERT_EQUAL_UINT8(p_in.sustain,      p_out.sustain);
+    TEST_ASSERT_EQUAL_UINT8(p_in.release,      p_out.release);
+    TEST_ASSERT_EQUAL_UINT8(p_in.chance,       p_out.chance);
+}
+
+// ---------------------------------------------------------------------------
 // Encoder rejects buffer-too-small without writing past the end
 // ---------------------------------------------------------------------------
 
@@ -369,6 +529,10 @@ int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_heartbeat_round_trip);
     RUN_TEST(test_light_pulse_round_trip);
+    RUN_TEST(test_light_wash_round_trip_with_drift);
+    RUN_TEST(test_light_wash_round_trip_cycle_ms_zero);
+    RUN_TEST(test_light_wash_end_round_trip);
+    RUN_TEST(test_light_wash_pulse_round_trip);
     RUN_TEST(test_encode_buffer_too_small);
     RUN_TEST(test_decode_header_buffer_too_short);
     RUN_TEST(test_decode_header_invalid_magic_rejects_non_nocturnation_frame);

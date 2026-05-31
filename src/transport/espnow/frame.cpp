@@ -67,14 +67,17 @@ void write_header(uint8_t* buf, const Header& hdr,
 }
 
 bool is_known_message_type(uint8_t raw) {
-    // Spec v0.29 §4.3 - two active message types plus the EXTENSION
-    // slot. IDs 0x01, 0x02, 0x04, 0x05, 0x06 are reserved (do not
-    // reuse) but are not recognised by current receivers; spec
-    // forward-compatibility note says inbound frames with unknown
-    // types should be silently discarded.
+    // Spec v0.29 §4.3 + Epic 6C Phase D additions. Heartbeat + Light family
+    // (Pulse / Wash / WashEnd / WashPulse) plus the EXTENSION slot. IDs
+    // 0x01, 0x02, 0x04, 0x05 remain reserved; spec forward-compatibility
+    // note says inbound frames with unknown types should be silently
+    // discarded.
     switch (raw) {
         case static_cast<uint8_t>(MessageType::Heartbeat):
         case static_cast<uint8_t>(MessageType::LightPulse):
+        case static_cast<uint8_t>(MessageType::LightWash):
+        case static_cast<uint8_t>(MessageType::LightWashEnd):
+        case static_cast<uint8_t>(MessageType::LightWashPulse):
         case static_cast<uint8_t>(MessageType::Extension):
             return true;
         default:
@@ -104,6 +107,56 @@ size_t encode_light_pulse(uint8_t* buf, size_t buf_len, const Header& hdr,
     constexpr size_t total = kHeaderSize + kLightPulsePayloadLen;
     if (buf_len < total) return 0;
     write_header(buf, hdr, MessageType::LightPulse, kLightPulsePayloadLen);
+    buf[kHeaderSize + 0] = p.target_class;
+    buf[kHeaderSize + 1] = p.target_group;
+    buf[kHeaderSize + 2] = p.r;
+    buf[kHeaderSize + 3] = p.g;
+    buf[kHeaderSize + 4] = p.b;
+    buf[kHeaderSize + 5] = p.attack;
+    buf[kHeaderSize + 6] = p.sustain;
+    buf[kHeaderSize + 7] = p.release;
+    buf[kHeaderSize + 8] = p.chance;
+    return total;
+}
+
+size_t encode_light_wash(uint8_t* buf, size_t buf_len, const Header& hdr,
+                         const LightWashPayload& p) {
+    constexpr size_t total = kHeaderSize + kLightWashPayloadLen;
+    if (buf_len < total) return 0;
+    write_header(buf, hdr, MessageType::LightWash, kLightWashPayloadLen);
+    buf[kHeaderSize +  0] = p.target_class;
+    buf[kHeaderSize +  1] = p.target_group;
+    buf[kHeaderSize +  2] = p.r1;
+    buf[kHeaderSize +  3] = p.g1;
+    buf[kHeaderSize +  4] = p.b1;
+    buf[kHeaderSize +  5] = p.r2;
+    buf[kHeaderSize +  6] = p.g2;
+    buf[kHeaderSize +  7] = p.b2;
+    buf[kHeaderSize +  8] = p.attack;
+    buf[kHeaderSize +  9] = p.release;
+    buf[kHeaderSize + 10] = p.intensity;
+    write_u16_le(buf + kHeaderSize + 11, p.cycle_ms);
+    write_u16_le(buf + kHeaderSize + 13, p.ttl_seconds);
+    buf[kHeaderSize + 15] = p.pulse_response;
+    return total;
+}
+
+size_t encode_light_wash_end(uint8_t* buf, size_t buf_len, const Header& hdr,
+                             const LightWashEndPayload& p) {
+    constexpr size_t total = kHeaderSize + kLightWashEndPayloadLen;
+    if (buf_len < total) return 0;
+    write_header(buf, hdr, MessageType::LightWashEnd, kLightWashEndPayloadLen);
+    buf[kHeaderSize + 0] = p.target_class;
+    buf[kHeaderSize + 1] = p.target_group;
+    buf[kHeaderSize + 2] = p.release_time;
+    return total;
+}
+
+size_t encode_light_wash_pulse(uint8_t* buf, size_t buf_len, const Header& hdr,
+                               const LightWashPulsePayload& p) {
+    constexpr size_t total = kHeaderSize + kLightWashPulsePayloadLen;
+    if (buf_len < total) return 0;
+    write_header(buf, hdr, MessageType::LightWashPulse, kLightWashPulsePayloadLen);
     buf[kHeaderSize + 0] = p.target_class;
     buf[kHeaderSize + 1] = p.target_group;
     buf[kHeaderSize + 2] = p.r;
@@ -173,6 +226,71 @@ DecodeResult decode_light_pulse(const Header& hdr,
     }
     if (hdr.payload_len != kLightPulsePayloadLen ||
         payload_len    != kLightPulsePayloadLen) {
+        return DecodeResult::PayloadLenMismatch;
+    }
+    out.target_class = payload[0];
+    out.target_group = payload[1];
+    out.r            = payload[2];
+    out.g            = payload[3];
+    out.b            = payload[4];
+    out.attack       = payload[5];
+    out.sustain      = payload[6];
+    out.release      = payload[7];
+    out.chance       = payload[8];
+    return DecodeResult::Ok;
+}
+
+DecodeResult decode_light_wash(const Header& hdr,
+                               const uint8_t* payload, size_t payload_len,
+                               LightWashPayload& out) {
+    if (hdr.message_type != MessageType::LightWash) {
+        return DecodeResult::InvalidMessageType;
+    }
+    if (hdr.payload_len != kLightWashPayloadLen ||
+        payload_len    != kLightWashPayloadLen) {
+        return DecodeResult::PayloadLenMismatch;
+    }
+    out.target_class   = payload[ 0];
+    out.target_group   = payload[ 1];
+    out.r1             = payload[ 2];
+    out.g1             = payload[ 3];
+    out.b1             = payload[ 4];
+    out.r2             = payload[ 5];
+    out.g2             = payload[ 6];
+    out.b2             = payload[ 7];
+    out.attack         = payload[ 8];
+    out.release        = payload[ 9];
+    out.intensity      = payload[10];
+    out.cycle_ms       = read_u16_le(payload + 11);
+    out.ttl_seconds    = read_u16_le(payload + 13);
+    out.pulse_response = payload[15];
+    return DecodeResult::Ok;
+}
+
+DecodeResult decode_light_wash_end(const Header& hdr,
+                                   const uint8_t* payload, size_t payload_len,
+                                   LightWashEndPayload& out) {
+    if (hdr.message_type != MessageType::LightWashEnd) {
+        return DecodeResult::InvalidMessageType;
+    }
+    if (hdr.payload_len != kLightWashEndPayloadLen ||
+        payload_len    != kLightWashEndPayloadLen) {
+        return DecodeResult::PayloadLenMismatch;
+    }
+    out.target_class = payload[0];
+    out.target_group = payload[1];
+    out.release_time = payload[2];
+    return DecodeResult::Ok;
+}
+
+DecodeResult decode_light_wash_pulse(const Header& hdr,
+                                     const uint8_t* payload, size_t payload_len,
+                                     LightWashPulsePayload& out) {
+    if (hdr.message_type != MessageType::LightWashPulse) {
+        return DecodeResult::InvalidMessageType;
+    }
+    if (hdr.payload_len != kLightWashPulsePayloadLen ||
+        payload_len    != kLightWashPulsePayloadLen) {
         return DecodeResult::PayloadLenMismatch;
     }
     out.target_class = payload[0];
