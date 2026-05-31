@@ -153,6 +153,19 @@ void LumeMode::exit() {
 void LumeMode::loop_tick() {
     const uint32_t now = millis();
 
+    // Epic 6C Phase F: pump every active binding's tick(). Bindings that
+    // don't override stay no-op; LocalDisplayBinding uses this to drive
+    // the cosine-eased wash drift continuously between LIGHT_WASH events.
+    // The Lume's loop_tick already runs at the main-loop cadence (~20 Hz
+    // via the delay(1) yield + the audio cadence), which is fine for
+    // smooth visual interpolation.
+    for (size_t i = 0; i < active_binding_count_; ++i) {
+        const auto& slot = active_bindings_[i];
+        if (slot.binding && slot.ctx) {
+            slot.binding->tick(*slot.ctx, now);
+        }
+    }
+
     // Drain any LIGHT_PULSE queued by the ESP-NOW callback. Doing
     // this here (main task context) keeps IRsend::sendRaw off the
     // WiFi task where it would crash the S3.
@@ -335,6 +348,76 @@ void LumeMode::fan_out_light_pulse(const transport::espnow::LightPulsePayload& p
     }
 }
 
+// Epic 6C Phase F: WASH-family fan-out. Same class+group filter as
+// fan_out_light_pulse, with an additional capability gate: bindings that
+// declare can_wash = false never see the WASH-family hooks. The binding
+// owns its own wash state machine; this dispatch just routes the frame.
+// LIGHT_WASH_PULSE is routed unconditionally to wash-capable bindings -
+// the binding's handler drops silently if it has no active wash.
+
+void LumeMode::fan_out_light_wash(const transport::espnow::LightWashPayload& p) {
+    for (size_t i = 0; i < active_binding_count_; ++i) {
+        const auto& slot = active_bindings_[i];
+        if (!slot.binding || !slot.ctx) continue;
+        if (!slot.binding->capabilities().can_wash) continue;
+
+        const uint8_t binding_class = static_cast<uint8_t>(slot.binding->device_class());
+        if (p.target_class != 0 && p.target_class != binding_class) continue;
+
+        if (!slot.binding->is_relay()) {
+            if (p.target_group != 0 && p.target_group != lume_group_) continue;
+        }
+
+        slot.ctx->set_current_target(p.target_class, p.target_group);
+        slot.binding->on_light_wash(*slot.ctx, p);
+    }
+}
+
+void LumeMode::fan_out_light_wash_end(const transport::espnow::LightWashEndPayload& p) {
+    for (size_t i = 0; i < active_binding_count_; ++i) {
+        const auto& slot = active_bindings_[i];
+        if (!slot.binding || !slot.ctx) continue;
+        if (!slot.binding->capabilities().can_wash) continue;
+
+        const uint8_t binding_class = static_cast<uint8_t>(slot.binding->device_class());
+        if (p.target_class != 0 && p.target_class != binding_class) continue;
+
+        if (!slot.binding->is_relay()) {
+            if (p.target_group != 0 && p.target_group != lume_group_) continue;
+        }
+
+        slot.ctx->set_current_target(p.target_class, p.target_group);
+        slot.binding->on_light_wash_end(*slot.ctx, p.release_time);
+    }
+}
+
+void LumeMode::fan_out_light_wash_pulse(const transport::espnow::LightWashPulsePayload& p) {
+    RgbPulseEvent ev{};
+    ev.r       = p.r;
+    ev.g       = p.g;
+    ev.b       = p.b;
+    ev.attack  = static_cast<pixmob::Time>(p.attack);
+    ev.sustain = static_cast<pixmob::Time>(p.sustain);
+    ev.release = static_cast<pixmob::Time>(p.release);
+    ev.chance  = static_cast<pixmob::Chance>(p.chance);
+
+    for (size_t i = 0; i < active_binding_count_; ++i) {
+        const auto& slot = active_bindings_[i];
+        if (!slot.binding || !slot.ctx) continue;
+        if (!slot.binding->capabilities().can_wash) continue;
+
+        const uint8_t binding_class = static_cast<uint8_t>(slot.binding->device_class());
+        if (p.target_class != 0 && p.target_class != binding_class) continue;
+
+        if (!slot.binding->is_relay()) {
+            if (p.target_group != 0 && p.target_group != lume_group_) continue;
+        }
+
+        slot.ctx->set_current_target(p.target_class, p.target_group);
+        slot.binding->on_light_wash_pulse(*slot.ctx, ev);
+    }
+}
+
 void LumeMode::on_recv(const hal::ESPNowMessage& m) {
     using namespace transport::espnow;
 
@@ -433,27 +516,16 @@ void LumeMode::on_recv(const hal::ESPNowMessage& m) {
         }
     }
 
-    // Epic 6C Phase D: WASH-family receive stubs. Decode + log + discard.
-    // Real dispatch lands in Phase F (capability-aware fan-out to bindings
-    // declaring can_wash: true). Until then, the protocol decoder is
-    // exercised end-to-end here but no render happens.
+    // Epic 6C Phase F: WASH-family dispatch. Phase D's log-and-discard
+    // stubs are replaced here with capability-gated fan-out to active
+    // bindings (LocalDisplayBinding accepts; PixMobIrBinding declares
+    // can_wash = false and is silently filtered out by the fan-out).
     if (hdr.message_type == MessageType::LightWash
         && m.len == kHeaderSize + kLightWashPayloadLen) {
         LightWashPayload p{};
         if (decode_light_wash(hdr, m.data + kHeaderSize,
                               m.len - kHeaderSize, p) == DecodeResult::Ok) {
-#ifdef ARDUINO
-            Serial.printf("[espnow RX LIGHT_WASH] target=%02X:%02X "
-                          "r1=%u,%u,%u r2=%u,%u,%u "
-                          "att=%u rel=%u int=%u cycle_ms=%u ttl_s=%u "
-                          "pulse_resp=%u (Phase D: discarded; render lands Phase F)\n",
-                          p.target_class, p.target_group,
-                          p.r1, p.g1, p.b1, p.r2, p.g2, p.b2,
-                          p.attack, p.release, p.intensity,
-                          p.cycle_ms, p.ttl_seconds, p.pulse_response);
-#else
-            (void)p;
-#endif
+            fan_out_light_wash(p);
         }
     }
     if (hdr.message_type == MessageType::LightWashEnd
@@ -461,13 +533,7 @@ void LumeMode::on_recv(const hal::ESPNowMessage& m) {
         LightWashEndPayload p{};
         if (decode_light_wash_end(hdr, m.data + kHeaderSize,
                                   m.len - kHeaderSize, p) == DecodeResult::Ok) {
-#ifdef ARDUINO
-            Serial.printf("[espnow RX LIGHT_WASH_END] target=%02X:%02X release_time=%u "
-                          "(Phase D: discarded; render lands Phase F)\n",
-                          p.target_class, p.target_group, p.release_time);
-#else
-            (void)p;
-#endif
+            fan_out_light_wash_end(p);
         }
     }
     if (hdr.message_type == MessageType::LightWashPulse
@@ -475,16 +541,7 @@ void LumeMode::on_recv(const hal::ESPNowMessage& m) {
         LightWashPulsePayload p{};
         if (decode_light_wash_pulse(hdr, m.data + kHeaderSize,
                                     m.len - kHeaderSize, p) == DecodeResult::Ok) {
-#ifdef ARDUINO
-            Serial.printf("[espnow RX LIGHT_WASH_PULSE] target=%02X:%02X "
-                          "rgb=%u,%u,%u env=%u,%u,%u chance=%u "
-                          "(Phase D: discarded; render lands Phase F)\n",
-                          p.target_class, p.target_group,
-                          p.r, p.g, p.b,
-                          p.attack, p.sustain, p.release, p.chance);
-#else
-            (void)p;
-#endif
+            fan_out_light_wash_pulse(p);
         }
     }
 }

@@ -187,6 +187,13 @@ private:
     // (Block 9).
     void fan_out_light_pulse(const transport::espnow::LightPulsePayload& p);
 
+    // Epic 6C Phase F: WASH-family fan-out. Same class+group filter as
+    // fan_out_light_pulse + a capability gate (binding's can_wash). The
+    // binding owns its own wash state; this just routes.
+    void fan_out_light_wash      (const transport::espnow::LightWashPayload& p);
+    void fan_out_light_wash_end  (const transport::espnow::LightWashEndPayload& p);
+    void fan_out_light_wash_pulse(const transport::espnow::LightWashPulsePayload& p);
+
     void on_recv(const hal::ESPNowMessage& m);
 
     int signal_bars_from_age() const;

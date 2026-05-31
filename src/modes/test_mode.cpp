@@ -59,7 +59,7 @@ constexpr uint32_t kSparkleStepMs     = 1100;
 
 }  // namespace
 
-constexpr TestMode::MenuItem TestMode::kSubTests[7];
+constexpr TestMode::MenuItem TestMode::kSubTests[8];
 
 void TestMode::enter() {
     menu_selected_    = 0;
@@ -236,6 +236,7 @@ void TestMode::launch_test(SubTest t) {
         case SubTest::WhiteOut:     draw_whiteout();                      break;
         case SubTest::AudioLive:    enter_audio_live();                   break;
         case SubTest::Calibrate:    enter_calibrate();                    break;
+        case SubTest::WashTest:     enter_wash_test();                    break;
         default: break;
     }
 }
@@ -256,6 +257,9 @@ void TestMode::handle_button_in_test(const ButtonPressEvent& ev) {
         case SubTest::WhiteOut:    if (ev.id == ButtonId::Btn1) fire_whiteout(); break;
         case SubTest::Calibrate:
             handle_button_calibrate(ev);
+            break;
+        case SubTest::WashTest:
+            handle_button_wash_test(ev);
             break;
         default:
             // Continuous tests (Pulse/Fade/Rainbow/Sparkle/AudioLive)
@@ -868,6 +872,83 @@ void TestMode::draw_calibrate() {
                 10, 50, "Saved!", GREEN, BLACK, 3});
             break;
     }
+}
+
+// -------------------------------------------------------------------------
+// Wash Test (Epic 6C). Fire / Cancel picker; Btn2 cycles, Btn1 broadcasts.
+//
+// Both actions target "00:00" (every class, every group) so any capable
+// Lume in range reacts. The Stick's own LCD won't show the wash - the LCD
+// is UI in Test mode, not a light surface (that's Lume-only). To verify
+// visually, run a second Stick in Lume mode or a Tildagon Lume.
+// -------------------------------------------------------------------------
+
+void TestMode::enter_wash_test() {
+    step_index_   = 0;     // 0 = Fire selected, 1 = Cancel
+    last_step_ms_ = 0;     // no transmit yet -> no "Sent!" flash
+    draw_wash_test();
+}
+
+void TestMode::handle_button_wash_test(const ButtonPressEvent& ev) {
+    if (ev.kind != ButtonEvent::Pressed) return;
+    if (ev.id == ButtonId::Btn2) {
+        step_index_ = (step_index_ + 1) % kWashTestItemCount;
+        draw_wash_test();
+        return;
+    }
+    if (ev.id == ButtonId::Btn1) {
+        if (step_index_ == 0) {
+            // Fire: orange<->purple 5 s drift, 2.0 s attack, 1.0 s release,
+            // intensity 200, ttl=0 (infinite; cancelled explicitly),
+            // pulse_response=1 (accept LIGHT_PULSE as overlay).
+            LightWashEvent w{};
+            w.r1 = 255; w.g1 =  60; w.b1 =   0;
+            w.r2 = 120; w.g2 =  30; w.b2 = 200;
+            w.attack         = 20;
+            w.release        = 10;
+            w.intensity      = 200;
+            w.cycle_ms       = 5000;
+            w.ttl_seconds    = 0;
+            w.pulse_response = 1;
+            DAL::render_wash("00:00", w);
+        } else {
+            DAL::render_wash_end("00:00", /*release_time=*/10);   // 1.0 s
+        }
+        last_step_ms_ = millis();
+        draw_wash_test();
+    }
+}
+
+void TestMode::draw_wash_test() {
+    DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 5, "Wash Test", WHITE, BLACK, 2});
+
+    const char* lines[kWashTestItemCount] = {
+        "Fire test wash",
+        "Cancel wash",
+    };
+    for (size_t i = 0; i < kWashTestItemCount; ++i) {
+        const bool sel = (i == step_index_);
+        char buf[40];
+        std::snprintf(buf, sizeof(buf), "%s %s",
+                      sel ? ">" : " ", lines[i]);
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 35 + (int)i * 18, buf,
+            sel ? YELLOW : WHITE, BLACK, 2});
+    }
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 80, "broadcast to 00:00",
+        WHITE, BLACK, 1});
+
+    if (last_step_ms_ != 0 && (millis() - last_step_ms_) < kWashConfirmFlashMs) {
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 100, "Sent!", GREEN, BLACK, 2});
+    }
+
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 128, "B: cycle  A: fire  B-hold: back",
+        WHITE, BLACK, 1});
 }
 
 }  // namespace modes

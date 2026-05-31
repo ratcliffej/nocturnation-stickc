@@ -66,7 +66,6 @@ private:
         Dmx,
         PixMob,
         LevelTuning,
-        WashTest,           // Epic 6C Phase E: manual fire/cancel for the WASH family
         System,
     };
 
@@ -120,10 +119,12 @@ private:
     // standalone for bench work: manual injection drives the IR /
     // ESP-NOW path independently of audio so a developer can verify
     // the display + transport without playing music.
-    static constexpr PickerEntry kUtilities[3] = {
+    // Wash Test (Epic 6C) moved to Test Mode (test_mode.h) so it sits
+    // alongside the rest of the §8.5 hardware-verification catalogue;
+    // Utilities is for developer bench tools, not operator-facing tests.
+    static constexpr PickerEntry kUtilities[2] = {
         { SubMenu::PixMob,      "PixMob"       },
         { SubMenu::LevelTuning, "Level Tuning" },
-        { SubMenu::WashTest,    "Wash Test"    },
     };
     static constexpr size_t kUtilitiesCount =
         sizeof(kUtilities) / sizeof(kUtilities[0]);
@@ -230,24 +231,6 @@ private:
 
     void handle_display(const dal::ButtonPressEvent& ev);
     void draw_display();
-
-    // Wash Test submenu (Epic 6C Phase E). Operator-facing manual-fire
-    // utility for hardware verification of the WASH wire family,
-    // complementing the demo Show's Show-API path. Btn2 cycles between
-    // Fire / Cancel; Btn1 broadcasts the action to "00:00" (every class,
-    // every group) so every capable Lume in range reacts.
-    //   Fire   -> render_wash with orange<->purple drift, 5 s cycle,
-    //             2.0 s attack, 1.0 s release, intensity 200,
-    //             ttl=0, pulse_response=1.
-    //   Cancel -> render_wash_end with 1.0 s release.
-    enum class WashTestItem : uint8_t {
-        Fire = 0,
-        Cancel,
-    };
-    static constexpr size_t kWashTestItemCount = 2;
-
-    void handle_wash_test(const dal::ButtonPressEvent& ev);
-    void draw_wash_test();
 
     // IR submenu (functional: Enable toggle + Protocol info). PixMob
     // protocol IR group is now relay-driven via inbound target_group
