@@ -130,9 +130,10 @@ static void test_menu_btn2_cycles_then_btn1_selects_lume(void) {
 static void test_menu_cycle_wraps(void) {
     inject_button_press(hal::ButtonId::Btn1, hal::ButtonEvent::Pressed);  // Boot -> Menu
 
-    // Four Btn2 presses with a 4-item menu cycles back to start; Btn1 then
-    // selects Director (the first item).
-    for (int i = 0; i < 4; ++i) {
+    // Five Btn2 presses with a 5-item menu (Director / Lume / DmxBridge /
+    // Test / Config) cycles back to start; Btn1 then selects Director
+    // (the first item).
+    for (int i = 0; i < 5; ++i) {
         inject_button_press(hal::ButtonId::Btn2, hal::ButtonEvent::Pressed);
     }
     inject_button_press(hal::ButtonId::Btn1, hal::ButtonEvent::Pressed);
@@ -164,6 +165,11 @@ static void test_long_press_btnb_returns_to_menu_from_each_runtime_mode(void) {
 
     // From Test
     ModeMachine::switch_to(ModeId::Test);
+    inject_button_press(hal::ButtonId::Btn2, hal::ButtonEvent::LongPressed);
+    TEST_ASSERT_EQUAL_INT((int)ModeId::Menu, (int)ModeMachine::current());
+
+    // From DmxBridge (Epic 7 B3): B-hold returns to Menu, same gesture.
+    ModeMachine::switch_to(ModeId::DmxBridge);
     inject_button_press(hal::ButtonId::Btn2, hal::ButtonEvent::LongPressed);
     TEST_ASSERT_EQUAL_INT((int)ModeId::Menu, (int)ModeMachine::current());
 }

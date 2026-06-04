@@ -1,4 +1,9 @@
 // DmxUsbCdcAdapter implementation - Epic 7 B1.5.
+//
+// Binds to the global Arduino `Serial` object. Its type differs per
+// board (HardwareSerial on Plus2; HWCDC on S3 with ARDUINO_USB_CDC_ON_BOOT)
+// but both expose begin(baud) / end() / available() / read() so the
+// calls below are source-compatible.
 
 #include "dmx_usb_cdc_adapter.h"
 
@@ -9,15 +14,14 @@
 namespace nocturnation {
 namespace dal {
 
-DmxUsbCdcAdapter::DmxUsbCdcAdapter(HardwareSerial& serial)
-    : serial_(serial) {}
+DmxUsbCdcAdapter::DmxUsbCdcAdapter() = default;
 
 void DmxUsbCdcAdapter::begin(uint32_t baud) {
 #ifdef ARDUINO
     // Close any prior open (no-op if Serial was never begun) so the
     // baud change reliably takes effect.
-    serial_.end();
-    serial_.begin(baud);
+    Serial.end();
+    Serial.begin(baud);
 #else
     (void)baud;
 #endif
@@ -29,7 +33,7 @@ void DmxUsbCdcAdapter::begin(uint32_t baud) {
 
 void DmxUsbCdcAdapter::end() {
 #ifdef ARDUINO
-    serial_.end();
+    Serial.end();
 #endif
     active_ = false;
 }
@@ -42,8 +46,8 @@ size_t DmxUsbCdcAdapter::poll() {
     // the receive buffer fill, which can be hundreds of bytes if poll
     // hasn't run in a while. The parser is cheap per byte (one switch +
     // one assignment); a few hundred bytes is fine inside a 50 ms tick.
-    while (serial_.available() > 0) {
-        const int b = serial_.read();
+    while (Serial.available() > 0) {
+        const int b = Serial.read();
         if (b < 0) break;   // belt-and-braces; available() said >0
         ++bytes_read_;
         if (parser_.feed_byte(static_cast<uint8_t>(b))

@@ -23,10 +23,16 @@
 
 #include "dmx_input_parser.h"
 
-class HardwareSerial;     // Arduino forward-declaration
-
 namespace nocturnation {
 namespace dal {
+
+// The adapter operates against the global Arduino `Serial` object,
+// whose type differs by board (`HardwareSerial` on the Plus2's UART
+// USB-CDC vs `HWCDC` on the S3's native USB-CDC). Rather than carry a
+// templated reference, the adapter reaches `Serial` directly from
+// the impl's translation unit - one less generic to maintain, and
+// the binding to the global is fine for v1 (we never want to bridge
+// DMX over anything other than the StickC's primary USB-CDC).
 
 class DmxUsbCdcAdapter {
 public:
@@ -35,10 +41,7 @@ public:
     // something different.
     static constexpr uint32_t kDefaultBaud = 921600;
 
-    // Construct against a reference to the Arduino HardwareSerial the
-    // adapter will pump (typically the global `Serial`). The reference
-    // is held by the adapter; the caller owns the Serial's lifecycle.
-    explicit DmxUsbCdcAdapter(HardwareSerial& serial);
+    DmxUsbCdcAdapter();
 
     // Open the serial at the DMX baud and reset the parser. Idempotent:
     // calling begin() while already active simply re-runs the baud
@@ -72,7 +75,6 @@ public:
     uint32_t bytes_read() const { return bytes_read_; }
 
 private:
-    HardwareSerial& serial_;
     DmxInputParser  parser_;
     bool            active_     = false;
     uint32_t        bytes_read_ = 0;

@@ -64,6 +64,12 @@ static constexpr Capability kCapabilities[] = {
     Capability::AnalyserDropDetection,
     Capability::AnalyserSpectrumFrame,
     Capability::AnalyserBandSummary,
+
+    // Epic 7: the USB-CDC peripheral can carry an Enttec Pro DMX
+    // stream at 921 600 baud while DmxBridge mode is active. Mode-
+    // entry switches Serial off the 115 200 console rate; mode-exit
+    // restores it.
+    Capability::DmxInput,
 };
 static constexpr size_t kCapabilityCount =
     sizeof(kCapabilities) / sizeof(kCapabilities[0]);

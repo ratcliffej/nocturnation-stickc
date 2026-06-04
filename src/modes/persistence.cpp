@@ -21,7 +21,8 @@ bool is_persisted_runtime_mode(ModeId m) {
     return m == ModeId::Director
         || m == ModeId::Lume
         || m == ModeId::Config
-        || m == ModeId::Test;
+        || m == ModeId::Test
+        || m == ModeId::DmxBridge;
 }
 
 #ifdef ARDUINO

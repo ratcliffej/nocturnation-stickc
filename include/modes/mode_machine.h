@@ -45,6 +45,7 @@ enum class ModeId : uint8_t {
     Lume              = 3,
     Config            = 4,
     Test              = 5,
+    DmxBridge         = 6,    // Epic 7: QLC+ → USB-CDC DMX → ESP-NOW broadcast
 };
 
 // =============================================================================
