@@ -69,6 +69,7 @@ void DirectorMode::enter() {
     paused_                    = false;
     overlay_                   = Overlay::None;
     overlay_cursor_            = 0;
+    overlay_view_offset_       = 0;
     descriptor_delivered_      = false;
     last_centroid_delivered_   = 0;
     last_energy_delivered_     = 0;
@@ -239,6 +240,7 @@ void DirectorMode::on_input_action(const InputEvent& ev) {
             case InputAction::Cycle: {
                 const size_t n = picker_row_count();
                 if (n > 0) overlay_cursor_ = (overlay_cursor_ + 1) % n;
+                update_overlay_view_offset(n);
                 draw();
                 return;
             }
@@ -258,6 +260,7 @@ void DirectorMode::on_input_action(const InputEvent& ev) {
             case InputAction::Cycle: {
                 const size_t n = settings_row_count();
                 if (n > 0) overlay_cursor_ = (overlay_cursor_ + 1) % n;
+                update_overlay_view_offset(n);
                 draw();
                 return;
             }
@@ -272,13 +275,15 @@ void DirectorMode::on_input_action(const InputEvent& ev) {
     // Overlay::None - base action set.
     switch (ev.action) {
         case InputAction::Picker:
-            overlay_        = Overlay::Picker;
-            overlay_cursor_ = 0;
+            overlay_             = Overlay::Picker;
+            overlay_cursor_      = 0;
+            overlay_view_offset_ = 0;
             draw();
             return;
         case InputAction::Settings:
-            overlay_        = Overlay::Settings;
-            overlay_cursor_ = 0;
+            overlay_             = Overlay::Settings;
+            overlay_cursor_      = 0;
+            overlay_view_offset_ = 0;
             draw();
             return;
         case InputAction::Pause:
@@ -453,6 +458,22 @@ void DirectorMode::draw() {
     }
 }
 
+void DirectorMode::update_overlay_view_offset(size_t row_count) {
+    if (row_count <= kOverlayMaxVisible) {
+        overlay_view_offset_ = 0;
+        return;
+    }
+    // Keep the cursor inside [view_offset, view_offset + kOverlayMaxVisible - 1].
+    if (overlay_cursor_ < overlay_view_offset_) {
+        overlay_view_offset_ = overlay_cursor_;
+    } else if (overlay_cursor_ >= overlay_view_offset_ + kOverlayMaxVisible) {
+        overlay_view_offset_ = overlay_cursor_ - kOverlayMaxVisible + 1;
+    }
+    if (overlay_view_offset_ + kOverlayMaxVisible > row_count) {
+        overlay_view_offset_ = row_count - kOverlayMaxVisible;
+    }
+}
+
 void DirectorMode::draw_picker() {
     DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
@@ -460,8 +481,11 @@ void DirectorMode::draw_picker() {
 
     const size_t show_count = show_registry().count();
     const size_t rows = picker_row_count();
+    const size_t end = (overlay_view_offset_ + kOverlayMaxVisible < rows)
+        ? overlay_view_offset_ + kOverlayMaxVisible
+        : rows;
     int y = 30;
-    for (size_t i = 0; i < rows; ++i) {
+    for (size_t i = overlay_view_offset_; i < end; ++i) {
         const bool sel = (i == overlay_cursor_);
         char buf[40];
         if (i < show_count) {
@@ -484,6 +508,17 @@ void DirectorMode::draw_picker() {
         y += 18;
     }
 
+    // Scroll indicators: small chevrons at the top-right / bottom-right
+    // when content extends past the visible window in either direction.
+    if (overlay_view_offset_ > 0) {
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            225, 30, "^", WHITE, BLACK, 1});
+    }
+    if (end < rows) {
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            225, 118, "v", WHITE, BLACK, 1});
+    }
+
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         10, 128, "B: cycle  A: select  B-hold: close",
         WHITE, BLACK, 1});
@@ -494,19 +529,25 @@ void DirectorMode::draw_settings() {
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         10, 5, "Settings", WHITE, BLACK, 2});
 
+    if (!active_show_ || !ctx_) {
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 128, "B: cycle  A: edit  A-hold: close",
+            WHITE, BLACK, 1});
+        return;
+    }
+
+    const auto props = active_show_->properties();
+    const size_t total_rows = settings_row_count();
+    const size_t end = (overlay_view_offset_ + kOverlayMaxVisible < total_rows)
+        ? overlay_view_offset_ + kOverlayMaxVisible
+        : total_rows;
     int y = 30;
-    if (active_show_ && ctx_) {
-        const auto props = active_show_->properties();
-        if (props.size == 0) {
-            DAL::fire_display_show_text("local", DisplayShowTextEvent{
-                10, y, "No settings", WHITE, BLACK, 2});
-            y += 18;
-        }
-        for (size_t i = 0; i < props.size; ++i) {
+    for (size_t i = overlay_view_offset_; i < end; ++i) {
+        const bool sel = (i == overlay_cursor_);
+        char buf[40];
+        if (i < props.size) {
             const PropertyDef& def = props[i];
             const PropertyValue v  = ctx_->get_property(def.key);
-            const bool sel = (i == overlay_cursor_);
-            char buf[40];
             switch (def.type) {
                 case PropertyType::Bool:
                     std::snprintf(buf, sizeof(buf), "%s %s: %s",
@@ -541,21 +582,24 @@ void DirectorMode::draw_settings() {
                                   (unsigned long)(v.as_colour() & 0xFFFFFF));
                     break;
             }
-            DAL::fire_display_show_text("local", DisplayShowTextEvent{
-                10, y, buf, sel ? YELLOW : WHITE, BLACK, 2});
-            y += 18;
+        } else {
+            // The "<- Back" sentinel row (always the last index).
+            std::snprintf(buf, sizeof(buf), "%s %s",
+                          sel ? ">" : " ", "<- Back");
         }
-    }
-
-    // "<- Back" row sentinel.
-    {
-        const size_t back_row = settings_row_count() - 1;
-        const bool sel = (overlay_cursor_ == back_row);
-        char buf[24];
-        std::snprintf(buf, sizeof(buf), "%s %s",
-                      sel ? ">" : " ", "<- Back");
         DAL::fire_display_show_text("local", DisplayShowTextEvent{
             10, y, buf, sel ? YELLOW : WHITE, BLACK, 2});
+        y += 18;
+    }
+
+    // Scroll indicators - chevrons when content extends past the window.
+    if (overlay_view_offset_ > 0) {
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            225, 30, "^", WHITE, BLACK, 1});
+    }
+    if (end < total_rows) {
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            225, 118, "v", WHITE, BLACK, 1});
     }
 
     DAL::fire_display_show_text("local", DisplayShowTextEvent{

@@ -20,6 +20,7 @@
 #include "shows/simple_beat_show.h"
 #include "shows/dynamic_show.h"
 #include "shows/wash_demo_show.h"
+#include "shows/bass_and_drift_show.h"
 #include "output_bindings/output_binding_registry.h"
 #include "output_bindings/local_display.h"
 #include "output_bindings/pixmob_ir.h"
@@ -51,6 +52,11 @@ void setup() {
     // overlay / render_wash_end end-to-end against the Phase F renderer.
     nocturnation::shows::show_registry().register_plugin(
         nocturnation::shows::wash_demo_show_instance());
+    // Epic 6D B2: reference reactive Show. The section/phrase/beat
+    // three-timescale model from architecture.md §1.2, with manual drop
+    // override on Btn1 and palette cycling on Btn2.
+    nocturnation::shows::show_registry().register_plugin(
+        nocturnation::shows::bass_and_drift_show_instance());
 
     // Register Lume-side output bindings (Epic 4.6 Block 9). LumeMode
     // walks this registry on enter() and activates every binding whose
