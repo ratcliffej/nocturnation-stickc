@@ -21,6 +21,15 @@ void DmxUsbCdcAdapter::begin(uint32_t baud) {
     // Close any prior open (no-op if Serial was never begun) so the
     // baud change reliably takes effect.
     Serial.end();
+    // Enlarge the RX buffer before begin(). Default on Arduino-ESP32
+    // is 256 bytes; at 921 600 baud the shim writes ~22.8 KB/s, and
+    // DmxBridgeMode polls roughly every 50 ms (~1.1 KB per tick) -
+    // the default buffer overflows ~4x per tick and drops bulk
+    // chunks of every frame mid-payload. Parser stays in ReadData
+    // forever, bytes_read climbs but frame_count stays at 0. 4 KB
+    // covers ~7 frames of headroom, comfortably above what poll()
+    // can drain between ticks.
+    Serial.setRxBufferSize(4096);
     Serial.begin(baud);
 #else
     (void)baud;
