@@ -18,11 +18,15 @@ namespace modes {
 namespace persistence {
 
 bool is_persisted_runtime_mode(ModeId m) {
+    // DmxBridge is intentionally NOT persisted: per Q4 (revised
+    // 2026-06-05), it's a sub-mode of Director reached via the
+    // picker, not a top-level mode the boot path should remember.
+    // On reboot the operator lands back in Director and explicitly
+    // re-enters DMX Bridge if they want it.
     return m == ModeId::Director
         || m == ModeId::Lume
         || m == ModeId::Config
-        || m == ModeId::Test
-        || m == ModeId::DmxBridge;
+        || m == ModeId::Test;
 }
 
 #ifdef ARDUINO

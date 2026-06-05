@@ -24,10 +24,12 @@ struct MenuItem {
 constexpr MenuItem kMenuItems[] = {
     { ModeId::Director,  "Director Mode" },
     { ModeId::Lume,      "Lume Mode"     },
-    { ModeId::DmxBridge, "DMX Bridge"    },
     { ModeId::Test,      "Test"          },
     { ModeId::Config,    "Config"        },
 };
+// DmxBridge was a top-level menu entry in the original Epic 7 B3 cut.
+// Revised 2026-06-05 (Q4): it's now a Director-mode picker entry
+// instead. See src/modes/director_mode.cpp::on_picker_confirm.
 constexpr size_t kMenuItemCount = sizeof(kMenuItems) / sizeof(kMenuItems[0]);
 
 }  // namespace

@@ -122,10 +122,14 @@ private:
     void draw_picker();
     void draw_settings();
 
-    // Picker uses a contiguous index space: [0..count-1] = registered
-    // shows, [count] = "<- Menu" sentinel.
+    // Picker uses a contiguous index space:
+    //   [0..count-1]   = registered shows
+    //   [count]        = "DMX Bridge" entry (Epic 7 Q4 - external input
+    //                    source replaces local interaction)
+    //   [count+1]      = "<- Menu" sentinel
     size_t picker_row_count() const;
     bool   picker_row_is_back(size_t row) const;
+    bool   picker_row_is_dmx_bridge(size_t row) const;
 
     // Settings uses an analogous space: [0..props.size-1] = properties,
     // [props.size] = "<- Back" sentinel.
