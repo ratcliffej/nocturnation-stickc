@@ -66,14 +66,62 @@ void restore_console_serial() {}
 
 }  // namespace
 
+// Definitions of the static layout arrays so they get a single linkage
+// home; the in-class initialisers are only declarations under C++17.
+constexpr uint16_t DmxBridgeMode::kBlockBase[DmxBridgeMode::kBlockCount];
+constexpr uint16_t DmxBridgeMode::kBlockSize[DmxBridgeMode::kBlockCount];
+
+DmxBridgeMode::DmxBridgeMode()
+    : mapper_broadcast_(0),
+      mapper_g1_(1),
+      mapper_g2_(2),
+      mapper_g3_(3),
+      mapper_g4_(4),
+      mapper_g5_(5),
+      mapper_g6_(6),
+      mapper_g7_(7),
+      mapper_g8_(8),
+      mapper_g9_(9) {}
+
+DmxChannelMapper* DmxBridgeMode::mapper_at(size_t i) {
+    switch (i) {
+        case 0: return &mapper_broadcast_;
+        case 1: return &mapper_g1_;
+        case 2: return &mapper_g2_;
+        case 3: return &mapper_g3_;
+        case 4: return &mapper_g4_;
+        case 5: return &mapper_g5_;
+        case 6: return &mapper_g6_;
+        case 7: return &mapper_g7_;
+        case 8: return &mapper_g8_;
+        case 9: return &mapper_g9_;
+        default: return nullptr;
+    }
+}
+
+void DmxBridgeMode::run_mappers(const uint8_t* universe_buf,
+                                uint16_t copied,
+                                uint32_t now) {
+    for (size_t i = 0; i < kBlockCount; ++i) {
+        const uint16_t base = kBlockBase[i];
+        const uint16_t size = kBlockSize[i];
+        // Skip blocks the parser slice doesn't reach. A short slice
+        // means a partial DMX-512 packet (rare with QLC+, which always
+        // fills the universe); skipping is safer than reading past.
+        if (copied < base + size) continue;
+        mapper_at(i)->process(universe_buf + base, size, now, s_sink);
+    }
+}
+
 void DmxBridgeMode::enter() {
     enter_ms_           = millis();
     last_draw_ms_       = 0;
     last_frame_seen_ms_ = 0;
     last_frame_count_   = 0;
 
-    mapper_.reset();
-    mapper_.set_target(kBroadcastTarget);
+    for (size_t i = 0; i < kBlockCount; ++i) {
+        mapper_at(i)->reset();
+    }
 
     // Bring up the radio so mapper-emitted LIGHT_PULSE / LIGHT_WASH
     // events reach the fleet. Reuses the same broadcast driver
@@ -94,7 +142,9 @@ void DmxBridgeMode::enter() {
 void DmxBridgeMode::exit() {
     // Clear the last wash on the fleet so they don't get stuck holding
     // an LD-painted baseline after the mode unloads. 1.0 s release.
-    DAL::render_wash_end(kBroadcastTarget, /*release_time=*/10);
+    // Broadcast target (target_group=0) reaches every Lume regardless
+    // of which group they're configured for.
+    DAL::render_wash_end(kExitClearTarget, /*release_time=*/10);
 
     if (DmxUsbCdcAdapter* adapter = dmx_adapter_or_null()) {
         adapter->end();
@@ -113,37 +163,21 @@ void DmxBridgeMode::loop_tick() {
     DmxUsbCdcAdapter* adapter = dmx_adapter_or_null();
     if (adapter != nullptr) {
         const size_t fresh = adapter->poll();
+        const bool   have_data =
+            (fresh > 0) || (last_frame_seen_ms_ != 0);
         if (fresh > 0) {
             last_frame_seen_ms_ = now;
-
-            // Each fresh frame potentially updates the 512-byte channel
-            // table on the receive side; the parser exposes the most
-            // recently completed frame's payload directly. Walk channels
-            // 1..12 (skipping the start code at payload[0]) and feed the
-            // mapper.
+        }
+        if (have_data) {
+            // Pull the latest channel slice from the parser into our
+            // own buffer. parser.last_payload survives across ticks,
+            // so strobe cadence keeps firing on schedule even when no
+            // new frame arrived.
             const DmxInputParser& parser = adapter->parser();
             if (parser.last_was_dmx_packet()) {
-                uint8_t ch[DmxChannelMapper::kChannelsPerGroup] = {0};
                 const uint16_t copied =
-                    parser.copy_dmx_channels(ch, sizeof(ch));
-                if (copied >= DmxChannelMapper::kChannelsPerGroup) {
-                    mapper_.process(ch, copied, now, s_sink);
-                }
-            }
-        } else if (last_frame_seen_ms_ != 0) {
-            // No fresh frame this tick, but the strobe cadence still
-            // wants to fire on schedule. Re-run process() against the
-            // last-known channel state so timed-strobe pulses keep
-            // emitting. (Note: parser's last_payload is preserved across
-            // ticks even when no new frame arrives.)
-            const DmxInputParser& parser = adapter->parser();
-            if (parser.last_was_dmx_packet()) {
-                uint8_t ch[DmxChannelMapper::kChannelsPerGroup] = {0};
-                const uint16_t copied =
-                    parser.copy_dmx_channels(ch, sizeof(ch));
-                if (copied >= DmxChannelMapper::kChannelsPerGroup) {
-                    mapper_.process(ch, copied, now, s_sink);
-                }
+                    parser.copy_dmx_channels(universe_, kUniverseBufferSize);
+                run_mappers(universe_, copied, now);
             }
         }
     }
