@@ -46,33 +46,40 @@ public:
     // ~30 missed QLC+ frames at the default 35-44 Hz rate.
     static constexpr uint32_t kIdleAfterMs = 750;
 
-    // B7: per-group block layout. The DMX universe is sliced into one
-    // broadcast block (addresses 1-49 -> target_group=0) plus 9 group
-    // blocks (addresses 50-99 -> tg=1, 100-149 -> tg=2, ..., 450-499
-    // -> tg=9). Each block has its own mapper instance with its own
-    // change-detection state; only blocks whose channels move emit.
-    static constexpr size_t kBlockCount = 10;
+    // B7: per-group block layout. The DMX universe is sliced into
+    // seven uniform 40-channel blocks (broadcast + 6 groups). Each
+    // block has its own mapper instance with its own change-detection
+    // state; only blocks whose channels move emit. 23 active channels
+    // per block (the rest reserved for future expansion); 280
+    // addresses consumed of the 512-channel universe (232 spare).
+    //
+    //   Addresses 1-40    -> broadcast (target_group=0)
+    //   Addresses 41-80   -> group 1
+    //   Addresses 81-120  -> group 2
+    //   Addresses 121-160 -> group 3
+    //   Addresses 161-200 -> group 4
+    //   Addresses 201-240 -> group 5
+    //   Addresses 241-280 -> group 6
+    static constexpr size_t kBlockCount = 7;
 
     // Base offset of each block in the parser's 0-indexed channel
-    // buffer (universe[0] = DMX channel 1). Broadcast starts at 0;
-    // group N starts at 49 + 50*(N-1).
+    // buffer (universe[0] = DMX channel 1). Block N at offset N*40.
     static constexpr uint16_t kBlockBase[kBlockCount] = {
-        0,    // broadcast: addresses 1..49
-        49,   // group 1: addresses 50..99
-        99,   // group 2
-        149,  // group 3
-        199,  // group 4
-        249,  // group 5
-        299,  // group 6
-        349,  // group 7
-        399,  // group 8
-        449,  // group 9 - last DMX channel is 499 (universe channel 500)
+        0,    // broadcast: addresses 1..40
+        40,   // group 1: addresses 41..80
+        80,   // group 2
+        120,  // group 3
+        160,  // group 4
+        200,  // group 5
+        240,  // group 6 - last DMX channel is 280
     };
 
-    // Per-block channel count. Broadcast is 49 (DMX 1-indexed gives
-    // 49 addresses in the 1..49 range); group blocks are 50 each.
+    // Per-block channel count. Uniform 40 channels per block - no
+    // off-by-one between broadcast and groups, which simplifies both
+    // the QLC+ fixture file (single mode) and the operator mental
+    // model.
     static constexpr uint16_t kBlockSize[kBlockCount] = {
-        49, 50, 50, 50, 50, 50, 50, 50, 50, 50,
+        40, 40, 40, 40, 40, 40, 40,
     };
 
 private:
@@ -86,14 +93,11 @@ private:
     dal::DmxChannelMapper mapper_g4_;
     dal::DmxChannelMapper mapper_g5_;
     dal::DmxChannelMapper mapper_g6_;
-    dal::DmxChannelMapper mapper_g7_;
-    dal::DmxChannelMapper mapper_g8_;
-    dal::DmxChannelMapper mapper_g9_;
 
     // Indexed access for iteration in loop_tick().
     dal::DmxChannelMapper* mapper_at(size_t i);
 
-    // Fan one freshly-parsed DMX frame across all 10 mapper blocks.
+    // Fan one freshly-parsed DMX frame across all 7 mapper blocks.
     // Reads the parser slice in `universe_buf`, applies per-block
     // change detection (the mapper does the actual work), and emits
     // only for blocks whose channels moved. `copied` is the parser's
@@ -102,9 +106,9 @@ private:
                      uint16_t copied,
                      uint32_t now);
 
-    // Buffer reused across ticks. 500 bytes covers all 10 blocks
-    // (last block ends at channel 499). Static-sized to avoid heap.
-    static constexpr uint16_t kUniverseBufferSize = 500;
+    // Buffer reused across ticks. 280 bytes covers all 7 blocks
+    // (last block ends at channel 280). Static-sized to avoid heap.
+    static constexpr uint16_t kUniverseBufferSize = 280;
 
     // Target the bridge LIGHT_WASH_END's at on mode exit so the wash
     // is cleared on EVERY group, not just broadcast. "00:00" reaches

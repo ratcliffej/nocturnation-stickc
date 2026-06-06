@@ -78,10 +78,7 @@ DmxBridgeMode::DmxBridgeMode()
       mapper_g3_(3),
       mapper_g4_(4),
       mapper_g5_(5),
-      mapper_g6_(6),
-      mapper_g7_(7),
-      mapper_g8_(8),
-      mapper_g9_(9) {}
+      mapper_g6_(6) {}
 
 DmxChannelMapper* DmxBridgeMode::mapper_at(size_t i) {
     switch (i) {
@@ -92,9 +89,6 @@ DmxChannelMapper* DmxBridgeMode::mapper_at(size_t i) {
         case 4: return &mapper_g4_;
         case 5: return &mapper_g5_;
         case 6: return &mapper_g6_;
-        case 7: return &mapper_g7_;
-        case 8: return &mapper_g8_;
-        case 9: return &mapper_g9_;
         default: return nullptr;
     }
 }
