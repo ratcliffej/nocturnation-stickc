@@ -29,14 +29,19 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "transport/espnow/protocol_constants_generated.h"
+
 namespace nocturnation {
 namespace transport {
 namespace espnow {
 
-// Header constants (spec §3.1)
-constexpr uint8_t kMagic0            = 0x4E;  // 'N' - NocturNation discriminator byte 0
-constexpr uint8_t kMagic1            = 0x4E;  // 'N' - NocturNation discriminator byte 1
-constexpr uint8_t kProtocolVersion   = 0x02;  // bumped from 0x01 for the magic-prefix wire change
+// kMagic0 / kMagic1 / kProtocolVersion / kHeaderSize, the MessageType
+// enum, and the kXxxPayloadLen constants live in
+// protocol_constants_generated.h (auto-generated from
+// Docs/protocol/constants.yaml; do not hand-edit). Everything below
+// remains manually authored: struct layouts, function decls, source-
+// id ranges, hop-count cap, frame-size ceiling.
+
 constexpr uint8_t kBroadcastSourceId = 0xFF;
 
 // Source-id partitioning per protocol manual §3.4. Channel 1 uses the
@@ -56,34 +61,20 @@ constexpr bool is_performance_range(uint8_t source_id) {
            source_id <= kSourceIdPerformanceMax;
 }
 
-constexpr uint8_t kHeaderSize        = 8;     // 2 magic + 1 version + 5 metadata
 constexpr uint8_t kMaxHopCount       = 3;
 
 // ESP-NOW supports up to 250-byte payloads. We cap NocturNation frames much
-// smaller; the largest active v2 payload is LIGHT_PULSE at 9 bytes, so a
+// smaller; the largest active v2 payload is LIGHT_WASH at 16 bytes, so a
 // 32-byte working ceiling leaves room for future message types.
 constexpr uint8_t kMaxFrameSize   = 32;
 constexpr uint8_t kMaxPayloadSize = kMaxFrameSize - kHeaderSize;   // = 24
 
-// Per spec v0.29 §4.3, the protocol has exactly two active message
-// types: HEARTBEAT and LIGHT_PULSE. Numeric IDs 0x01, 0x02, 0x04,
-// 0x05, 0x06 are RESERVED (do not reuse) - they were assigned to
-// earlier-draft message types that never had a real consumer or
-// were folded into HEARTBEAT's payload. See spec §4.3 "Messages
-// removed from earlier drafts" for the per-ID rationale. 0x07-0xFE
-// are unassigned; 0xFF is the Extension slot for v2.
-enum class MessageType : uint8_t {
-    Heartbeat      = 0x00,
-    // 0x01 reserved - was BEAT_DETECTED (no Lume-side consumer ever existed)
-    // 0x02 reserved - was MODE_CHANGE (mode transitions are implicit in LIGHT_PULSE traffic)
-    LightPulse     = 0x03,
-    // 0x04 reserved - was CLOCK_SYNC (folded into HEARTBEAT.tick)
-    // 0x05 reserved - was TIME_SYNC (folded into HEARTBEAT.days_since_2026 + .centiseconds_today)
-    LightWash      = 0x06,   // Epic 6C Phase D - reclaims the v0.27-deprecated MUSIC_EVENT slot
-    LightWashEnd   = 0x07,
-    LightWashPulse = 0x08,
-    Extension      = 0xFF,
-};
+// Per spec v0.29 §4.3, IDs 0x01, 0x02, 0x04, 0x05 are RESERVED (do
+// not reuse) - they were assigned to earlier-draft message types that
+// never had a real consumer or were folded into HEARTBEAT's payload.
+// See spec §4.3 "Messages removed from earlier drafts" for the per-ID
+// rationale. 0x07-0x08 are LIGHT_WASH_END / LIGHT_WASH_PULSE, 0x09-0xFE
+// are unassigned, 0xFF is the Extension slot for v2.
 
 struct Header {
     uint8_t     protocol_version;  // forced to kProtocolVersion by encoders
@@ -109,7 +100,7 @@ struct HeartbeatPayload {
     uint16_t days_since_2026;      // u16 little-endian; 0 if Director has no wall clock
     uint32_t centiseconds_today;   // u24 little-endian; high byte ignored on encode; 0 if no wall clock
 };
-constexpr uint8_t kHeartbeatPayloadLen = 9;   // 4 + 2 + 3
+// kHeartbeatPayloadLen lives in protocol_constants_generated.h (= 9 = 4 + 2 + 3).
 
 struct LightPulsePayload {
     uint8_t target_class;          // 0 = all classes; see hal::DeviceClass enum (Epic 4.65)
@@ -122,7 +113,7 @@ struct LightPulsePayload {
     uint8_t release;               // pixmob::Time index
     uint8_t chance;                // pixmob::Chance index
 };
-constexpr uint8_t kLightPulsePayloadLen = 9;
+// kLightPulsePayloadLen lives in protocol_constants_generated.h.
 
 // LIGHT_WASH payload (Epic 6C Phase D). A persistent background wash on
 // capable Lumes - the §1.2 lighting-design baseline that PULSE punctuates.
@@ -147,7 +138,7 @@ struct LightWashPayload {
 // + attack(1) + release(1) + intensity(1) + cycle_ms(2 LE) + ttl_seconds(2 LE)
 // + pulse_response(1). (The Notion source-prompt v0.3 mis-stated this as
 // 17 - arithmetic error; corrected here and in the design doc.)
-constexpr uint8_t kLightWashPayloadLen = 16;
+// kLightWashPayloadLen lives in protocol_constants_generated.h.
 
 // LIGHT_WASH_END payload (Epic 6C Phase D). Explicit cancel of an active
 // wash on the addressed target(s). release_time (100 ms units) overrides
@@ -157,7 +148,7 @@ struct LightWashEndPayload {
     uint8_t target_group;
     uint8_t release_time;          // 100 ms units; fade from instantaneous wash to black over this duration
 };
-constexpr uint8_t kLightWashEndPayloadLen = 3;
+// kLightWashEndPayloadLen lives in protocol_constants_generated.h.
 
 // LIGHT_WASH_PULSE payload (Epic 6C Phase D). Identical to LightPulsePayload
 // on the wire; differs only in dispatch semantics - it fires only on Lumes
@@ -176,7 +167,7 @@ struct LightWashPulsePayload {
     uint8_t release;
     uint8_t chance;
 };
-constexpr uint8_t kLightWashPulsePayloadLen = 9;
+// kLightWashPulsePayloadLen lives in protocol_constants_generated.h.
 
 // =============================================================================
 // Result codes
