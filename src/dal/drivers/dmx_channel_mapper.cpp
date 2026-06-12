@@ -61,9 +61,6 @@ void DmxChannelMapper::reset() {
     last_wash_attack_          = 0;
     last_wash_release_         = 0;
     last_wash_cycle_           = 0;
-    last_wash_ttl_lo_          = 0;
-    last_wash_ttl_hi_          = 0;
-    last_wash_pulse_response_  = 0;
     last_wash_emit_ms_         = 0;
     last_strobe_rate_          = 0;
     next_strobe_fire_ms_       = 0;
@@ -156,28 +153,13 @@ void DmxChannelMapper::maybe_emit_wash_on_change(const uint8_t* ch,
     const uint8_t attack_100ms  = ch[kWashAttack];
     const uint8_t release_100ms = ch[kWashRelease];
 
-    // TTL is a 16-bit LE pair on the wire; QLC+ exposes it as two
-    // channels (Lo + Hi) since 50ms-resolution single-byte (0-25.5s)
-    // wouldn't cover the LD's want of "10-minute auto-end" for
-    // unattended runs.
-    const uint8_t  ttl_lo = ch[kWashTtlLo];
-    const uint8_t  ttl_hi = ch[kWashTtlHi];
-    const uint16_t ttl_seconds =
-        static_cast<uint16_t>(ttl_lo)
-        | (static_cast<uint16_t>(ttl_hi) << 8);
-
-    const uint8_t pulse_response = (ch[kWashPulseResponse] >= 128) ? 1 : 0;
-
     const bool changed =
         (r1 != last_anchor_r1_) || (g1 != last_anchor_g1_) || (b1 != last_anchor_b1_) ||
         (r2 != last_anchor_r2_) || (g2 != last_anchor_g2_) || (b2 != last_anchor_b2_) ||
         (wash_intensity   != last_wash_intensity_)        ||
         (attack_100ms     != last_wash_attack_)           ||
         (release_100ms    != last_wash_release_)          ||
-        (cycle_raw        != last_wash_cycle_)            ||
-        (ttl_lo           != last_wash_ttl_lo_)           ||
-        (ttl_hi           != last_wash_ttl_hi_)           ||
-        (pulse_response   != last_wash_pulse_response_);
+        (cycle_raw        != last_wash_cycle_);
 
     if (!wash_seeded_ || changed) {
         if (wash_seeded_ && (now_ms - last_wash_emit_ms_) < kMinWashEmitGapMs) {
@@ -191,8 +173,14 @@ void DmxChannelMapper::maybe_emit_wash_on_change(const uint8_t* ch,
         ev.release        = release_100ms;
         ev.intensity      = wash_intensity;
         ev.cycle_ms       = cycle_ms;
-        ev.ttl_seconds    = ttl_seconds;
-        ev.pulse_response = pulse_response;
+        // ttl_seconds and pulse_response are no longer LD-exposed.
+        // ttl=0 leans on the receiver-side 30-minute lost-WASH_END
+        // failsafe (epic-08); pulse_response=1 lets sparkle land on
+        // washes by default - the wire protocol still carries both
+        // fields for non-DMX Directors that want to express
+        // "pure wash, no pulses" or timed washes.
+        ev.ttl_seconds    = 0;
+        ev.pulse_response = 1;
         sink.on_wash(target_, ev);
 
         last_anchor_r1_           = r1; last_anchor_g1_ = g1; last_anchor_b1_ = b1;
@@ -201,9 +189,6 @@ void DmxChannelMapper::maybe_emit_wash_on_change(const uint8_t* ch,
         last_wash_attack_         = attack_100ms;
         last_wash_release_        = release_100ms;
         last_wash_cycle_          = cycle_raw;
-        last_wash_ttl_lo_         = ttl_lo;
-        last_wash_ttl_hi_         = ttl_hi;
-        last_wash_pulse_response_ = pulse_response;
         last_wash_emit_ms_        = now_ms;
         wash_seeded_              = true;
     }

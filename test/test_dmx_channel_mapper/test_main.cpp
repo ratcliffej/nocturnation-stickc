@@ -107,7 +107,11 @@ static void test_first_call_emits_initial_wash(void) {
     TEST_ASSERT_EQUAL_UINT8(0,  sink.washes[0].ev.r1);
     TEST_ASSERT_EQUAL_UINT8(0,  sink.washes[0].ev.intensity);
     TEST_ASSERT_EQUAL_UINT16(0, sink.washes[0].ev.cycle_ms);
-    TEST_ASSERT_EQUAL_UINT8(0,  sink.washes[0].ev.pulse_response);
+    // Hardcoded receiver-friendly defaults (no longer LD-exposed):
+    // ttl=0 (30-min failsafe takes over), pulse_response=1 (sparkle
+    // on wash works by default).
+    TEST_ASSERT_EQUAL_UINT16(0, sink.washes[0].ev.ttl_seconds);
+    TEST_ASSERT_EQUAL_UINT8 (1, sink.washes[0].ev.pulse_response);
 }
 
 static void test_unchanged_channels_no_reemit(void) {
@@ -175,35 +179,24 @@ static void test_intensity_change_reemits_wash(void) {
     TEST_ASSERT_EQUAL_UINT8(200, sink.washes[0].ev.intensity);
 }
 
-static void test_ttl_16bit_le_packing(void) {
+static void test_ttl_and_pulse_response_hardcoded(void) {
+    // Wash TTL (formerly channels 20-21) and Wash Pulse Response
+    // (formerly channel 22) were removed from the LD surface in
+    // favour of receiver-friendly hardcoded defaults so sparkle-on-
+    // wash works without the operator having to know about the gate.
+    // The wire protocol still carries both fields - this test pins
+    // the DMX-bridge-side hardcoded values.
     DmxChannelMapper m(0);
     RecordingSink sink;
 
     BlockBuf ch;
+    // Drive the wash anchors so an emit fires.
+    ch.set(DmxChannelMapper::kWashAR, 255);
     m.process(ch.data(), kBlockChannels, 0, sink);
-    sink.clear();
-
-    ch.set(DmxChannelMapper::kWashTtlLo, 0x10)
-      .set(DmxChannelMapper::kWashTtlHi, 0x27);  // 0x2710 = 10000 seconds
-    m.process(ch.data(), kBlockChannels, 200, sink);
 
     TEST_ASSERT_EQUAL_size_t(1, sink.washes.size());
-    TEST_ASSERT_EQUAL_UINT16(10000, sink.washes[0].ev.ttl_seconds);
-}
-
-static void test_pulse_response_threshold(void) {
-    DmxChannelMapper m(0);
-    RecordingSink sink;
-
-    BlockBuf ch;
-    ch.set(DmxChannelMapper::kWashPulseResponse, 200);  // >=128 -> 1
-    m.process(ch.data(), kBlockChannels, 0, sink);
-    TEST_ASSERT_EQUAL_UINT8(1, sink.washes[0].ev.pulse_response);
-
-    sink.clear();
-    ch.set(DmxChannelMapper::kWashPulseResponse, 100);  // <128 -> 0
-    m.process(ch.data(), kBlockChannels, 200, sink);
-    TEST_ASSERT_EQUAL_UINT8(0, sink.washes[0].ev.pulse_response);
+    TEST_ASSERT_EQUAL_UINT16(0, sink.washes[0].ev.ttl_seconds);
+    TEST_ASSERT_EQUAL_UINT8 (1, sink.washes[0].ev.pulse_response);
 }
 
 static void test_wash_attack_release_pass_through(void) {
@@ -487,8 +480,7 @@ int main(int, char**) {
     RUN_TEST(test_anchor_change_reemits_wash);
     RUN_TEST(test_cycle_change_reemits_wash);
     RUN_TEST(test_intensity_change_reemits_wash);
-    RUN_TEST(test_ttl_16bit_le_packing);
-    RUN_TEST(test_pulse_response_threshold);
+    RUN_TEST(test_ttl_and_pulse_response_hardcoded);
     RUN_TEST(test_wash_attack_release_pass_through);
     RUN_TEST(test_wash_reemit_debounced);
     RUN_TEST(test_pulse_trigger_rising_edge_fires);

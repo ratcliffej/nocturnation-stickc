@@ -44,10 +44,18 @@
 //   17   Wash     Wash Intensity        LIGHT_WASH.intensity
 //   18   Wash     Wash Attack           100 ms units
 //   19   Wash     Wash Release          100 ms units
-//   20   Wash     Wash TTL Lo           u16 LE seconds; 0 = infinite
-//   21   Wash     Wash TTL Hi
-//   22   Wash     Wash Pulse Response   >=128 enables PULSE on wash
-//   23-49 reserved                       Future expansion - ignored
+//   20-39 reserved                       Future expansion - ignored
+//
+// Channels 20-22 were previously Wash TTL Lo / Hi and Wash Pulse
+// Response. They were dropped from the LD surface because the
+// natural QLC+ workflow makes them redundant: the LD already
+// controls wash duration via scene timing, and the most-common
+// composition (sparkle on wash) was broken by the default
+// pulse_response=0 gate. The mapper now hardcodes ttl_seconds=0
+// (with the 30-min lost-WASH_END failsafe from epic-08 handling
+// stuck washes) and pulse_response=1. The wire protocol still
+// carries both fields for non-DMX Directors that want timed washes
+// or pure-baseline-no-pulses semantics.
 //
 // LIGHT_WASH_END is not emitted from inside the mapper; B3 emits it
 // on mode exit so the fleet's release behaviour is consistent.
@@ -65,12 +73,19 @@ namespace dal {
 
 class DmxChannelMapper {
 public:
-    // A "block" is the LD-addressable unit: the broadcast block is 49
-    // channels (DMX is 1-indexed; address 1-49 = 49 addresses) and each
-    // group block is 50 channels (addresses 50-99, 100-149, ...). The
-    // mapper reads up to kActiveChannelsPerBlock; channels past that
-    // are reserved for future expansion and silently ignored.
-    static constexpr uint16_t kActiveChannelsPerBlock = 23;
+    // A "block" is the LD-addressable unit: 40 universe channels per
+    // fixture instance (Broadcast at 1, Group 1 at 41, Group 2 at 81,
+    // ...). The mapper reads up to kActiveChannelsPerBlock; channels
+    // past that are reserved for future expansion and silently ignored.
+    //
+    // Wash TTL (formerly at indices 20-21) and Wash Pulse Response
+    // (formerly at index 22) were removed from the LD surface: the
+    // DMX bridge always emits LIGHT_WASH frames with ttl_seconds=0
+    // and pulse_response=1 so sparkle-on-wash works by default.
+    // The wire protocol still carries both fields for the Tildagon
+    // Director / future autonomous Directors; this is a DMX-bridge-
+    // only simplification.
+    static constexpr uint16_t kActiveChannelsPerBlock = 20;
 
     enum BlockChannel : uint8_t {
         kMasterIntensity   = 0,
@@ -93,9 +108,6 @@ public:
         kWashIntensity     = 17,
         kWashAttack        = 18,
         kWashRelease       = 19,
-        kWashTtlLo         = 20,
-        kWashTtlHi         = 21,
-        kWashPulseResponse = 22,
     };
 
     // Pulse-trigger threshold. Rising edge into [kTriggerHi, 255] fires
@@ -167,9 +179,6 @@ private:
     uint8_t last_wash_attack_         = 0;
     uint8_t last_wash_release_        = 0;
     uint8_t last_wash_cycle_          = 0;
-    uint8_t last_wash_ttl_lo_         = 0;
-    uint8_t last_wash_ttl_hi_         = 0;
-    uint8_t last_wash_pulse_response_ = 0;
     uint32_t last_wash_emit_ms_       = 0;
 
     // Strobe cadence tracking.
