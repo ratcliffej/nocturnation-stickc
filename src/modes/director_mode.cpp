@@ -310,11 +310,16 @@ void DirectorMode::on_input_action(const InputEvent& ev) {
 // ---------------------------------------------------------------------------
 
 size_t DirectorMode::picker_row_count() const {
-    return show_registry().count() + 1;   // + "<- Menu"
+    // shows + DMX Bridge entry + "<- Menu" sentinel
+    return show_registry().count() + 2;
+}
+
+bool DirectorMode::picker_row_is_dmx_bridge(size_t row) const {
+    return row == show_registry().count();
 }
 
 bool DirectorMode::picker_row_is_back(size_t row) const {
-    return row == show_registry().count();
+    return row == show_registry().count() + 1;
 }
 
 void DirectorMode::on_picker_confirm() {
@@ -323,6 +328,14 @@ void DirectorMode::on_picker_confirm() {
         // Director starts cleanly, then switch.
         overlay_ = Overlay::None;
         ModeMachine::switch_to(ModeId::Menu);
+        return;
+    }
+    if (picker_row_is_dmx_bridge(overlay_cursor_)) {
+        // Epic 7 Q4: DMX Bridge is reached from Director's picker,
+        // not from the top-level menu. Close the overlay first so
+        // any future re-entry to Director starts clean.
+        overlay_ = Overlay::None;
+        ModeMachine::switch_to(ModeId::DmxBridge);
         return;
     }
     shows::Show* picked = show_registry().at(overlay_cursor_);
@@ -499,6 +512,11 @@ void DirectorMode::draw_picker() {
                 10, y, buf,
                 sel   ? YELLOW : (gated ? RED : WHITE),
                 BLACK, 2});
+        } else if (picker_row_is_dmx_bridge(i)) {
+            std::snprintf(buf, sizeof(buf), "%s %s",
+                          sel ? ">" : " ", "DMX Bridge");
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, y, buf, sel ? YELLOW : WHITE, BLACK, 2});
         } else {
             std::snprintf(buf, sizeof(buf), "%s %s",
                           sel ? ">" : " ", "<- Menu");

@@ -130,8 +130,10 @@ static void test_menu_btn2_cycles_then_btn1_selects_lume(void) {
 static void test_menu_cycle_wraps(void) {
     inject_button_press(hal::ButtonId::Btn1, hal::ButtonEvent::Pressed);  // Boot -> Menu
 
-    // Four Btn2 presses with a 4-item menu cycles back to start; Btn1 then
-    // selects Director (the first item).
+    // Four Btn2 presses with a 4-item menu (Director / Lume / Test /
+    // Config) cycles back to start; Btn1 then selects Director (the
+    // first item). DmxBridge moved off the top-level menu in Epic 7's
+    // Q4 revision - it's a Director-mode picker entry now.
     for (int i = 0; i < 4; ++i) {
         inject_button_press(hal::ButtonId::Btn2, hal::ButtonEvent::Pressed);
     }
@@ -141,14 +143,16 @@ static void test_menu_cycle_wraps(void) {
 }
 
 static void test_long_press_btnb_returns_to_menu_from_each_runtime_mode(void) {
-    // From Director (Block 10): InputAction::Picker opens the
-    // picker overlay; with no vis registered in this test env the
-    // picker contains only the "<- Menu" sentinel at cursor=0, so a
-    // straight Confirm switches to Menu.
+    // From Director: InputAction::Picker opens the picker overlay;
+    // with no Show registered in this test env, the picker has 2
+    // rows: [0] = "DMX Bridge" (Epic 7 Q4 picker entry), [1] = "<-
+    // Menu" sentinel. Cursor starts at 0 (= DMX Bridge), so we cycle
+    // once to reach the menu sentinel before Confirm.
     ModeMachine::switch_to(ModeId::Director);
     TEST_ASSERT_EQUAL_INT((int)ModeId::Director,
                           (int)ModeMachine::current());
     inject_input_action(hal::InputAction::Picker);
+    inject_input_action(hal::InputAction::Cycle);
     inject_input_action(hal::InputAction::Confirm);
     TEST_ASSERT_EQUAL_INT((int)ModeId::Menu, (int)ModeMachine::current());
 
@@ -166,6 +170,27 @@ static void test_long_press_btnb_returns_to_menu_from_each_runtime_mode(void) {
     ModeMachine::switch_to(ModeId::Test);
     inject_button_press(hal::ButtonId::Btn2, hal::ButtonEvent::LongPressed);
     TEST_ASSERT_EQUAL_INT((int)ModeId::Menu, (int)ModeMachine::current());
+
+    // From DmxBridge (Epic 7 B3): B-hold returns to Menu, same gesture.
+    ModeMachine::switch_to(ModeId::DmxBridge);
+    inject_button_press(hal::ButtonId::Btn2, hal::ButtonEvent::LongPressed);
+    TEST_ASSERT_EQUAL_INT((int)ModeId::Menu, (int)ModeMachine::current());
+}
+
+// Epic 7 Q4 revision: DMX Bridge is reached from Director's picker,
+// not from the top-level Menu. This test exercises the picker
+// confirm path: Director picker cursor lands on the DMX Bridge row
+// (first non-show row), Confirm switches to DmxBridge mode.
+static void test_director_picker_confirms_dmx_bridge(void) {
+    ModeMachine::switch_to(ModeId::Director);
+    TEST_ASSERT_EQUAL_INT((int)ModeId::Director,
+                          (int)ModeMachine::current());
+    inject_input_action(hal::InputAction::Picker);
+    // Picker opens with no shows registered; rows are [0]=DMX Bridge,
+    // [1]=<- Menu. Cursor at 0. Confirm should enter DmxBridge.
+    inject_input_action(hal::InputAction::Confirm);
+    TEST_ASSERT_EQUAL_INT((int)ModeId::DmxBridge,
+                          (int)ModeMachine::current());
 }
 
 // Config top-level menu shape (post-Epic-4.65 restructure):
@@ -257,6 +282,7 @@ int main(int, char**) {
     RUN_TEST(test_menu_btn2_cycles_then_btn1_selects_lume);
     RUN_TEST(test_menu_cycle_wraps);
     RUN_TEST(test_long_press_btnb_returns_to_menu_from_each_runtime_mode);
+    RUN_TEST(test_director_picker_confirms_dmx_bridge);
     RUN_TEST(test_config_picker_layer_bhold_pops_one_level);
     RUN_TEST(test_config_direct_leaf_bhold_skips_picker);
     RUN_TEST(test_test_mode_short_press_does_not_leave_mode);
