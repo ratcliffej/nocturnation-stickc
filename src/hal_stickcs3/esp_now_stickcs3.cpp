@@ -29,6 +29,13 @@ bool ESPNowStickCS3::begin(uint8_t wifi_channel) {
     if (running_) return true;
 
     WiFi.mode(WIFI_STA);
+    // Disable modem sleep. Arduino-ESP32's STA default is
+    // WIFI_PS_MIN_MODEM, which duty-cycles the radio and lets it sleep
+    // through short ESP-NOW bursts (the Director sends 3x retransmits
+    // within ~2 ms). Receivers must call setSleep(false) for reliable
+    // receive. Any future light-sleep work must keep the radio awake
+    // for heartbeat windows or this bug returns.
+    WiFi.setSleep(false);
     WiFi.disconnect();
 
     if (esp_wifi_set_channel(wifi_channel, WIFI_SECOND_CHAN_NONE) != ESP_OK) {

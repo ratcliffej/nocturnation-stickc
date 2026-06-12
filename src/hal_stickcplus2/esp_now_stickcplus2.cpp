@@ -40,6 +40,13 @@ bool ESPNowStickCplus2::begin(uint8_t wifi_channel) {
     // 1. Bring WiFi up in station mode without connecting to any AP.
     //    ESP-NOW shares the WiFi radio; we just need the MAC layer up.
     WiFi.mode(WIFI_STA);
+    // Disable modem sleep. Arduino-ESP32's STA default is
+    // WIFI_PS_MIN_MODEM, which duty-cycles the radio and lets it sleep
+    // through short ESP-NOW bursts (the Director sends 3x retransmits
+    // within ~2 ms). Receivers must call setSleep(false) for reliable
+    // receive. Any future light-sleep work must keep the radio awake
+    // for heartbeat windows or this bug returns.
+    WiFi.setSleep(false);
     WiFi.disconnect();    // clear any stored credentials' auto-connect
 
     // 2. Pin the radio to the requested channel. WIFI_SECOND_CHAN_NONE
