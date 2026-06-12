@@ -38,6 +38,17 @@ constexpr uint32_t units_to_ms(uint8_t units) {
     return static_cast<uint32_t>(units) * 100u;
 }
 
+// Lost-WASH_END failsafe (not a protocol change). A LIGHT_WASH with
+// ttl_seconds == 0 is "infinite" per the spec: it holds until an
+// explicit LIGHT_WASH_END frame arrives. If that frame is lost, a
+// wash with pulse_response == 0 also gates PULSE - so the Lume sits
+// unresponsive forever. After kWashMaxHoldMs the receiver
+// self-releases the wash so a missed WASH_END eventually recovers.
+// Mirrors the Tildagon renderer cap. Operators who want longer holds
+// should refresh the LIGHT_WASH at < this cadence; explicit
+// ttl_seconds values shorter than this cap are honoured as-is.
+constexpr uint32_t kWashMaxHoldMs = 30u * 60u * 1000u;   // 30 minutes
+
 // pulse::Time enum index -> milliseconds. Order mirrors the enumeration.
 constexpr uint16_t kPulseTimeMs[8] = { 0, 32, 96, 192, 480, 960, 2400, 3840 };
 inline uint16_t pulse_time_ms(uint8_t idx) {
@@ -251,21 +262,22 @@ void LocalDisplayBinding::tick(OutputBindingContext& /*ctx*/, uint32_t now_ms) {
             break;
         }
         case WashPhase::Holding: {
-            // Apply TTL expiry: transition to Releasing using the wash's
-            // own release as the fade duration.
-            if (wash_ttl_seconds_ != 0) {
-                const uint32_t ttl_ms = static_cast<uint32_t>(wash_ttl_seconds_) * 1000u;
-                if (now_ms - wash_started_ms_ >= ttl_ms) {
-                    pre_wash_r_           = base_r;
-                    pre_wash_g_           = base_g;
-                    pre_wash_b_           = base_b;
-                    release_units_active_ = wash_release_units_;
-                    release_end_r_        = 0;
-                    release_end_g_        = 0;
-                    release_end_b_        = 0;
-                    wash_phase_            = WashPhase::Releasing;
-                    wash_phase_started_ms_ = now_ms;
-                }
+            // Effective hold cap: the operator's explicit ttl_seconds
+            // when set; kWashMaxHoldMs (lost-WASH_END failsafe) when
+            // ttl_seconds == 0 ("infinite" per spec).
+            const uint32_t effective_ttl_ms = (wash_ttl_seconds_ != 0)
+                ? static_cast<uint32_t>(wash_ttl_seconds_) * 1000u
+                : kWashMaxHoldMs;
+            if (now_ms - wash_started_ms_ >= effective_ttl_ms) {
+                pre_wash_r_           = base_r;
+                pre_wash_g_           = base_g;
+                pre_wash_b_           = base_b;
+                release_units_active_ = wash_release_units_;
+                release_end_r_        = 0;
+                release_end_g_        = 0;
+                release_end_b_        = 0;
+                wash_phase_            = WashPhase::Releasing;
+                wash_phase_started_ms_ = now_ms;
             }
             // out_{r,g,b} already hold the live baseline.
             break;
