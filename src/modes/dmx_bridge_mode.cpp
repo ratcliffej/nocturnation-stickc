@@ -233,6 +233,25 @@ void DmxBridgeMode::draw_status() {
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         10, 85, counters_buf, WHITE, BLACK, 2});
 
+    // Parser diagnostics: r = resyncs (bytes received but framing
+    // broke; e.g. wrong end byte forces back to WaitStart), o =
+    // oversize-length rejections. With f > 0, both should be low or
+    // zero. With f stuck at 0 and b growing, a high r value means
+    // the bytes are arriving but the 0x7E/0xE7 framing is corrupted
+    // (clock mismatch / buffer overflow); a high o value means the
+    // length field is being read wrong (likely buffer-induced byte
+    // drop mid-header).
+    const uint32_t resets   =
+        (adapter != nullptr) ? adapter->parser().reset_count() : 0;
+    const uint32_t oversize =
+        (adapter != nullptr) ? adapter->parser().oversize_count() : 0;
+    char diag_buf[40];
+    std::snprintf(diag_buf, sizeof(diag_buf),
+                  " r:%lu  o:%lu",
+                  (unsigned long)resets, (unsigned long)oversize);
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 105, diag_buf, WHITE, BLACK, 2});
+
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         4, 128, "B-hold: exit  Target 00:00",
         WHITE, BLACK, 1});

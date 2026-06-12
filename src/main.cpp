@@ -30,6 +30,15 @@ void setup() {
     // output flushes (arduino-esp32's CDC-on-boot path auto-creates the
     // peripheral but doesn't open the stream until begin() is called). 115200
     // matches platformio.ini's monitor_speed.
+    //
+    // Size the RX buffer to 4 KB BEFORE begin() so DMX Bridge mode's later
+    // end()/setRxBufferSize()/begin() reconfig has a known-good baseline.
+    // On the Plus2's HardwareSerial (UART0 via the CH9102 USB bridge) the
+    // post-end() setRxBufferSize() call occasionally fails to take effect,
+    // leaving the buffer at the 256-byte default which drops bulk chunks
+    // of every DMX frame at 921 600 baud. Setting it up front, before the
+    // peripheral has ever been begun, sticks reliably on both Plus2 and S3.
+    Serial.setRxBufferSize(4096);
     Serial.begin(115200);
     delay(50);                  // brief settle so the boot banner isn't lost
     Serial.println("[noct] boot");
