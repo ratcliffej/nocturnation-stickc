@@ -918,8 +918,21 @@ void TestMode::handle_button_wash_test(const ButtonPressEvent& ev) {
             w.ttl_seconds    = 0;
             w.pulse_response = 1;
             DAL::render_wash("00:00", w);
-        } else {
+        } else if (step_index_ == 1) {
             DAL::render_wash_end("00:00", /*release_time=*/10);   // 1.0 s
+        } else {
+            // Pulse over wash. Bright white sparkle envelope. On any
+            // currently-washing target (Tildagon, PixMob, StickC LCD)
+            // the dispatch layer adds the pulse on top of the wash;
+            // PixMob routes through TwoColors(white, current_wash_rgb)
+            // so the bracelet flashes white then returns to wash.
+            RgbPulseEvent p{};
+            p.r = 255; p.g = 255; p.b = 255;
+            p.attack  = pixmob::T_0_MS;
+            p.sustain = pixmob::T_32_MS;
+            p.release = pixmob::T_96_MS;
+            p.chance  = pixmob::CHANCE_100;
+            DAL::render_fx("00:00", p);
         }
         last_step_ms_ = millis();
         draw_wash_test();
@@ -934,6 +947,7 @@ void TestMode::draw_wash_test() {
     const char* lines[kWashTestItemCount] = {
         "Fire test wash",
         "Cancel wash",
+        "Pulse over wash",
     };
     for (size_t i = 0; i < kWashTestItemCount; ++i) {
         const bool sel = (i == step_index_);

@@ -192,12 +192,17 @@ private:
     void handle_button_calibrate(const dal::ButtonPressEvent& ev);
     void draw_calibrate();
 
-    // Wash Test (Epic 6C). Two-item sub-screen (Fire / Cancel) that
-    // broadcasts render_wash / render_wash_end. step_index_ doubles as
-    // the Fire/Cancel cursor (0 = Fire, 1 = Cancel); last_step_ms_ stamps
-    // the most recent transmit so the "Sent!" confirmation lingers ~800
-    // ms after Btn1.
-    static constexpr size_t   kWashTestItemCount = 2;
+    // Wash Test (Epic 6C; extended by Epic 11). Three-item sub-screen
+    // (Fire wash / Cancel wash / Fire pulse over wash) that broadcasts
+    // render_wash / render_wash_end / render_fx respectively. step_index_
+    // doubles as the cursor (0 = Fire, 1 = Cancel, 2 = Pulse over wash);
+    // last_step_ms_ stamps the most recent transmit so the "Sent!"
+    // confirmation lingers ~800 ms after Btn1. The pulse-over-wash row
+    // is a bench convenience: Director side fires render_fx(LIGHT_PULSE),
+    // which on PixMob targets routes through TwoColors(pulse, wash) so
+    // the bracelet flashes the pulse then returns to the wash colour
+    // (Epic 11 path validation).
+    static constexpr size_t   kWashTestItemCount = 3;
     static constexpr uint32_t kWashConfirmFlashMs = 800;
     void enter_wash_test();
     void handle_button_wash_test(const dal::ButtonPressEvent& ev);

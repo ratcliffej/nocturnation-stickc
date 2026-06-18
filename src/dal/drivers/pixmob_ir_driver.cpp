@@ -202,12 +202,36 @@ void PixMobIRDriver::compute_drift_rgb(const WashState& state,
                                        uint8_t& r,
                                        uint8_t& g,
                                        uint8_t& b) const {
-    // Linear A↔B↔A blend. Mirrors the orchestrator's
+    // Linear A↔B↔A blend with lookahead. Mirrors the orchestrator's
     // linear_drift_rgb() that this Driver-side path supersedes.
     // Visual difference between linear and cosine-eased at 3 s refresh
     // granularity is sub-perceptual; integer-only math keeps the
     // refresh tick cheap.
-    const uint32_t elapsed = (now - state.started_ms) % state.cycle_ms;
+    //
+    // The lookahead compensates for the bracelet's render time: each
+    // refresh fires a SingleColor with the wash's attack envelope, so
+    // the bracelet takes `attack_bucket_ms` to morph from its current
+    // colour to the new target. Without lookahead, the target is the
+    // Tildagon's CURRENT position - but by the time the PixMob's morph
+    // completes, the Tildagon has already drifted on by attack_bucket_ms,
+    // and the PixMob lands at a stale colour. Bench observation
+    // 2026-06-18: "both devices not in sync, latency on the wash effect."
+    //
+    // Fix: shift the phase sample forward by the bracketed attack time.
+    // The PixMob's morph END-POSITION = where the Tildagon will be when
+    // the morph completes. The two devices visually sync at the end of
+    // each morph window; during the window, the PixMob is interpolating
+    // toward the Tildagon's future position rather than tracking its
+    // past. Visible improvement is biggest for short cycles where the
+    // attack time is a meaningful fraction of one A↔B↔A round-trip.
+    const uint8_t attack_bucket =
+        quantize_100ms_to_pixmob_time(state.attack_100ms);
+    static constexpr uint16_t kBucketMs[8] = {
+        0, 32, 96, 192, 480, 960, 2400, 3840,
+    };
+    const uint32_t lookahead_ms = kBucketMs[attack_bucket];
+    const uint32_t sample_time = now + lookahead_ms;
+    const uint32_t elapsed = (sample_time - state.started_ms) % state.cycle_ms;
     // phase in 0..1 over one full A↔B↔A oscillation, scaled by 1024
     // to keep it integer-friendly: 0..512 = A→B, 512..1024 = B→A.
     const uint32_t phase_q10 = (elapsed * 1024u) / state.cycle_ms;
