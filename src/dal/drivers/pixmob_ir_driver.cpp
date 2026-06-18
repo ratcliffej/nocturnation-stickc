@@ -107,6 +107,22 @@ bool PixMobIRDriver::send(uint8_t group_id, const RgbPulseEvent& ev) {
         if (n == 0) return false;
         transmit(buf, n);
 
+        // Inter-frame quiet period. The bracelet decoder needs a gap
+        // between IR commands to lock onto each one cleanly - the
+        // PixMob protocol's framing has no explicit end-of-frame
+        // sentinel, so without a quiet window the bracelet's receiver
+        // can mis-decode back-to-back frames. Bench observation
+        // 2026-06-18: without this gap, only ~40 % of sparkles
+        // rendered visibly on the bracelet; with the gap, the bracelet
+        // reliably renders the sparkle envelope for ~50 ms before the
+        // recovery command pre-empts it. 50 ms also doubles as the
+        // visible-sparkle window: the bracelet snaps to the sparkle
+        // colour at command-end and renders for the duration of the
+        // gap before the recovery arrives.
+#ifdef ARDUINO
+        delay(50);
+#endif
+
         // 2. The fast recovery to wash. T_192_MS attack is short
         // enough that the wash visually re-establishes within ~250 ms
         // of the sparkle's start; the inter-command IR gap is the
