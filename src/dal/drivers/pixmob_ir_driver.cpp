@@ -293,31 +293,13 @@ void PixMobIRDriver::fire_wash_refresh(uint8_t group_id,
     // successor designs), where wash drift renders natively as
     // continuous on the receiver. PixMob is best-effort EMF
     // deployment, not the aesthetic baseline.
-    // Refresh envelope: T_0 attack (snap), T_3840 sustain (max hold),
-    // T_192 release. The release was T_0 until 2026-06-30 (instant
-    // black at sustain end) on the theory that the next periodic
-    // refresh would preempt before sustain expired. Bench observation
-    // 2026-06-30: that doesn't reliably preempt - bracelet appears to
-    // complete the current envelope to release-start before applying
-    // the next command, which means at every sustain expiry (every
-    // ~3 s for the documented T_3840 sustain, possibly closer to 3 s
-    // for actual bracelet sustain) the bracelet snaps to black for a
-    // visible "blip" before the next refresh catches it. Using
-    // T_192_MS release means the bracelet fades smoothly over 192 ms
-    // instead of snapping; the next refresh (250 ms cadence for drift
-    // washes) reliably arrives within or just past the fade window
-    // and re-establishes the wash colour. Trade-off: ~192 ms of
-    // subtle dimming at each cycle boundary instead of a clean blip.
-    // For static washes the cycle boundary IS the visible event
-    // either way, so the dimming reads as "soft refresh" rather than
-    // "broken wash".
     uint16_t buf[kPulseBufSize];
     const size_t n = pixmob::buildSingleColor(
         buf, kPulseBufSize,
         r, g, b,
         pixmob::T_0_MS,
         pixmob::T_3840_MS,
-        pixmob::T_192_MS,
+        pixmob::T_0_MS,
         pixmob::CHANCE_100,
         group_id);
     if (n == 0) return;
