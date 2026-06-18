@@ -90,6 +90,52 @@ bool PixMobIRDriver::send(uint8_t group_id, const RgbPulseEvent& ev) {
     if (group_id < kWashSlots && wash_slots_[group_id].active) {
         const uint32_t t = now_ms();
 
+        // Chance pre-filter. Bench finding 2026-06-30 (revised): the
+        // bracelet accumulates "stress" from processing IR commands
+        // it ultimately skips - so even though CHANCE_16 means only
+        // 16 % of received sparkles render, the bracelet still
+        // decodes and processes the other 84 %, and after enough of
+        // those skipped commands the bracelet's IR receiver enters a
+        // degraded mode where it ignores most subsequent commands
+        // (including periodic refreshes), causing the 3-second
+        // blackout pattern. The degraded state persists across
+        // StickC mode changes (running music then switching to Wash
+        // Test still shows the blip; only a bracelet power-cycle
+        // recovers).
+        //
+        // Fix: roll the chance on the StickC side instead of letting
+        // the bracelet skip them. If the roll fails, return without
+        // firing IR - the bracelet doesn't see anything. If the roll
+        // passes, fire with CHANCE_100 (force the bracelet to
+        // render). Total IR airtime drops by ~6x for typical music
+        // (CHANCE_16 = 1 in 6 commands actually transmitted), giving
+        // the bracelet's receiver headroom.
+        //
+        // Trade-off: bracelets sparkle in unison instead of with
+        // per-bracelet randomness. For a small fleet (4 groups
+        // expected for EMF deployment) this reads as "synchronised
+        // crowd accent" rather than "random twinkle" - a different
+        // aesthetic but not worse for music-driven cues.
+        if (ev.chance != pixmob::CHANCE_100) {
+#ifdef ARDUINO
+            const uint32_t roll = static_cast<uint32_t>(::esp_random());
+#else
+            const uint32_t roll = static_cast<uint32_t>(std::rand());
+#endif
+            // pixmob::Chance bucket -> render probability (1/256ths
+            // of 256). CHANCE_100 = 256/256, CHANCE_88 = 224/256,
+            // CHANCE_67 = 170/256, CHANCE_50 = 128/256, CHANCE_32 =
+            // 82/256, CHANCE_16 = 41/256, CHANCE_10 = 26/256,
+            // CHANCE_4 = 10/256. Roll mod 256 then compare.
+            static constexpr uint8_t kRenderThreshold[8] = {
+                255, 224, 170, 128, 82, 41, 26, 10,
+            };
+            const uint8_t threshold = kRenderThreshold[ev.chance & 0x07];
+            if ((roll & 0xFF) >= threshold) {
+                return true;   // skip this sparkle - don't fire IR
+            }
+        }
+
         // Compute the wash colour for the recovery.
         uint8_t wr = wash_slots_[group_id].r1;
         uint8_t wg = wash_slots_[group_id].g1;
@@ -131,12 +177,20 @@ bool PixMobIRDriver::send(uint8_t group_id, const RgbPulseEvent& ev) {
             effective_sustain = pixmob::T_32_MS;
         }
 
+        // Override sparkle release to T_0 too. User-bench hypothesis
+        // 2026-06-30: the bracelet "remembers" recent envelope
+        // timings and uses them to drive an internal cycle that
+        // briefly idles the LED ~3 s after a long envelope. Sparkles
+        // typically come in with T_192_MS release (from the
+        // orchestrator's wash_with_sparkle FX, raw 96 DMX -> T_192);
+        // forcing release to T_0_MS minimises the "envelope footprint"
+        // the bracelet records.
         uint16_t buf[kPulseBufSize];
         size_t n = pixmob::buildSingleColor(
             buf, kPulseBufSize,
             ev.r, ev.g, ev.b,
-            ev.attack, effective_sustain, ev.release,
-            ev.chance,
+            ev.attack, effective_sustain, pixmob::T_0_MS,
+            pixmob::CHANCE_100,    // chance roll already done above; bracelet always renders
             group_id);
         if (n == 0) return false;
         transmit(buf, n);
@@ -166,7 +220,11 @@ bool PixMobIRDriver::send(uint8_t group_id, const RgbPulseEvent& ev) {
         n = pixmob::buildSingleColor(
             buf, kPulseBufSize,
             wr, wg, wb,
-            pixmob::T_192_MS,    // fast morph back to wash
+            pixmob::T_0_MS,      // instant snap to wash (was T_192_MS;
+                                 // changed 2026-06-30 to minimise the
+                                 // bracelet's envelope-render footprint
+                                 // per user-bench hypothesis about
+                                 // stress accumulation)
             pixmob::T_3840_MS,   // hold the wash colour
             pixmob::T_0_MS,      // no release - the next refresh
                                  // pre-empts well before this matters
@@ -187,13 +245,32 @@ bool PixMobIRDriver::send(uint8_t group_id, const RgbPulseEvent& ev) {
     }
 
     // No active wash on this group - regular SingleColor pulse using
-    // the orchestrator-supplied envelope.
+    // the orchestrator-supplied envelope. Apply the same chance pre-
+    // filter as the wash-active path: skip the sparkle entirely on
+    // the StickC instead of asking the bracelet to skip, so the
+    // bracelet doesn't accumulate stress from processing-then-
+    // skipping (2026-06-30).
+    if (ev.chance != pixmob::CHANCE_100) {
+#ifdef ARDUINO
+        const uint32_t roll = static_cast<uint32_t>(::esp_random());
+#else
+        const uint32_t roll = static_cast<uint32_t>(std::rand());
+#endif
+        static constexpr uint8_t kRenderThreshold[8] = {
+            255, 224, 170, 128, 82, 41, 26, 10,
+        };
+        const uint8_t threshold = kRenderThreshold[ev.chance & 0x07];
+        if ((roll & 0xFF) >= threshold) {
+            return true;
+        }
+    }
+
     uint16_t buf[kPulseBufSize];
     const size_t n = pixmob::buildSingleColor(
         buf, kPulseBufSize,
         ev.r, ev.g, ev.b,
         ev.attack, ev.sustain, ev.release,
-        ev.chance,
+        pixmob::CHANCE_100,    // chance pre-filtered above
         group_id);
     if (n == 0) return false;
 
@@ -362,6 +439,33 @@ uint8_t PixMobIRDriver::quantize_100ms_to_pixmob_time(uint8_t units_100ms) const
 
 bool PixMobIRDriver::send_wash(uint8_t target_group, const LightWashEvent& ev) {
     if (target_group >= kWashSlots) return false;
+
+    // Treat all-zero LIGHT_WASH as semantically equivalent to
+    // LIGHT_WASH_END. Bench finding 2026-06-30 (user hypothesis,
+    // confirmed by sequence analysis): the orchestrator's `stop`
+    // cue (Blackout FX) zeros the entire universe, which the StickC's
+    // DMX mapper emits as LIGHT_WASH(r=0, g=0, b=0, cycle=0,
+    // intensity=0). Firing that as a SingleColor(0,0,0, T_0, T_3840,
+    // T_0) refresh on the bracelet (the path before this filter
+    // runs) puts the bracelet into a 3.84 s "hold black" envelope.
+    // Bracelet appears to enter a stressed / rate-limited state from
+    // this and stays there - the 3-second blip pattern observed
+    // when music plays follows the `stop` cue at the song's start.
+    //
+    // Wash Test alone (which doesn't fire stop first) is clean;
+    // music (which fires stop first via the cue file) shows the
+    // blip; and the bracelet retains the stressed state until power-
+    // cycled.
+    //
+    // Fix: route all-zero washes through send_wash_end with instant
+    // cancel. The IR driver stops refreshing, the bracelet's last
+    // envelope completes naturally, no black SingleColor lands.
+    if (ev.r1 == 0 && ev.g1 == 0 && ev.b1 == 0 &&
+        ev.r2 == 0 && ev.g2 == 0 && ev.b2 == 0 &&
+        ev.intensity == 0) {
+        return send_wash_end(target_group, /*release_time=*/0);
+    }
+
     WashState& s = wash_slots_[target_group];
     const uint32_t now = now_ms();
 
