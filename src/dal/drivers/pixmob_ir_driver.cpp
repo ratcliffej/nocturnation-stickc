@@ -53,34 +53,75 @@ void PixMobIRDriver::transmit(const uint16_t* pulses_us, size_t count) {
 // -----------------------------------------------------------------------------
 
 bool PixMobIRDriver::send(uint8_t group_id, const RgbPulseEvent& ev) {
-    // Epic 11 bench (2026-06-18): pulses on a washing group must NOT
-    // fire as SingleColor, because each SingleColor wholesale replaces
-    // the bracelet's current envelope - so the pulse "wins" against
-    // the wash refresh and the bracelet ends each pulse in release,
-    // going dark between pulses instead of returning to the wash
-    // colour. Symptoms: "wash going to black between sparkles" + "most
-    // sparkles aren't rendered" (they ARE, they just leave the
-    // bracelet dark afterwards). Fix: when the group has an active
-    // wash, fire TwoColors(pulse_rgb, current_wash_rgb) - the
-    // protocol-native "kick + return to wash colour" composite. The
-    // bracelet flashes the pulse (~25 ms), then holds the wash colour
-    // for ~384 ms, which covers most of the inter-beat gap at typical
-    // BPMs. The periodic wash refresh continues independently to fill
-    // any quiet stretches between pulses.
+    // Epic 11 bench (2026-06-18): pulses on a washing group are a
+    // protocol headache on this bracelet generation. TwoColors (type
+    // 0b010) - the documented "flash colour 1 briefly, then hold
+    // colour 2" composite that maps 1:1 to "sparkle + return to wash"
+    // - renders as nothing visible on this firmware revision
+    // (PMob Bench T6 confirmed; isolated buildTwoColors(red, blue)
+    // produced no light on the bracelet at all). Earlier TwoColors-
+    // based fix (commit f1b4e39) was therefore a silent no-op: the
+    // wash held smoothly but the sparkles never landed visibly.
+    //
+    // SingleColor (type 0b000) does render, but each new SingleColor
+    // wholesale replaces the bracelet's current envelope - so a sparkle
+    // ends with the bracelet in release going to black, with no
+    // protocol-level "return to wash" mechanism. Fix: compose the
+    // semantic from two SingleColors:
+    //   1. SingleColor(sparkle_rgb, orchestrator envelope) - the
+    //      visible flash. Uses whatever envelope the show layer asked
+    //      for; the bracelet snaps to sparkle and starts that envelope.
+    //   2. SingleColor(current_wash_rgb, fast attack) - the recovery,
+    //      fired back-to-back. The bracelet pre-empts the sparkle
+    //      mid-envelope and morphs from wherever it currently is to
+    //      the wash colour over ~192 ms. Net visible effect: brief
+    //      sparkle (the inter-command IR transmission window, ~50 ms)
+    //      plus a quick morph back to the wash. The wash colour
+    //      target uses the same lookahead-shifted phase the periodic
+    //      refresh uses, so the bracelet ends the morph in sync with
+    //      the Tildagon's continuous drift.
+    //
+    // The fixed 192 ms recovery attack is decoupled from the wash's
+    // configured attack (which is for initial fade-in, not sparkle
+    // recovery). At 120 BPM (500 ms between beats) the bracelet
+    // spends ~250 ms on wash colour between sparkles - enough wash
+    // continuity to read as "wash with accents" rather than "strobe
+    // with dark gaps".
     if (group_id < kWashSlots && wash_slots_[group_id].active) {
+        // Compute the lookahead-shifted wash colour for the recovery.
         uint8_t wr = wash_slots_[group_id].r1;
         uint8_t wg = wash_slots_[group_id].g1;
         uint8_t wb = wash_slots_[group_id].b1;
         if (wash_slots_[group_id].cycle_ms > 0) {
             compute_drift_rgb(wash_slots_[group_id], now_ms(), wr, wg, wb);
         }
+
+        // 1. The sparkle itself.
         uint16_t buf[kPulseBufSize];
-        const size_t n = pixmob::buildTwoColors(
+        size_t n = pixmob::buildSingleColor(
             buf, kPulseBufSize,
             ev.r, ev.g, ev.b,
-            wr, wg, wb);
+            ev.attack, ev.sustain, ev.release,
+            ev.chance,
+            group_id);
         if (n == 0) return false;
         transmit(buf, n);
+
+        // 2. The fast recovery to wash. T_192_MS attack is short
+        // enough that the wash visually re-establishes within ~250 ms
+        // of the sparkle's start; the inter-command IR gap is the
+        // visible sparkle window.
+        n = pixmob::buildSingleColor(
+            buf, kPulseBufSize,
+            wr, wg, wb,
+            pixmob::T_192_MS,    // fast morph back to wash
+            pixmob::T_3840_MS,   // hold the wash colour
+            pixmob::T_0_MS,      // no release - the next refresh
+                                 // pre-empts well before this matters
+            pixmob::CHANCE_100,
+            group_id);
+        if (n != 0) transmit(buf, n);
+
         return true;
     }
 

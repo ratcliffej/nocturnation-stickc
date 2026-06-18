@@ -198,10 +198,11 @@ private:
     // doubles as the cursor (0 = Fire, 1 = Cancel, 2 = Pulse over wash);
     // last_step_ms_ stamps the most recent transmit so the "Sent!"
     // confirmation lingers ~800 ms after Btn1. The pulse-over-wash row
-    // is a bench convenience: Director side fires render_fx(LIGHT_PULSE),
-    // which on PixMob targets routes through TwoColors(pulse, wash) so
-    // the bracelet flashes the pulse then returns to the wash colour
-    // (Epic 11 path validation).
+    // is a bench convenience: Director side fires render_fx(LIGHT_PULSE)
+    // which the PixMob IR driver composes as a SingleColor sparkle
+    // followed by a fast SingleColor wash recovery (TwoColors as a
+    // protocol-level command renders nothing visible on this bracelet
+    // generation - bench-confirmed in PMob Bench T6, 2026-06-18).
     static constexpr size_t   kWashTestItemCount = 3;
     static constexpr uint32_t kWashConfirmFlashMs = 800;
     void enter_wash_test();

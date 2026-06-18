@@ -372,51 +372,49 @@ static void test_drift_lookahead_targets_future_phase(void) {
     TEST_ASSERT_EQUAL_UINT32(5000u, s->started_ms);
 }
 
-static void test_pulse_on_active_wash_fires_twocolors(void) {
+static void test_pulse_on_active_wash_fires_sparkle_plus_recovery(void) {
     // Regression for the 2026-06-18 bench symptom "wash goes to black
     // between sparkles". A pulse fired via send(RgbPulseEvent) on a
-    // group with an active wash must NOT replace the bracelet's wash
-    // envelope with a SingleColor that ends in release. Behaviour:
-    // fire TwoColors so the bracelet flashes the pulse then returns to
-    // the wash colour for ~384 ms.
+    // group with an active wash must produce a visible sparkle AND
+    // bring the bracelet back to the wash colour quickly afterwards.
     //
-    // The capturing IRTx records each send_raw call's pulse-train
-    // length. TwoColors and SingleColor produce different-length
-    // trains, but neither has a hard-coded length we can assert
-    // against here without coupling to the encoder. Instead the test
-    // exercises the BRANCH: with no active wash, a single send fires
-    // and the bracelet's wash-state stays untouched; with active
-    // wash, a single send fires AND the wash state remains intact
-    // (TwoColors doesn't disturb the periodic refresh).
+    // Two-command composition (TwoColors-equivalent semantic, but
+    // built from two SingleColor commands because TwoColors as a
+    // protocol-level command renders nothing visible on the Aurora-
+    // class bracelet revisions Epic 11 targets - PMob Bench T6
+    // confirmed 2026-06-18):
+    //   1. SingleColor(sparkle_rgb, orchestrator envelope)
+    //   2. SingleColor(current_wash_rgb, T_192_MS fast recovery)
+    //
+    // The test asserts BOTH IR commands fire (send_count increments
+    // by 2) when the group has an active wash, and only ONE fires
+    // when it doesn't (no need for recovery).
     auto* drv = pixmob_ir_driver_instance();
 
-    // Phase 1: no wash, regular pulse via SingleColor path.
+    // Phase 1: no wash, regular pulse - single SingleColor only.
     RgbPulseEvent ev{};
     ev.r = 255; ev.g = 0; ev.b = 0;
     ev.attack = pixmob::T_0_MS;
     ev.sustain = pixmob::T_32_MS;
     ev.release = pixmob::T_96_MS;
     ev.chance = pixmob::CHANCE_100;
+    const int before_no_wash = nocturnation::hal::s_ir_tx.send_count;
     drv->send(/*group_id=*/0, ev);
-    const size_t train_len_no_wash = nocturnation::hal::s_ir_tx.last_count;
-    TEST_ASSERT_GREATER_THAN_UINT(0, train_len_no_wash);
+    TEST_ASSERT_EQUAL_INT(before_no_wash + 1,
+                          nocturnation::hal::s_ir_tx.send_count);
     TEST_ASSERT_FALSE(drv->wash_state(0)->active);
 
-    // Phase 2: start a wash, then fire the same pulse. Should route
-    // through TwoColors. Train length will differ from the SingleColor
-    // case because TwoColors uses a 9-byte buffer with both colours
-    // packed in, while SingleColor with envelope is also 9 bytes but
-    // the encoded run-length sequence differs.
+    // Phase 2: start a wash, then fire the same pulse. Should fire
+    // BOTH the sparkle and the recovery refresh (two IR commands).
     drv->send_wash(0, purple_static());
     TEST_ASSERT_TRUE(drv->wash_state(0)->active);
     const int before_pulse = nocturnation::hal::s_ir_tx.send_count;
     drv->send(/*group_id=*/0, ev);
-    TEST_ASSERT_EQUAL_INT(before_pulse + 1,
+    TEST_ASSERT_EQUAL_INT(before_pulse + 2,
                           nocturnation::hal::s_ir_tx.send_count);
-    // Wash state remains active - the pulse didn't disturb it.
+    // Wash state remains active - the pulse-plus-recovery didn't
+    // disturb the periodic refresh schedule.
     TEST_ASSERT_TRUE(drv->wash_state(0)->active);
-    // Wash state's next_refresh_ms is unchanged - the periodic refresh
-    // ticks independently of pulses.
     TEST_ASSERT_EQUAL_UINT32(s_now_ms + PixMobIRDriver::kWashRefreshMs,
                              drv->wash_state(0)->next_refresh_ms);
 }
@@ -443,7 +441,7 @@ int main(int, char**) {
     RUN_TEST(test_drift_wash_blends_rgb_across_cycle_phase);
     RUN_TEST(test_per_group_state_isolated);
     RUN_TEST(test_invalid_group_id_silently_rejected);
-    RUN_TEST(test_pulse_on_active_wash_fires_twocolors);
+    RUN_TEST(test_pulse_on_active_wash_fires_sparkle_plus_recovery);
     RUN_TEST(test_drift_lookahead_targets_future_phase);
     RUN_TEST(test_clock_source_advances_state_deterministically);
     return UNITY_END();
