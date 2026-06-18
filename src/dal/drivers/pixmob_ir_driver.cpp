@@ -96,18 +96,14 @@ bool PixMobIRDriver::send(uint8_t group_id, const RgbPulseEvent& ev) {
             compute_drift_rgb(wash_slots_[group_id], now_ms(), wr, wg, wb);
         }
 
-        // 1. The sparkle, sent kSparkleBurstCount times back-to-back
-        // for redundancy. Bench finding 2026-06-18: a single sparkle
-        // during active wash hits ~40 % visibility on the bracelet
-        // (the wash refresh keeps the bracelet busy in its attack
-        // envelope for most of every 3 s cycle, degrading
-        // responsiveness to incoming commands). If the dropouts are
-        // independent, 3x redundancy gives 1 - 0.6^3 = ~78 % combined
-        // visibility. If they correlate (bracelet was in an
-        // unreceptive state for the whole burst), redundancy buys
-        // less - but the wire cost is bounded (3 commands = ~150 ms
-        // wire time even with the Plus2's internal+external LED
-        // redundancy doubling each).
+        // 1. The sparkle. Bench finding 2026-06-18: 3x redundancy
+        // burst was tried and dropped - dropouts are fully correlated
+        // to the bracelet's busy-rendering-attack state, so a burst
+        // either all-lands or all-drops, and "all lands" produces
+        // visually distracting duplicate flashes. Single command is
+        // the cleaner shape. Hit rate now depends on the refresh
+        // attack having been changed to T_0_MS in fire_wash_refresh,
+        // which keeps the bracelet's busy-window short.
         uint16_t buf[kPulseBufSize];
         size_t n = pixmob::buildSingleColor(
             buf, kPulseBufSize,
@@ -116,9 +112,7 @@ bool PixMobIRDriver::send(uint8_t group_id, const RgbPulseEvent& ev) {
             ev.chance,
             group_id);
         if (n == 0) return false;
-        for (int i = 0; i < kSparkleBurstCount; ++i) {
-            transmit(buf, n);
-        }
+        transmit(buf, n);
 
         // 2. The fast recovery to wash. T_192_MS attack is short
         // enough that the wash visually re-establishes within ~250 ms
@@ -229,21 +223,28 @@ void PixMobIRDriver::fire_wash_refresh(uint8_t group_id,
     if (state.cycle_ms > 0) {
         compute_drift_rgb(state, now, r, g, b);
     }
-    // Use the wash's own attack envelope so successive refreshes morph
-    // smoothly between snapshots instead of snapping. Without this a
-    // drift wash visibly alternates between snapshot colours rather
-    // than reading as a continuous gradient (bench observation
-    // 2026-06-18). Sustain stays at T_3840_MS so a delayed refresh
-    // doesn't drop the bracelet to black; release at T_0_MS so the
-    // envelope ends cleanly without a fade tail before the next
-    // refresh.
-    const uint8_t attack_bucket =
-        quantize_100ms_to_pixmob_time(state.attack_100ms);
+    // Snap, hold, snap off (T_0 / T_3840 / T_0). Bench finding
+    // 2026-06-18: while the bracelet renders an attack envelope it is
+    // mostly deaf to incoming IR commands (sparkles fired during the
+    // bracelet's attack window are dropped ~60 % of the time, even
+    // with 3x redundancy - the dropouts are fully correlated to
+    // attack-render state). Using T_0_MS attack on the periodic
+    // refresh keeps the bracelet's busy-window to zero - the
+    // bracelet snaps to the snapshot colour and immediately enters
+    // its (steady-state, IR-receptive) sustain phase. Cost: the
+    // drift between A and B reads as step-wise between snapshots
+    // rather than a continuous morph, but step granularity at 3 s
+    // refresh against a 5 s drift is visible-but-acceptable for the
+    // legacy PixMob hardware Epic 11 targets - the future of crowd
+    // lighting on this stack is ESP-NOW Lumes (Tildagon and
+    // successor designs), where wash drift renders natively as
+    // continuous on the receiver. PixMob is best-effort EMF
+    // deployment, not the aesthetic baseline.
     uint16_t buf[kPulseBufSize];
     const size_t n = pixmob::buildSingleColor(
         buf, kPulseBufSize,
         r, g, b,
-        static_cast<pixmob::Time>(attack_bucket),
+        pixmob::T_0_MS,
         pixmob::T_3840_MS,
         pixmob::T_0_MS,
         pixmob::CHANCE_100,
@@ -257,36 +258,17 @@ void PixMobIRDriver::compute_drift_rgb(const WashState& state,
                                        uint8_t& r,
                                        uint8_t& g,
                                        uint8_t& b) const {
-    // Linear A↔B↔A blend with lookahead. Mirrors the orchestrator's
-    // linear_drift_rgb() that this Driver-side path supersedes.
-    // Visual difference between linear and cosine-eased at 3 s refresh
-    // granularity is sub-perceptual; integer-only math keeps the
-    // refresh tick cheap.
-    //
-    // The lookahead compensates for the bracelet's render time: each
-    // refresh fires a SingleColor with the wash's attack envelope, so
-    // the bracelet takes `attack_bucket_ms` to morph from its current
-    // colour to the new target. Without lookahead, the target is the
-    // Tildagon's CURRENT position - but by the time the PixMob's morph
-    // completes, the Tildagon has already drifted on by attack_bucket_ms,
-    // and the PixMob lands at a stale colour. Bench observation
-    // 2026-06-18: "both devices not in sync, latency on the wash effect."
-    //
-    // Fix: shift the phase sample forward by the bracketed attack time.
-    // The PixMob's morph END-POSITION = where the Tildagon will be when
-    // the morph completes. The two devices visually sync at the end of
-    // each morph window; during the window, the PixMob is interpolating
-    // toward the Tildagon's future position rather than tracking its
-    // past. Visible improvement is biggest for short cycles where the
-    // attack time is a meaningful fraction of one A↔B↔A round-trip.
-    const uint8_t attack_bucket =
-        quantize_100ms_to_pixmob_time(state.attack_100ms);
-    static constexpr uint16_t kBucketMs[8] = {
-        0, 32, 96, 192, 480, 960, 2400, 3840,
-    };
-    const uint32_t lookahead_ms = kBucketMs[attack_bucket];
-    const uint32_t sample_time = now + lookahead_ms;
-    const uint32_t elapsed = (sample_time - state.started_ms) % state.cycle_ms;
+    // Linear A↔B↔A blend at the instant of refresh. The refresh fires
+    // with T_0_MS attack so the bracelet snaps to whatever colour the
+    // Tildagon is currently rendering at refresh time - no need to
+    // look ahead to compensate for morph time (the earlier lookahead
+    // existed because the refresh used T_2400_MS attack and the
+    // bracelet's morph end-position needed to match the Tildagon's
+    // position-at-morph-end; with T_0_MS attack there is no morph to
+    // compensate for). Visual difference between linear and cosine-
+    // eased blend at refresh granularity is sub-perceptual; integer-
+    // only math keeps the refresh tick cheap.
+    const uint32_t elapsed = (now - state.started_ms) % state.cycle_ms;
     // phase in 0..1 over one full A↔B↔A oscillation, scaled by 1024
     // to keep it integer-friendly: 0..512 = A→B, 512..1024 = B→A.
     const uint32_t phase_q10 = (elapsed * 1024u) / state.cycle_ms;
