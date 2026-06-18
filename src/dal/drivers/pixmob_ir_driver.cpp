@@ -354,30 +354,38 @@ bool PixMobIRDriver::send_wash_end(uint8_t target_group, uint8_t release_time) {
     if (!s.active) return false;
 
     if (release_time > 0) {
-        // Faded cancel: fire one final SingleColor with the bucket
-        // closest to the requested release. Bracelet snaps to current
-        // colour (already there from the last refresh, so visually no
-        // change at envelope start), holds for a minimum-perceptible
-        // 32 ms, then fades to black over release.
+        // Faded cancel: fire SingleColor(black, attack=release_bucket,
+        // T_0, T_0). The bracelet morphs from its current rendered
+        // colour (the wash) to black over the attack time, then
+        // immediately enters T_0 sustain (no hold) and T_0 release
+        // (no further fade) - net: a single smooth fade to black,
+        // landing at black exactly when the attack completes.
         //
-        // Bench note (2026-06-18): sustain=T_0_MS in the cancel envelope
-        // doesn't reliably stop the wash on the bench fleet - bracelets
-        // appear to interpret it as "no envelope, keep current state"
-        // rather than "fade immediately to release". Using T_32_MS
-        // sustain (visually imperceptible) gives the bracelet a normal
-        // envelope to render and the fade lands as expected.
-        uint8_t r = s.r1, g = s.g1, b = s.b1;
-        if (s.cycle_ms > 0) {
-            compute_drift_rgb(s, now_ms(), r, g, b);
-        }
+        // Bench history (2026-06-18):
+        //   - sustain=T_0_MS with the wash's own colour: bracelet
+        //     interpreted as no-op, ignored.
+        //   - sustain=T_32_MS with the wash's own colour: worked
+        //     against the long-attack-refresh path (T_2400_MS attack)
+        //     because the bracelet was usually mid-attack rendering
+        //     a colour that visibly differed from the cancel target.
+        //     With the T_0_MS snap-on refresh introduced 2026-06-18,
+        //     the bracelet sits in sustain matching the cancel target
+        //     exactly, and the no-op pattern resurfaces (bench
+        //     observation: "cancel wash didn't stop the PixMob; ESP-
+        //     NOW lumes faded to black normally").
+        //   - attack=release_bucket toward BLACK with T_0 sustain +
+        //     T_0 release: the target (black) is unambiguously
+        //     different from the current rendered wash colour, so
+        //     the bracelet processes the envelope. The attack itself
+        //     IS the fade - no need for sustain or release.
         const uint8_t release_bucket = quantize_100ms_to_pixmob_time(release_time);
         uint16_t buf[kPulseBufSize];
         const size_t n = pixmob::buildSingleColor(
             buf, kPulseBufSize,
-            r, g, b,
-            pixmob::T_0_MS,
-            pixmob::T_32_MS,
+            0, 0, 0,
             static_cast<pixmob::Time>(release_bucket),
+            pixmob::T_0_MS,
+            pixmob::T_0_MS,
             pixmob::CHANCE_100,
             target_group);
         if (n != 0) transmit(buf, n);
