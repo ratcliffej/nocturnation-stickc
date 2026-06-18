@@ -87,15 +87,19 @@ public:
     static constexpr size_t kWashSlots = 10;   // groups 0..9
 
     // Refresh cadence bounds. Drifting washes (cycle_ms > 0) auto-
-    // scale to ~10 snapshots per drift cycle for visibly-smooth
-    // stepping; static washes (cycle_ms == 0) hold at the max.
+    // scale to ~20 snapshots per drift cycle for visibly-smooth
+    // stepping (~5 % colour delta per step at a 5 s drift cycle -
+    // close to the eye's threshold for noticing a discrete colour
+    // change). Static washes (cycle_ms == 0) hold at the max.
     // Bench-validated: T5 confirmed no visible gaps down to 1000 ms
-    // refresh, and the IR airtime budget for 4 simultaneous groups
-    // at the floor is ~40 % - leaves headroom for sparkles. Public
-    // constexpr so tests can reference both bounds.
+    // refresh; 250 ms floor pushes the IR airtime budget to ~80 %
+    // at 4 simultaneous active groups + 120 BPM sparkles - tight
+    // but acceptable since typical shows have fewer simultaneous
+    // drift cycles than the theoretical max. Public constexpr so
+    // tests can reference both bounds.
     static constexpr uint32_t kWashRefreshMaxMs = 3000;
-    static constexpr uint32_t kWashRefreshMinMs = 500;
-    static constexpr uint32_t kWashRefreshSnapshotsPerCycle = 10;
+    static constexpr uint32_t kWashRefreshMinMs = 250;
+    static constexpr uint32_t kWashRefreshSnapshotsPerCycle = 20;
     // Legacy alias - kept for code paths that still reference the
     // original single-value name. Equals kWashRefreshMaxMs.
     static constexpr uint32_t kWashRefreshMs = kWashRefreshMaxMs;

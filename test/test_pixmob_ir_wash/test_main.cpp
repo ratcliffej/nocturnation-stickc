@@ -378,7 +378,7 @@ static void test_refresh_interval_scales_with_cycle(void) {
     // Static washes (cycle_ms == 0) hold at the max.
     auto* drv = pixmob_ir_driver_instance();
 
-    // Case 1: 5 s cycle -> 500 ms refresh (5000 / 10 == 500, equal
+    // Case 1: 5 s cycle -> 250 ms refresh (5000 / 20 == 250, equal
     // to the floor).
     LightWashEvent slow_drift{};
     slow_drift.r1 = 255; slow_drift.g1 = 100; slow_drift.b1 = 0;
@@ -387,10 +387,11 @@ static void test_refresh_interval_scales_with_cycle(void) {
     slow_drift.intensity      = 255;
     slow_drift.pulse_response = 1;
     drv->send_wash(0, slow_drift);
-    TEST_ASSERT_EQUAL_UINT32(500u,
+    TEST_ASSERT_EQUAL_UINT32(250u,
                              drv->wash_state(0)->refresh_interval_ms);
 
-    // Case 2: 30 s cycle -> 3000 ms refresh (capped at kWashRefreshMaxMs).
+    // Case 2: 30 s cycle -> 1500 ms refresh (30000 / 20 == 1500,
+    // within the [250, 3000] bounds so no clamp).
     LightWashEvent verylongdrift{};
     verylongdrift.r1 = 255; verylongdrift.g1 = 100; verylongdrift.b1 = 0;
     verylongdrift.r2 = 0;   verylongdrift.g2 = 50;  verylongdrift.b2 = 200;
@@ -398,11 +399,23 @@ static void test_refresh_interval_scales_with_cycle(void) {
     verylongdrift.intensity      = 255;
     verylongdrift.pulse_response = 1;
     drv->send_wash(1, verylongdrift);
-    TEST_ASSERT_EQUAL_UINT32(PixMobIRDriver::kWashRefreshMaxMs,
+    TEST_ASSERT_EQUAL_UINT32(1500u,
                              drv->wash_state(1)->refresh_interval_ms);
 
-    // Case 3: 1 s cycle -> floored to kWashRefreshMinMs (1000 / 10 ==
-    // 100, well below the 500 ms floor).
+    // Case 2b: 60 s cycle -> 3000 ms refresh (60000 / 20 == 3000,
+    // equal to the cap).
+    LightWashEvent epicdrift{};
+    epicdrift.r1 = 255; epicdrift.g1 = 100; epicdrift.b1 = 0;
+    epicdrift.r2 = 0;   epicdrift.g2 = 50;  epicdrift.b2 = 200;
+    epicdrift.cycle_ms       = 60000;
+    epicdrift.intensity      = 255;
+    epicdrift.pulse_response = 1;
+    drv->send_wash(4, epicdrift);
+    TEST_ASSERT_EQUAL_UINT32(PixMobIRDriver::kWashRefreshMaxMs,
+                             drv->wash_state(4)->refresh_interval_ms);
+
+    // Case 3: 1 s cycle -> floored to kWashRefreshMinMs (1000 / 20 ==
+    // 50, well below the 250 ms floor).
     LightWashEvent fastdrift{};
     fastdrift.r1 = 255; fastdrift.g1 = 100; fastdrift.b1 = 0;
     fastdrift.r2 = 0;   fastdrift.g2 = 50;  fastdrift.b2 = 200;
