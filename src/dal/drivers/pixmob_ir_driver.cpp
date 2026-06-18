@@ -105,5 +105,232 @@ bool PixMobIRDriver::send(uint8_t /*group_id*/, const AssignDeviceGroupEvent& ev
     return true;
 }
 
+// -----------------------------------------------------------------------------
+// Wash family (Epic 11). The bracelet has no native wash; we maintain
+// per-group state and fire periodic SingleColor refreshes that the bracelet
+// renders as continuous held colour. Refresh envelope is square
+// (T_0 / T_3840 / T_0) per the bench finding that a release tail produces
+// a visible decay between refreshes. See lume-capabilities-design.md §10.
+// -----------------------------------------------------------------------------
+
+uint32_t PixMobIRDriver::now_ms() const {
+    if (clock_source_) return clock_source_();
+#ifdef ARDUINO
+    return ::millis();
+#else
+    // Native test envs without an injected clock get a frozen zero; tests
+    // that exercise time-dependent paths install a stub via
+    // set_clock_source().
+    return 0;
+#endif
+}
+
+const PixMobIRDriver::WashState*
+PixMobIRDriver::wash_state(uint8_t group_id) const {
+    if (group_id >= kWashSlots) return nullptr;
+    return &wash_slots_[group_id];
+}
+
+void PixMobIRDriver::fire_wash_refresh(uint8_t group_id,
+                                       const WashState& state,
+                                       uint32_t now) {
+    // Compute the live colour - blended A↔B for drifting washes, A only
+    // for static (cycle_ms == 0). Static washes still go through the
+    // blender; it short-circuits to A when cycle is 0.
+    uint8_t r = state.r1, g = state.g1, b = state.b1;
+    if (state.cycle_ms > 0) {
+        compute_drift_rgb(state, now, r, g, b);
+    }
+    // Use the wash's own attack envelope so successive refreshes morph
+    // smoothly between snapshots instead of snapping. Without this a
+    // drift wash visibly alternates between snapshot colours rather
+    // than reading as a continuous gradient (bench observation
+    // 2026-06-18). Sustain stays at T_3840_MS so a delayed refresh
+    // doesn't drop the bracelet to black; release at T_0_MS so the
+    // envelope ends cleanly without a fade tail before the next
+    // refresh.
+    const uint8_t attack_bucket =
+        quantize_100ms_to_pixmob_time(state.attack_100ms);
+    uint16_t buf[kPulseBufSize];
+    const size_t n = pixmob::buildSingleColor(
+        buf, kPulseBufSize,
+        r, g, b,
+        static_cast<pixmob::Time>(attack_bucket),
+        pixmob::T_3840_MS,
+        pixmob::T_0_MS,
+        pixmob::CHANCE_100,
+        group_id);
+    if (n == 0) return;
+    transmit(buf, n);
+}
+
+void PixMobIRDriver::compute_drift_rgb(const WashState& state,
+                                       uint32_t now,
+                                       uint8_t& r,
+                                       uint8_t& g,
+                                       uint8_t& b) const {
+    // Linear A↔B↔A blend. Mirrors the orchestrator's
+    // linear_drift_rgb() that this Driver-side path supersedes.
+    // Visual difference between linear and cosine-eased at 3 s refresh
+    // granularity is sub-perceptual; integer-only math keeps the
+    // refresh tick cheap.
+    const uint32_t elapsed = (now - state.started_ms) % state.cycle_ms;
+    // phase in 0..1 over one full A↔B↔A oscillation, scaled by 1024
+    // to keep it integer-friendly: 0..512 = A→B, 512..1024 = B→A.
+    const uint32_t phase_q10 = (elapsed * 1024u) / state.cycle_ms;
+    uint32_t blend_q10;
+    if (phase_q10 < 512u) {
+        blend_q10 = phase_q10 * 2u;             // 0..1024 as we go A→B
+    } else {
+        blend_q10 = (1024u - phase_q10) * 2u;   // 1024..0 as we go B→A
+    }
+    const uint32_t inv = 1024u - blend_q10;
+    r = static_cast<uint8_t>((state.r1 * inv + state.r2 * blend_q10) >> 10);
+    g = static_cast<uint8_t>((state.g1 * inv + state.g2 * blend_q10) >> 10);
+    b = static_cast<uint8_t>((state.b1 * inv + state.b2 * blend_q10) >> 10);
+}
+
+uint8_t PixMobIRDriver::quantize_100ms_to_pixmob_time(uint8_t units_100ms) const {
+    // pixmob::Time bucket centres in ms: 0, 32, 96, 192, 480, 960, 2400, 3840.
+    // Caller passes a wire-side 100 ms-unit value (LightWashEvent.attack /
+    // .release, LIGHT_WASH_END.release_time). Returns the pixmob::Time
+    // enum value (0..7) of the bucket closest to the requested time.
+    static constexpr uint16_t kBucketMs[8] = {
+        0, 32, 96, 192, 480, 960, 2400, 3840,
+    };
+    const uint16_t target = static_cast<uint16_t>(units_100ms) * 100;
+    uint8_t best = 0;
+    int32_t best_diff = static_cast<int32_t>(kBucketMs[0]) - static_cast<int32_t>(target);
+    if (best_diff < 0) best_diff = -best_diff;
+    for (uint8_t i = 1; i < 8; ++i) {
+        int32_t diff = static_cast<int32_t>(kBucketMs[i]) - static_cast<int32_t>(target);
+        if (diff < 0) diff = -diff;
+        if (diff < best_diff) {
+            best_diff = diff;
+            best = i;
+        }
+    }
+    return best;
+}
+
+bool PixMobIRDriver::send_wash(uint8_t target_group, const LightWashEvent& ev) {
+    if (target_group >= kWashSlots) return false;
+    WashState& s = wash_slots_[target_group];
+    const uint32_t now = now_ms();
+
+    // Record the cue's anchors + cycle + attack. ttl_seconds, release,
+    // and pulse_response are wire fields that capable Lumes use; PixMob
+    // bracelets don't understand them, so they're not stored here.
+    // intensity is applied by the bracelet hardware via SingleColor's
+    // RGB - we just pass the raw RGB through.
+    s.active          = true;
+    s.r1 = ev.r1; s.g1 = ev.g1; s.b1 = ev.b1;
+    s.r2 = ev.r2; s.g2 = ev.g2; s.b2 = ev.b2;
+    s.cycle_ms        = ev.cycle_ms;
+    s.attack_100ms    = ev.attack;
+    s.started_ms      = now;
+    s.next_refresh_ms = now + kWashRefreshMs;
+
+    // Fire the first refresh immediately so the bracelet lights up
+    // without waiting kWashRefreshMs.
+    fire_wash_refresh(target_group, s, now);
+    return true;
+}
+
+bool PixMobIRDriver::send_wash_end(uint8_t target_group, uint8_t release_time) {
+    if (target_group >= kWashSlots) return false;
+    WashState& s = wash_slots_[target_group];
+    if (!s.active) return false;
+
+    if (release_time > 0) {
+        // Faded cancel: fire one final SingleColor with the bucket
+        // closest to the requested release. Bracelet snaps to current
+        // colour (already there from the last refresh, so visually no
+        // change at envelope start), holds for a minimum-perceptible
+        // 32 ms, then fades to black over release.
+        //
+        // Bench note (2026-06-18): sustain=T_0_MS in the cancel envelope
+        // doesn't reliably stop the wash on the bench fleet - bracelets
+        // appear to interpret it as "no envelope, keep current state"
+        // rather than "fade immediately to release". Using T_32_MS
+        // sustain (visually imperceptible) gives the bracelet a normal
+        // envelope to render and the fade lands as expected.
+        uint8_t r = s.r1, g = s.g1, b = s.b1;
+        if (s.cycle_ms > 0) {
+            compute_drift_rgb(s, now_ms(), r, g, b);
+        }
+        const uint8_t release_bucket = quantize_100ms_to_pixmob_time(release_time);
+        uint16_t buf[kPulseBufSize];
+        const size_t n = pixmob::buildSingleColor(
+            buf, kPulseBufSize,
+            r, g, b,
+            pixmob::T_0_MS,
+            pixmob::T_32_MS,
+            static_cast<pixmob::Time>(release_bucket),
+            pixmob::CHANCE_100,
+            target_group);
+        if (n != 0) transmit(buf, n);
+    }
+    // Instant cancel (release_time == 0): just stop refreshing.
+    // The bracelet's currently-active refresh envelope (T_3840 sustain,
+    // T_0 release) snap-offs naturally at sustain end, giving a clean
+    // exit with no further IR traffic from us. Worst-case visible
+    // hangover: up to one sustain window (~3.84 s) if the user
+    // cancels immediately after a refresh fired.
+
+    s.active = false;
+    return true;
+}
+
+bool PixMobIRDriver::send_wash_pulse(uint8_t target_group,
+                                     const RgbPulseEvent& ev) {
+    if (target_group >= kWashSlots) {
+        // Fall back to a regular pulse; out-of-range target is unusual
+        // but shouldn't crash the rendering path.
+        return send(target_group, ev);
+    }
+    WashState& s = wash_slots_[target_group];
+    if (!s.active) {
+        // No wash on this group - emit a regular pulse instead.
+        // Matches the spec: LIGHT_WASH_PULSE is silently dropped on
+        // a non-washing target by capable Lumes; firing a fallback
+        // pulse here matches the "kick happens regardless" intent.
+        return send(target_group, ev);
+    }
+
+    // Composite: TwoColors(sparkle, current_wash_rgb). Bracelet
+    // flashes sparkle briefly then holds the wash colour for 384 ms
+    // before fading - the protocol-native "kick + tail colour".
+    // The 384 ms tail acts as a brief refresh, so we push the next
+    // periodic refresh back; if the LD is firing sparkles steadily,
+    // they'll suffice to keep the wash alive and our refresh tick
+    // only catches the gaps.
+    const uint32_t now = now_ms();
+    uint8_t wr = s.r1, wg = s.g1, wb = s.b1;
+    if (s.cycle_ms > 0) {
+        compute_drift_rgb(s, now, wr, wg, wb);
+    }
+    uint16_t buf[kPulseBufSize];
+    const size_t n = pixmob::buildTwoColors(
+        buf, kPulseBufSize,
+        ev.r, ev.g, ev.b,     // colour 1: the sparkle
+        wr, wg, wb);          // colour 2: the wash to return to
+    if (n == 0) return false;
+    transmit(buf, n);
+    s.next_refresh_ms = now + kWashRefreshMs;
+    return true;
+}
+
+void PixMobIRDriver::loop_tick() {
+    const uint32_t now = now_ms();
+    for (uint8_t g = 0; g < kWashSlots; ++g) {
+        WashState& s = wash_slots_[g];
+        if (!s.active) continue;
+        if (now < s.next_refresh_ms) continue;
+        fire_wash_refresh(g, s, now);
+        s.next_refresh_ms = now + kWashRefreshMs;
+    }
+}
+
 }  // namespace dal
 }  // namespace nocturnation

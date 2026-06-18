@@ -517,12 +517,25 @@ inline uint32_t wash_now_ms() {
 bool DAL::render_wash(const char* t, const LightWashEvent& ev) {
     uint8_t cls = 0, grp = 0;
     if (!parse_target_class_group(t, cls, grp)) return false;
+    // (1) Wire to ESP-NOW-receiving Lumes (Tildagons, StickC LCD).
     auto* drv = esp_now_broadcast_driver_instance();
     if (!drv || !drv->enabled()) return false;
     const bool ok = drv->send_wash(cls, grp, ev);
     if (ok) {
         drv->increment_send_count();
         record_active_wash(cls, grp, ev, wash_now_ms());
+    }
+    // (2) Epic 11: Director-local IR loopback so PixMob bracelets in
+    // range render the wash via periodic SingleColor refresh. Gated on
+    // class so non-Light routes don't fire IR; gated on the ir-pixmob
+    // driver's enabled flag so Config > IR > Disable mutes it without
+    // the Show needing to know.
+    if (cls == 0 || cls == 1) {
+        auto* ir = pixmob_ir_driver_instance();
+        if (ir && ir->enabled() && grp < PixMobIRDriver::kWashSlots) {
+            ir->send_wash(grp, ev);
+            ir->increment_send_count();
+        }
     }
     return ok;
 }
@@ -537,6 +550,15 @@ bool DAL::render_wash_end(const char* t, uint8_t release_time) {
         drv->increment_send_count();
         clear_active_wash(cls, grp);
     }
+    // Epic 11: also tell the IR driver to stop refreshing this group
+    // (and optionally fire one final SingleColor for a faded exit).
+    if (cls == 0 || cls == 1) {
+        auto* ir = pixmob_ir_driver_instance();
+        if (ir && ir->enabled() && grp < PixMobIRDriver::kWashSlots) {
+            ir->send_wash_end(grp, release_time);
+            ir->increment_send_count();
+        }
+    }
     return ok;
 }
 
@@ -547,6 +569,16 @@ bool DAL::render_wash_pulse(const char* t, const RgbPulseEvent& ev) {
     if (!drv || !drv->enabled()) return false;
     const bool ok = drv->send_wash_pulse(cls, grp, ev);
     if (ok) drv->increment_send_count();
+    // Epic 11: PixMob composite. If the IR driver has an active wash on
+    // this group, fire TwoColors(sparkle, current_wash); otherwise fall
+    // back to a regular SingleColor pulse.
+    if (cls == 0 || cls == 1) {
+        auto* ir = pixmob_ir_driver_instance();
+        if (ir && ir->enabled() && grp < PixMobIRDriver::kWashSlots) {
+            ir->send_wash_pulse(grp, ev);
+            ir->increment_send_count();
+        }
+    }
     return ok;
 }
 
