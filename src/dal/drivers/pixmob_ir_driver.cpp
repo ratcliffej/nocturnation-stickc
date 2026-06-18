@@ -323,7 +323,24 @@ bool PixMobIRDriver::send_wash(uint8_t target_group, const LightWashEvent& ev) {
     s.cycle_ms        = ev.cycle_ms;
     s.attack_100ms    = ev.attack;
     s.started_ms      = now;
-    s.next_refresh_ms = now + kWashRefreshMs;
+
+    // Refresh cadence scales to the drift cycle so the bracelet's
+    // step-wise snapshots produce visibly-smooth blending. Aim for
+    // kWashRefreshSnapshotsPerCycle steps per A↔B↔A round-trip;
+    // clamp to [kWashRefreshMinMs, kWashRefreshMaxMs] to bound IR
+    // airtime and to keep slow-drift washes from refreshing more
+    // often than necessary. Static washes (cycle_ms == 0) hold at
+    // the max - no drift means no need to refresh fast.
+    if (ev.cycle_ms == 0) {
+        s.refresh_interval_ms = kWashRefreshMaxMs;
+    } else {
+        uint32_t interval = static_cast<uint32_t>(ev.cycle_ms)
+                                / kWashRefreshSnapshotsPerCycle;
+        if (interval < kWashRefreshMinMs) interval = kWashRefreshMinMs;
+        if (interval > kWashRefreshMaxMs) interval = kWashRefreshMaxMs;
+        s.refresh_interval_ms = interval;
+    }
+    s.next_refresh_ms = now + s.refresh_interval_ms;
 
     // Fire the first refresh immediately so the bracelet lights up
     // without waiting kWashRefreshMs.
@@ -411,7 +428,7 @@ bool PixMobIRDriver::send_wash_pulse(uint8_t target_group,
         wr, wg, wb);          // colour 2: the wash to return to
     if (n == 0) return false;
     transmit(buf, n);
-    s.next_refresh_ms = now + kWashRefreshMs;
+    s.next_refresh_ms = now + s.refresh_interval_ms;
     return true;
 }
 
@@ -422,7 +439,7 @@ void PixMobIRDriver::loop_tick() {
         if (!s.active) continue;
         if (now < s.next_refresh_ms) continue;
         fire_wash_refresh(g, s, now);
-        s.next_refresh_ms = now + kWashRefreshMs;
+        s.next_refresh_ms = now + s.refresh_interval_ms;
     }
 }
 

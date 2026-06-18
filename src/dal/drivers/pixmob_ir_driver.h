@@ -86,10 +86,19 @@ public:
     // so unit tests can iterate without hard-coding the magic number.
     static constexpr size_t kWashSlots = 10;   // groups 0..9
 
-    // Refresh cadence (locked by Epic 11 B-0.5 bench - 3000 ms is the
-    // smallest "no visible gaps" interval against the 3840 ms documented
-    // sustain). Public constexpr so tests can use the same value.
-    static constexpr uint32_t kWashRefreshMs = 3000;
+    // Refresh cadence bounds. Drifting washes (cycle_ms > 0) auto-
+    // scale to ~10 snapshots per drift cycle for visibly-smooth
+    // stepping; static washes (cycle_ms == 0) hold at the max.
+    // Bench-validated: T5 confirmed no visible gaps down to 1000 ms
+    // refresh, and the IR airtime budget for 4 simultaneous groups
+    // at the floor is ~40 % - leaves headroom for sparkles. Public
+    // constexpr so tests can reference both bounds.
+    static constexpr uint32_t kWashRefreshMaxMs = 3000;
+    static constexpr uint32_t kWashRefreshMinMs = 500;
+    static constexpr uint32_t kWashRefreshSnapshotsPerCycle = 10;
+    // Legacy alias - kept for code paths that still reference the
+    // original single-value name. Equals kWashRefreshMaxMs.
+    static constexpr uint32_t kWashRefreshMs = kWashRefreshMaxMs;
 
     // Inject a wall-clock source for tests. Default (nullptr) uses
     // millis() on Arduino builds and a static 0 on native test envs.
@@ -115,6 +124,11 @@ public:
         uint8_t  attack_100ms;
         uint32_t started_ms;
         uint32_t next_refresh_ms;
+        // Per-wash refresh cadence. Computed from cycle_ms at
+        // send_wash time so a slow drift doesn't waste IR airtime
+        // and a fast drift doesn't read as step-wise. Static washes
+        // (cycle_ms == 0) get kWashRefreshMaxMs.
+        uint32_t refresh_interval_ms;
     };
     const WashState* wash_state(uint8_t group_id) const;
 

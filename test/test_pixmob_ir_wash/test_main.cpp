@@ -370,6 +370,55 @@ static void test_pulse_on_active_wash_fires_sparkle_plus_recovery(void) {
                              drv->wash_state(0)->next_refresh_ms);
 }
 
+static void test_refresh_interval_scales_with_cycle(void) {
+    // Drifting washes auto-scale their refresh cadence so the
+    // bracelet's step-wise snapshots produce visibly-smooth blending
+    // (Epic 11 bench 2026-06-18 follow-up). Targets ~10 snapshots per
+    // A↔B↔A cycle, clamped to [kWashRefreshMinMs, kWashRefreshMaxMs].
+    // Static washes (cycle_ms == 0) hold at the max.
+    auto* drv = pixmob_ir_driver_instance();
+
+    // Case 1: 5 s cycle -> 500 ms refresh (5000 / 10 == 500, equal
+    // to the floor).
+    LightWashEvent slow_drift{};
+    slow_drift.r1 = 255; slow_drift.g1 = 100; slow_drift.b1 = 0;
+    slow_drift.r2 = 0;   slow_drift.g2 = 50;  slow_drift.b2 = 200;
+    slow_drift.cycle_ms       = 5000;
+    slow_drift.intensity      = 255;
+    slow_drift.pulse_response = 1;
+    drv->send_wash(0, slow_drift);
+    TEST_ASSERT_EQUAL_UINT32(500u,
+                             drv->wash_state(0)->refresh_interval_ms);
+
+    // Case 2: 30 s cycle -> 3000 ms refresh (capped at kWashRefreshMaxMs).
+    LightWashEvent verylongdrift{};
+    verylongdrift.r1 = 255; verylongdrift.g1 = 100; verylongdrift.b1 = 0;
+    verylongdrift.r2 = 0;   verylongdrift.g2 = 50;  verylongdrift.b2 = 200;
+    verylongdrift.cycle_ms       = 30000;
+    verylongdrift.intensity      = 255;
+    verylongdrift.pulse_response = 1;
+    drv->send_wash(1, verylongdrift);
+    TEST_ASSERT_EQUAL_UINT32(PixMobIRDriver::kWashRefreshMaxMs,
+                             drv->wash_state(1)->refresh_interval_ms);
+
+    // Case 3: 1 s cycle -> floored to kWashRefreshMinMs (1000 / 10 ==
+    // 100, well below the 500 ms floor).
+    LightWashEvent fastdrift{};
+    fastdrift.r1 = 255; fastdrift.g1 = 100; fastdrift.b1 = 0;
+    fastdrift.r2 = 0;   fastdrift.g2 = 50;  fastdrift.b2 = 200;
+    fastdrift.cycle_ms       = 1000;
+    fastdrift.intensity      = 255;
+    fastdrift.pulse_response = 1;
+    drv->send_wash(2, fastdrift);
+    TEST_ASSERT_EQUAL_UINT32(PixMobIRDriver::kWashRefreshMinMs,
+                             drv->wash_state(2)->refresh_interval_ms);
+
+    // Case 4: static (cycle_ms == 0) holds at the max.
+    drv->send_wash(3, purple_static());
+    TEST_ASSERT_EQUAL_UINT32(PixMobIRDriver::kWashRefreshMaxMs,
+                             drv->wash_state(3)->refresh_interval_ms);
+}
+
 static void test_clock_source_advances_state_deterministically(void) {
     auto* drv = pixmob_ir_driver_instance();
     s_now_ms = 5000;
@@ -393,6 +442,7 @@ int main(int, char**) {
     RUN_TEST(test_per_group_state_isolated);
     RUN_TEST(test_invalid_group_id_silently_rejected);
     RUN_TEST(test_pulse_on_active_wash_fires_sparkle_plus_recovery);
+    RUN_TEST(test_refresh_interval_scales_with_cycle);
     RUN_TEST(test_clock_source_advances_state_deterministically);
     return UNITY_END();
 }
