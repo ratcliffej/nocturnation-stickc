@@ -366,7 +366,14 @@ static void test_pulse_on_active_wash_fires_sparkle_plus_recovery(void) {
     // Wash state remains active - the pulse-plus-recovery didn't
     // disturb the periodic refresh schedule.
     TEST_ASSERT_TRUE(drv->wash_state(0)->active);
-    TEST_ASSERT_EQUAL_UINT32(s_now_ms + PixMobIRDriver::kWashRefreshMs,
+    // The pulse-on-active-wash path pulls next_refresh_ms IN to the
+    // current time (clamped from "send_wash + refresh_interval_ms")
+    // so the next periodic refresh fires as a safety net right after
+    // send() returns - bench fix for occasional dropped recoveries
+    // (2026-06-26). The clamp uses min(existing, now); send_wash had
+    // set it to s_now_ms + refresh_interval_ms, so the post-pulse
+    // value is s_now_ms (now).
+    TEST_ASSERT_EQUAL_UINT32(s_now_ms,
                              drv->wash_state(0)->next_refresh_ms);
 }
 
