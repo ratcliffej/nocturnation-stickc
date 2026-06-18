@@ -36,10 +36,23 @@ namespace dal {
 
 class DmxUsbCdcAdapter {
 public:
-    // Default Enttec DMX USB Pro baud (per heritage Notion page +
-    // Epic 7 B0). Configurable in begin() if a future test rig wants
-    // something different.
-    static constexpr uint32_t kDefaultBaud = 921600;
+    // Wire baud for the StickC. Was 921600 (the conventional Enttec
+    // DMX USB Pro rate) until 2026-06-18; the shared shim's
+    // nocturnation_dmx/enttec_pro.py was lowered to 460 800 as a
+    // Plus2 accommodation (the ESP32-PICO-V3-02 is single-core and
+    // shares its UART RX interrupt with ESP-NOW TX + the LCD; at 921
+    // 600 the UART hardware FIFO only holds ~1.4 ms of inbound
+    // traffic, shorter than the IRQ-off windows ESP-NOW briefly opens
+    // during radio handoff, so bytes drop silently mid-frame and the
+    // parser sits in WaitStart with r:0 o:0). 460 800 doubles the
+    // FIFO lifetime to ~2.8 ms while keeping 50% headroom over
+    // 44 fps DMX. The S3's native USB-CDC ignores the baud value
+    // entirely so this change is invisible there. The firmware side
+    // MUST match the shim side - mismatched bauds means USB bytes
+    // arrive corrupted and the parser never sees a valid frame.
+    // Configurable in begin() if a future test rig wants something
+    // different.
+    static constexpr uint32_t kDefaultBaud = 460800;
 
     DmxUsbCdcAdapter();
 
