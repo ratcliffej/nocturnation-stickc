@@ -96,7 +96,18 @@ bool PixMobIRDriver::send(uint8_t group_id, const RgbPulseEvent& ev) {
             compute_drift_rgb(wash_slots_[group_id], now_ms(), wr, wg, wb);
         }
 
-        // 1. The sparkle itself.
+        // 1. The sparkle, sent kSparkleBurstCount times back-to-back
+        // for redundancy. Bench finding 2026-06-18: a single sparkle
+        // during active wash hits ~40 % visibility on the bracelet
+        // (the wash refresh keeps the bracelet busy in its attack
+        // envelope for most of every 3 s cycle, degrading
+        // responsiveness to incoming commands). If the dropouts are
+        // independent, 3x redundancy gives 1 - 0.6^3 = ~78 % combined
+        // visibility. If they correlate (bracelet was in an
+        // unreceptive state for the whole burst), redundancy buys
+        // less - but the wire cost is bounded (3 commands = ~150 ms
+        // wire time even with the Plus2's internal+external LED
+        // redundancy doubling each).
         uint16_t buf[kPulseBufSize];
         size_t n = pixmob::buildSingleColor(
             buf, kPulseBufSize,
@@ -105,28 +116,15 @@ bool PixMobIRDriver::send(uint8_t group_id, const RgbPulseEvent& ev) {
             ev.chance,
             group_id);
         if (n == 0) return false;
-        transmit(buf, n);
-
-        // Inter-frame quiet period. The bracelet decoder needs a gap
-        // between IR commands to lock onto each one cleanly - the
-        // PixMob protocol's framing has no explicit end-of-frame
-        // sentinel, so without a quiet window the bracelet's receiver
-        // can mis-decode back-to-back frames. Bench observation
-        // 2026-06-18: without this gap, only ~40 % of sparkles
-        // rendered visibly on the bracelet; with the gap, the bracelet
-        // reliably renders the sparkle envelope for ~50 ms before the
-        // recovery command pre-empts it. 50 ms also doubles as the
-        // visible-sparkle window: the bracelet snaps to the sparkle
-        // colour at command-end and renders for the duration of the
-        // gap before the recovery arrives.
-#ifdef ARDUINO
-        delay(50);
-#endif
+        for (int i = 0; i < kSparkleBurstCount; ++i) {
+            transmit(buf, n);
+        }
 
         // 2. The fast recovery to wash. T_192_MS attack is short
         // enough that the wash visually re-establishes within ~250 ms
-        // of the sparkle's start; the inter-command IR gap is the
-        // visible sparkle window.
+        // of the sparkle's start; if any sparkle in the burst hit
+        // visibly, the bracelet will be mid-envelope when the
+        // recovery pre-empts it and morphs back to wash colour.
         n = pixmob::buildSingleColor(
             buf, kPulseBufSize,
             wr, wg, wb,

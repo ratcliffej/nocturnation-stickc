@@ -91,6 +91,13 @@ public:
     // sustain). Public constexpr so tests can use the same value.
     static constexpr uint32_t kWashRefreshMs = 3000;
 
+    // Pulse-on-active-wash redundancy. A single sparkle command during
+    // active wash hits ~40 % visibility on the bracelet (bench finding
+    // 2026-06-18); sending it kSparkleBurstCount times back-to-back
+    // raises the per-press hit rate via redundancy. Public so tests
+    // can assert the IR fire count.
+    static constexpr int kSparkleBurstCount = 3;
+
     // Inject a wall-clock source for tests. Default (nullptr) uses
     // millis() on Arduino builds and a static 0 on native test envs.
     // Tests register a stub that advances under their control.

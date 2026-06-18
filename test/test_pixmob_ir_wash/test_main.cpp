@@ -404,13 +404,16 @@ static void test_pulse_on_active_wash_fires_sparkle_plus_recovery(void) {
                           nocturnation::hal::s_ir_tx.send_count);
     TEST_ASSERT_FALSE(drv->wash_state(0)->active);
 
-    // Phase 2: start a wash, then fire the same pulse. Should fire
-    // BOTH the sparkle and the recovery refresh (two IR commands).
+    // Phase 2: start a wash, then fire the same pulse. Expect
+    // kSparkleBurstCount sparkle transmits + 1 recovery transmit
+    // (= 4 by default). Burst redundancy combats the bracelet's
+    // ~40 % per-command hit rate during active wash; the recovery
+    // pre-empts any landed sparkle and morphs back to wash colour.
     drv->send_wash(0, purple_static());
     TEST_ASSERT_TRUE(drv->wash_state(0)->active);
     const int before_pulse = nocturnation::hal::s_ir_tx.send_count;
     drv->send(/*group_id=*/0, ev);
-    TEST_ASSERT_EQUAL_INT(before_pulse + 2,
+    TEST_ASSERT_EQUAL_INT(before_pulse + PixMobIRDriver::kSparkleBurstCount + 1,
                           nocturnation::hal::s_ir_tx.send_count);
     // Wash state remains active - the pulse-plus-recovery didn't
     // disturb the periodic refresh schedule.
