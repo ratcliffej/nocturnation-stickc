@@ -230,6 +230,15 @@ private:
                                 // can find the interval at which the gap
                                 // disappears, in one bench session, no
                                 // re-flashing.
+        Test6TwoColors,         // TwoColors isolation test. Btn1 fires
+                                // buildTwoColors(red, blue) directly via
+                                // the IR driver, bypassing any wash
+                                // state. Operator observes whether they
+                                // see the brief red flash + held blue
+                                // tail at all. Diagnoses whether the
+                                // bracelet honours TwoColors in
+                                // isolation (a precondition for sparkle-
+                                // on-wash to be visible during shows).
     };
     static constexpr uint32_t kPMobConfirmFlashMs   = 800;
 

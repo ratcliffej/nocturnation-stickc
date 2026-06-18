@@ -1036,7 +1036,7 @@ void TestMode::handle_button_pixmob_bench(const ButtonPressEvent& ev) {
         // any in-flight T5 auto-refresh so leaving T5 doesn't keep the IR
         // firing.
         uint8_t next = static_cast<uint8_t>(pmob_test_) + 1;
-        if (next > static_cast<uint8_t>(PMobTest::Test5AutoRefresh)) next = 0;
+        if (next > static_cast<uint8_t>(PMobTest::Test6TwoColors)) next = 0;
         pmob_test_ = static_cast<PMobTest>(next);
         pmob_step_ = 0;
         pmob_last_fire_ms_ = 0;
@@ -1119,6 +1119,25 @@ void TestMode::handle_button_pixmob_bench(const ButtonPressEvent& ev) {
                 pmob_t5_last_refresh_ms_ = millis();
             }
             break;
+        case PMobTest::Test6TwoColors: {
+            // Fire buildTwoColors(red, blue) directly via the IR
+            // driver, bypassing any wash state. High contrast colour
+            // pair so the brief red flash + held blue tail are both
+            // distinguishable. Diagnoses whether the bracelet renders
+            // TwoColors visibly in isolation - a precondition for
+            // sparkle-on-wash (which encodes via TwoColors) being
+            // visible during shows.
+            uint16_t buf[kPMobPulseBufSize];
+            const size_t n = pixmob::buildTwoColors(
+                buf, kPMobPulseBufSize,
+                255, 0, 0,     // colour 1: red sparkle
+                0, 0, 255);    // colour 2: blue tail (~384 ms hold)
+            if (n != 0) {
+                auto* drv = dal::pixmob_ir_driver_instance();
+                if (drv) drv->transmit(buf, n);
+            }
+            break;
+        }
     }
     pmob_last_fire_ms_ = millis();
     draw_pixmob_bench();
@@ -1158,6 +1177,7 @@ void TestMode::draw_pixmob_bench() {
         case PMobTest::Test3Cancel:         test_label = "T3 Cancel";    break;
         case PMobTest::Test4EnvelopeSweep:  test_label = "T4 Envelope";  break;
         case PMobTest::Test5AutoRefresh:    test_label = "T5 Refresh";   break;
+        case PMobTest::Test6TwoColors:      test_label = "T6 TwoColor";  break;
     }
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         10, 30, test_label, YELLOW, BLACK, 2});
@@ -1225,6 +1245,11 @@ void TestMode::draw_pixmob_bench() {
                 line1 = t4_line1;
                 line2 = "A: next interval";
             }
+            break;
+        }
+        case PMobTest::Test6TwoColors: {
+            line1 = "A: fire TwoColors";
+            line2 = "red flash + blue hold";
             break;
         }
     }
