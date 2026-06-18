@@ -94,6 +94,19 @@ enum class Capability : uint8_t {
     // declares them via its own HAL.
     ImuTap,                   // produces TapDetectedEvent (high-pass-filtered Z onset)
     ImuMotion,                // produces MotionEvent (3-axis magnitude / per-axis)
+
+    // -------------------------------------------------------------------------
+    // DMX input (Epic 7)
+    // -------------------------------------------------------------------------
+    //
+    // The host has a wire over which a DMX console can deliver Enttec
+    // DMX USB Pro framing. v1 (StickC Plus2 + S3) means USB-CDC at
+    // 921 600 baud. A future Tildagon backend (sACN over WiFi) declares
+    // the same capability once the radio-coexistence work lands.
+    //
+    // Modes / Shows that require DMX input declare this capability and
+    // ModeMachine refuses to enter them on a host that doesn't have it.
+    DmxInput,                 // host can receive Enttec Pro DMX over its primary serial wire
 };
 
 // =============================================================================
