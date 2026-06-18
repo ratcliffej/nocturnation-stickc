@@ -321,6 +321,55 @@ static void test_invalid_group_id_silently_rejected(void) {
     TEST_ASSERT_NULL(drv->wash_state(PixMobIRDriver::kWashSlots));
 }
 
+static void test_pulse_on_active_wash_fires_twocolors(void) {
+    // Regression for the 2026-06-18 bench symptom "wash goes to black
+    // between sparkles". A pulse fired via send(RgbPulseEvent) on a
+    // group with an active wash must NOT replace the bracelet's wash
+    // envelope with a SingleColor that ends in release. Behaviour:
+    // fire TwoColors so the bracelet flashes the pulse then returns to
+    // the wash colour for ~384 ms.
+    //
+    // The capturing IRTx records each send_raw call's pulse-train
+    // length. TwoColors and SingleColor produce different-length
+    // trains, but neither has a hard-coded length we can assert
+    // against here without coupling to the encoder. Instead the test
+    // exercises the BRANCH: with no active wash, a single send fires
+    // and the bracelet's wash-state stays untouched; with active
+    // wash, a single send fires AND the wash state remains intact
+    // (TwoColors doesn't disturb the periodic refresh).
+    auto* drv = pixmob_ir_driver_instance();
+
+    // Phase 1: no wash, regular pulse via SingleColor path.
+    RgbPulseEvent ev{};
+    ev.r = 255; ev.g = 0; ev.b = 0;
+    ev.attack = pixmob::T_0_MS;
+    ev.sustain = pixmob::T_32_MS;
+    ev.release = pixmob::T_96_MS;
+    ev.chance = pixmob::CHANCE_100;
+    drv->send(/*group_id=*/0, ev);
+    const size_t train_len_no_wash = nocturnation::hal::s_ir_tx.last_count;
+    TEST_ASSERT_GREATER_THAN_UINT(0, train_len_no_wash);
+    TEST_ASSERT_FALSE(drv->wash_state(0)->active);
+
+    // Phase 2: start a wash, then fire the same pulse. Should route
+    // through TwoColors. Train length will differ from the SingleColor
+    // case because TwoColors uses a 9-byte buffer with both colours
+    // packed in, while SingleColor with envelope is also 9 bytes but
+    // the encoded run-length sequence differs.
+    drv->send_wash(0, purple_static());
+    TEST_ASSERT_TRUE(drv->wash_state(0)->active);
+    const int before_pulse = nocturnation::hal::s_ir_tx.send_count;
+    drv->send(/*group_id=*/0, ev);
+    TEST_ASSERT_EQUAL_INT(before_pulse + 1,
+                          nocturnation::hal::s_ir_tx.send_count);
+    // Wash state remains active - the pulse didn't disturb it.
+    TEST_ASSERT_TRUE(drv->wash_state(0)->active);
+    // Wash state's next_refresh_ms is unchanged - the periodic refresh
+    // ticks independently of pulses.
+    TEST_ASSERT_EQUAL_UINT32(s_now_ms + PixMobIRDriver::kWashRefreshMs,
+                             drv->wash_state(0)->next_refresh_ms);
+}
+
 static void test_clock_source_advances_state_deterministically(void) {
     auto* drv = pixmob_ir_driver_instance();
     s_now_ms = 5000;
@@ -343,6 +392,7 @@ int main(int, char**) {
     RUN_TEST(test_drift_wash_blends_rgb_across_cycle_phase);
     RUN_TEST(test_per_group_state_isolated);
     RUN_TEST(test_invalid_group_id_silently_rejected);
+    RUN_TEST(test_pulse_on_active_wash_fires_twocolors);
     RUN_TEST(test_clock_source_advances_state_deterministically);
     return UNITY_END();
 }

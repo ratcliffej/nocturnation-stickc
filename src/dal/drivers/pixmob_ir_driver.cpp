@@ -53,6 +53,39 @@ void PixMobIRDriver::transmit(const uint16_t* pulses_us, size_t count) {
 // -----------------------------------------------------------------------------
 
 bool PixMobIRDriver::send(uint8_t group_id, const RgbPulseEvent& ev) {
+    // Epic 11 bench (2026-06-18): pulses on a washing group must NOT
+    // fire as SingleColor, because each SingleColor wholesale replaces
+    // the bracelet's current envelope - so the pulse "wins" against
+    // the wash refresh and the bracelet ends each pulse in release,
+    // going dark between pulses instead of returning to the wash
+    // colour. Symptoms: "wash going to black between sparkles" + "most
+    // sparkles aren't rendered" (they ARE, they just leave the
+    // bracelet dark afterwards). Fix: when the group has an active
+    // wash, fire TwoColors(pulse_rgb, current_wash_rgb) - the
+    // protocol-native "kick + return to wash colour" composite. The
+    // bracelet flashes the pulse (~25 ms), then holds the wash colour
+    // for ~384 ms, which covers most of the inter-beat gap at typical
+    // BPMs. The periodic wash refresh continues independently to fill
+    // any quiet stretches between pulses.
+    if (group_id < kWashSlots && wash_slots_[group_id].active) {
+        uint8_t wr = wash_slots_[group_id].r1;
+        uint8_t wg = wash_slots_[group_id].g1;
+        uint8_t wb = wash_slots_[group_id].b1;
+        if (wash_slots_[group_id].cycle_ms > 0) {
+            compute_drift_rgb(wash_slots_[group_id], now_ms(), wr, wg, wb);
+        }
+        uint16_t buf[kPulseBufSize];
+        const size_t n = pixmob::buildTwoColors(
+            buf, kPulseBufSize,
+            ev.r, ev.g, ev.b,
+            wr, wg, wb);
+        if (n == 0) return false;
+        transmit(buf, n);
+        return true;
+    }
+
+    // No active wash on this group - regular SingleColor pulse using
+    // the orchestrator-supplied envelope.
     uint16_t buf[kPulseBufSize];
     const size_t n = pixmob::buildSingleColor(
         buf, kPulseBufSize,
