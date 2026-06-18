@@ -116,11 +116,28 @@ bool PixMobIRDriver::send(uint8_t group_id, const RgbPulseEvent& ev) {
         if (n == 0) return false;
         transmit(buf, n);
 
-        // 2. The fast recovery to wash. T_192_MS attack is short
-        // enough that the wash visually re-establishes within ~250 ms
-        // of the sparkle's start; if the sparkle hit visibly, the
-        // bracelet is mid-envelope when the recovery pre-empts it
-        // and morphs back to wash colour.
+        // 2. The fast recovery to wash, sent TWICE for redundancy.
+        // T_192_MS attack is short enough that the wash visually
+        // re-establishes within ~250 ms of the sparkle's start. The
+        // bracelet pre-empts the sparkle envelope (mid-release if the
+        // sparkle landed) and morphs back to wash colour.
+        //
+        // Bench observation 2026-06-30: with a single recovery, the
+        // PixMob wash dropped briefly (~200-400 ms of darkness)
+        // coinciding with each sparkle - cause was the recovery
+        // command itself being dropped (the bracelet's IR receiver is
+        // in its busy window for ~200 ms after processing the
+        // sparkle's T_192_MS release; the recovery arrives in that
+        // window and lands on a deaf receiver some fraction of the
+        // time). The earlier "immediate safety-net refresh via
+        // next_refresh_ms = t" hit the same busy window and dropped
+        // too - same root cause, different command. Fix: send the
+        // recovery twice in succession. Both commands target the same
+        // wash colour so duplicates produce no visible artifact (the
+        // sparkle-burst experiment of 2026-06-18 showed duplicates
+        // ARE visible when the sparkle is a different colour from
+        // wash; for the wash-coloured recovery the duplicate is
+        // visually a no-op).
         n = pixmob::buildSingleColor(
             buf, kPulseBufSize,
             wr, wg, wb,
@@ -130,28 +147,16 @@ bool PixMobIRDriver::send(uint8_t group_id, const RgbPulseEvent& ev) {
                                  // pre-empts well before this matters
             pixmob::CHANCE_100,
             group_id);
-        if (n != 0) transmit(buf, n);
-
-        // Pull the next periodic refresh in close so it fires as a
-        // safety net immediately after this send() returns. Bench
-        // observation 2026-06-26: during long song playback the wash
-        // occasionally dropped briefly on the PixMobs - cause was the
-        // recovery command above being dropped (bracelets correlate
-        // dropouts to busy-receive windows) leaving the bracelet to
-        // play the sparkle's release envelope to black, with up to
-        // refresh_interval_ms of darkness before the next scheduled
-        // periodic refresh arrived. Setting next_refresh_ms = t means
-        // loop_tick fires a refresh ~10-20 ms after send() returns;
-        // bracelet's dark window shrinks from ~250 ms (refresh
-        // interval) to ~80 ms (sparkle release tail before refresh
-        // pre-empts). Cost: refreshes are now bunched right after
-        // sparkles instead of evenly spaced, but the total count per
-        // second is the same (the next regular periodic refresh
-        // resumes from this safety-net refresh + interval), so the IR
-        // airtime budget is unchanged.
-        if (wash_slots_[group_id].next_refresh_ms > t) {
-            wash_slots_[group_id].next_refresh_ms = t;
+        if (n != 0) {
+            transmit(buf, n);    // recovery #1
+            transmit(buf, n);    // recovery #2 - same command, hedges
+                                 // against the bracelet's busy-window
+                                 // drop pattern. If #1 landed, the
+                                 // bracelet is already morphing to
+                                 // wash and #2 is a no-op snap to the
+                                 // same colour mid-attack.
         }
+        (void)t;
 
         return true;
     }

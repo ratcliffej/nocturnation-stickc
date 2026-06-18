@@ -353,27 +353,25 @@ static void test_pulse_on_active_wash_fires_sparkle_plus_recovery(void) {
                           nocturnation::hal::s_ir_tx.send_count);
     TEST_ASSERT_FALSE(drv->wash_state(0)->active);
 
-    // Phase 2: start a wash, then fire the same pulse. Expect 2 IR
-    // commands - the sparkle (one SingleColor) and the recovery
-    // (one SingleColor with T_192_MS attack to morph back to wash
-    // colour quickly).
+    // Phase 2: start a wash, then fire the same pulse. Expect 3 IR
+    // commands - the sparkle (SingleColor) plus the recovery sent
+    // TWICE (same-colour duplicate is a no-op visually but hedges
+    // against the bracelet's busy-window dropping the first
+    // recovery; bench fix 2026-06-30 for wash dropouts coinciding
+    // with sparkle firings).
     drv->send_wash(0, purple_static());
     TEST_ASSERT_TRUE(drv->wash_state(0)->active);
     const int before_pulse = nocturnation::hal::s_ir_tx.send_count;
     drv->send(/*group_id=*/0, ev);
-    TEST_ASSERT_EQUAL_INT(before_pulse + 2,
+    TEST_ASSERT_EQUAL_INT(before_pulse + 3,
                           nocturnation::hal::s_ir_tx.send_count);
     // Wash state remains active - the pulse-plus-recovery didn't
-    // disturb the periodic refresh schedule.
+    // disturb the periodic refresh schedule. The immediate-fire
+    // safety-net (next_refresh_ms = t) of 2026-06-26 was reverted
+    // since it dropped in the same busy window as the recovery; the
+    // recovery-doubling above replaces it.
     TEST_ASSERT_TRUE(drv->wash_state(0)->active);
-    // The pulse-on-active-wash path pulls next_refresh_ms IN to the
-    // current time (clamped from "send_wash + refresh_interval_ms")
-    // so the next periodic refresh fires as a safety net right after
-    // send() returns - bench fix for occasional dropped recoveries
-    // (2026-06-26). The clamp uses min(existing, now); send_wash had
-    // set it to s_now_ms + refresh_interval_ms, so the post-pulse
-    // value is s_now_ms (now).
-    TEST_ASSERT_EQUAL_UINT32(s_now_ms,
+    TEST_ASSERT_EQUAL_UINT32(s_now_ms + PixMobIRDriver::kWashRefreshMs,
                              drv->wash_state(0)->next_refresh_ms);
 }
 
