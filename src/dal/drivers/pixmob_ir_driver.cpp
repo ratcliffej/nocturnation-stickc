@@ -106,11 +106,36 @@ bool PixMobIRDriver::send(uint8_t group_id, const RgbPulseEvent& ev) {
         // the cleaner shape. Hit rate depends on the refresh attack
         // having been changed to T_0_MS in fire_wash_refresh, which
         // keeps the bracelet's busy-window short.
+        //
+        // Bench finding 2026-06-30: with the orchestrator's
+        // wash_with_sparkle FX (which writes pulse SUSTAIN = 16 raw
+        // DMX, quantising to T_0_MS) the bracelet completes its
+        // release tail to black and the recovery x2 below STILL
+        // drops - the bracelet's refractory window during release-
+        // rendering is longer than during sustain-rendering, so both
+        // recoveries hit the bracelet while it's deaf. Symptom: 3-
+        // second blackout pattern during music playback, matching
+        // the rendered-sparkle rate (CHANCE_16 quantisation: 16 % of
+        // sparkles render, 1.87 Hz beat * 0.16 ~ 0.3 Hz = 3.3 s).
+        // Fix: clamp the sparkle's sustain to >= T_32_MS so the
+        // bracelet's response has a brief sustain phase rather than
+        // jumping straight to release. The 32 ms hold is below the
+        // human flash-perception threshold so the visual difference
+        // is sub-visible, but the bracelet's IR receiver stays
+        // receptive enough during that 32 ms for the recovery x2 to
+        // land. Wash Test's "Pulse over wash" already used T_32_MS
+        // sustain explicitly and worked cleanly - this brings the
+        // music path into parity.
+        auto effective_sustain = ev.sustain;
+        if (effective_sustain == pixmob::T_0_MS) {
+            effective_sustain = pixmob::T_32_MS;
+        }
+
         uint16_t buf[kPulseBufSize];
         size_t n = pixmob::buildSingleColor(
             buf, kPulseBufSize,
             ev.r, ev.g, ev.b,
-            ev.attack, ev.sustain, ev.release,
+            ev.attack, effective_sustain, ev.release,
             ev.chance,
             group_id);
         if (n == 0) return false;
