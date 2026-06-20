@@ -2,9 +2,11 @@
 //
 // Exposes one logical strip combining the Atom's onboard WS2812C-2020
 // (1 pixel on GPIO 27) and the Grove-connected SK6812 flex strip
-// (kGroveStripPixelCount pixels on GPIO 26). Pixel 0 is the onboard
-// LED; pixels 1..kGroveStripPixelCount are the Grove strip in
-// data-direction order.
+// (kGroveStripPixelCount pixels on GPIO 32 - the YELLOW wire of the
+// HY2.0-4P Grove connector, which is the M5Stack-canonical data line
+// for their NeoPixel-class Grove units; verified against docs.m5stack.com
+// Unit RGB LED page). Pixel 0 is the onboard LED; pixels
+// 1..kGroveStripPixelCount are the Grove strip in data-direction order.
 //
 // Driven by Adafruit_NeoPixel (lib_deps in platformio.ini). One
 // Adafruit_NeoPixel instance per physical pin so the show() bursts hit
@@ -31,7 +33,12 @@ namespace hal {
 class LedStripAtomLite : public LedStrip {
 public:
     static constexpr uint8_t kOnboardPin = 27;
-    static constexpr uint8_t kGrovePin   = 26;
+    // GPIO 32 = Grove HY2.0-4P yellow wire on the Atom Lite. M5Stack's
+    // NeoPixel-class Grove units (incl. the SK6812 flex strip used here)
+    // carry the one-wire data signal on the yellow pin. Verified against
+    // docs.m5stack.com/en/unit/neopixel + docs.m5stack.com/en/unit/rgb_led_strip
+    // (2026-06-20).
+    static constexpr uint8_t kGrovePin   = 32;
 
     // The shop sells the strip as 20 cm / 29 LEDs. Phase 1 assumes one
     // strip plugged into the Grove port; an extension stub for two
