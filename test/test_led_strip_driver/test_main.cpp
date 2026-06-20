@@ -274,43 +274,68 @@ static void test_wash_end_fades_to_black(void) {
     TEST_ASSERT_NULL(drv->wash_state());     // deactivated
 }
 
-static void test_sparkle_lands_on_one_pixel(void) {
+static void test_chance_100_flashes_every_pixel(void) {
+    // CHANCE_100 should hit every pixel - effectively a whole-strip
+    // flash. Treats each pixel as a bracelet that always rolls a hit.
     auto* drv = led_strip_driver_instance();
     drv->send_wash(0, make_wash(0, 100, 0));   // green baseline
     s_now_ms += 50;
     drv->loop_tick();
-    // First sparkle: RNG returns 3 -> pixel 3.
+
     RgbPulseEvent sp{};
     sp.r = 255; sp.g = 255; sp.b = 255;
-    sp.attack = pixmob::T_32_MS;
+    sp.attack = pixmob::T_0_MS;
     sp.sustain = pixmob::T_192_MS;
-    sp.release = pixmob::T_32_MS;   // total ~256 ms
-    sp.chance = pixmob::CHANCE_100;   // always fire
+    sp.release = pixmob::T_0_MS;
+    sp.chance = pixmob::CHANCE_100;
     drv->send(0, sp);
 
-    // Render immediately after spawn - sparkle should be at ~peak.
-    s_strip.reset_counters();
     drv->loop_tick();
-    int bright_count = 0, baseline_count = 0;
-    size_t bright_idx = kPixelCount;
+    // Mid-sustain (we're at start of the 192ms sustain) - every pixel
+    // should be at peak (255,255,255).
     for (size_t i = 0; i < kPixelCount; ++i) {
-        const auto& p = s_strip.pixels[i];
-        if (p.r > 100 && p.g > 100 && p.b > 100) {
-            ++bright_count;
-            bright_idx = i;
-        } else if (p.r == 0 && p.g == 100 && p.b == 0) {
-            ++baseline_count;
-        }
+        TEST_ASSERT_EQUAL_UINT8_MESSAGE(255, s_strip.pixels[i].r,
+            "every pixel should peak at pulse colour with CHANCE_100");
+        TEST_ASSERT_EQUAL_UINT8(255, s_strip.pixels[i].g);
+        TEST_ASSERT_EQUAL_UINT8(255, s_strip.pixels[i].b);
     }
-    TEST_ASSERT_EQUAL_INT(1, bright_count);
-    TEST_ASSERT_EQUAL_INT((int)(kPixelCount - 1), baseline_count);
-    // First test_rng() consume = 3. setUp's reset_driver consumed entries
-    // earlier; we reset s_rng_idx in setUp so the next consume returns
-    // s_rng_seq[0] = 3. Confirms the sparkle lands on pixel 3.
-    TEST_ASSERT_EQUAL_INT(3, (int)bright_idx);
 }
 
-static void test_sparkle_fade_returns_to_baseline(void) {
+static void test_chance_0_filters_all_pixels(void) {
+    // A non-CHANCE_100 chance uses the RNG; a chance of 0 percent never
+    // hits, so no pixel lights up. (CHANCE_4 is the protocol's lowest
+    // bucket; a properly-mocked 0-roll-always-fails sequence demonstrates
+    // the same gating logic.)
+    auto* drv = led_strip_driver_instance();
+    drv->send_wash(0, make_wash(0, 100, 0));
+    s_now_ms += 50;
+    drv->loop_tick();
+
+    // Override RNG to return 99 always (above any chance percent except 100).
+    static auto always_99 = []() -> uint32_t { return 99; };
+    drv->set_rng_source(always_99);
+
+    RgbPulseEvent sp{};
+    sp.r = 255; sp.g = 255; sp.b = 255;
+    sp.attack = pixmob::T_0_MS;
+    sp.sustain = pixmob::T_192_MS;
+    sp.release = pixmob::T_0_MS;
+    sp.chance = pixmob::CHANCE_88;   // 88 percent - rolls of 99 always fail
+    drv->send(0, sp);
+
+    drv->loop_tick();
+    // No pixel should be lit beyond baseline.
+    for (size_t i = 0; i < kPixelCount; ++i) {
+        TEST_ASSERT_EQUAL_UINT8(0,   s_strip.pixels[i].r);
+        TEST_ASSERT_EQUAL_UINT8(100, s_strip.pixels[i].g);
+        TEST_ASSERT_EQUAL_UINT8(0,   s_strip.pixels[i].b);
+    }
+
+    // Restore deterministic RNG for subsequent tests.
+    drv->set_rng_source(test_rng);
+}
+
+static void test_pulse_fade_returns_pixels_to_baseline(void) {
     auto* drv = led_strip_driver_instance();
     drv->send_wash(0, make_wash(0, 100, 0));
     s_now_ms += 50;
@@ -320,16 +345,18 @@ static void test_sparkle_fade_returns_to_baseline(void) {
     sp.r = 255; sp.g = 255; sp.b = 255;
     sp.attack = pixmob::T_0_MS;
     sp.sustain = pixmob::T_192_MS;
-    sp.release = pixmob::T_0_MS;   // ~192 ms total
+    sp.release = pixmob::T_0_MS;
     sp.chance = pixmob::CHANCE_100;
     drv->send(0, sp);
 
-    // Advance past sparkle duration; render. Pixel 3 should be back to baseline.
+    // Advance past envelope. Every pixel back to wash baseline.
     s_now_ms += 500;
     drv->loop_tick();
-    TEST_ASSERT_EQUAL_UINT8(0,   s_strip.pixels[3].r);
-    TEST_ASSERT_EQUAL_UINT8(100, s_strip.pixels[3].g);
-    TEST_ASSERT_EQUAL_UINT8(0,   s_strip.pixels[3].b);
+    for (size_t i = 0; i < kPixelCount; ++i) {
+        TEST_ASSERT_EQUAL_UINT8(0,   s_strip.pixels[i].r);
+        TEST_ASSERT_EQUAL_UINT8(100, s_strip.pixels[i].g);
+        TEST_ASSERT_EQUAL_UINT8(0,   s_strip.pixels[i].b);
+    }
 }
 
 static void test_intensity_scalar_applies(void) {
@@ -396,8 +423,9 @@ int main(int, char**) {
     RUN_TEST(test_wash_attack_ramp_mid_is_half_intensity);
     RUN_TEST(test_wash_drift_quarter_cycle_blends);
     RUN_TEST(test_wash_end_fades_to_black);
-    RUN_TEST(test_sparkle_lands_on_one_pixel);
-    RUN_TEST(test_sparkle_fade_returns_to_baseline);
+    RUN_TEST(test_chance_100_flashes_every_pixel);
+    RUN_TEST(test_chance_0_filters_all_pixels);
+    RUN_TEST(test_pulse_fade_returns_pixels_to_baseline);
     RUN_TEST(test_intensity_scalar_applies);
     RUN_TEST(test_overlay_writes_pixel_0_over_wash);
     RUN_TEST(test_overlay_disabled_yields_pixel_0_to_wash);

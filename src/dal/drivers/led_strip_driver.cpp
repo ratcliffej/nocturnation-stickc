@@ -150,65 +150,94 @@ bool LedStripDriver::send_wash_end(uint8_t /*target_group*/, uint8_t release_tim
 }
 
 bool LedStripDriver::send_wash_pulse(uint8_t target_group, const RgbPulseEvent& ev) {
-    // Sparkle-on-wash composes the same way as a plain pulse: pick a
-    // random pixel, overlay, fade back to wash. The wash baseline is
-    // already what every other pixel is showing, so a "kick + tail"
-    // semantic falls out of the per-frame blend naturally.
+    // LIGHT_WASH_PULSE composes the same way as a plain LIGHT_PULSE:
+    // each pixel rolls CHANCE independently, hits render the pulse
+    // envelope blended over the wash baseline. No special path.
     return send(target_group, ev);
 }
 
 // =============================================================================
-// Sparkle (RgbPulseEvent)
+// Pulse (RgbPulseEvent) - per-pixel CHANCE roll
 // =============================================================================
 
+namespace {
+// Map a pixmob::Chance enum bucket onto a 0..100 percent. The enum
+// bits aren't a linear scale (it's a discrete LUT in the protocol
+// docs), so this is a flat switch.
+inline uint8_t chance_to_percent(uint8_t bucket) {
+    switch (bucket) {
+        case 0: return 100;     // CHANCE_100
+        case 1: return 88;      // CHANCE_88
+        case 2: return 67;      // CHANCE_67
+        case 3: return 50;      // CHANCE_50
+        case 4: return 32;      // CHANCE_32
+        case 5: return 16;      // CHANCE_16
+        case 6: return 10;      // CHANCE_10
+        case 7: return 4;       // CHANCE_4
+        default: return 100;
+    }
+}
+}  // namespace
+
 bool LedStripDriver::send(uint8_t /*group_id*/, const RgbPulseEvent& ev) {
-    if (!enabled() || !active_strip()) return false;
+    if (!enabled()) return false;
+    auto* strip = active_strip();
+    if (!strip) return false;
 
-    // CHANCE filter is deferred to Phase 2. PixMob bracelets honour the
-    // chance field at protocol level (the StickC PixMob driver also
-    // pre-filters on the Director side); for the LED strip every
-    // received sparkle renders. Operator-visible stochasticity will
-    // come from Phase 2 per-pixel effects.
+    const size_t pcount = strip->pixel_count();
+    if (pcount == 0) return true;
 
-    const uint32_t duration_ms = pixmob_time_to_ms(static_cast<uint8_t>(ev.attack))
-                               + pixmob_time_to_ms(static_cast<uint8_t>(ev.sustain))
-                               + pixmob_time_to_ms(static_cast<uint8_t>(ev.release));
-    spawn_sparkle(ev.r, ev.g, ev.b,
-                   duration_ms == 0 ? 192u : duration_ms,
-                   now_ms());
+    // Latch this pulse as "the current pulse" - colour + envelope
+    // shared across all pixels that hit on this roll. Any pixel still
+    // mid-envelope from a prior pulse will get re-stamped if its
+    // chance roll hits again (visually: smooth crossfade to the new
+    // colour); otherwise it finishes its prior envelope naturally.
+    current_pulse_.r          = ev.r;
+    current_pulse_.g          = ev.g;
+    current_pulse_.b          = ev.b;
+    current_pulse_.attack_ms  = pixmob_time_to_ms(static_cast<uint8_t>(ev.attack));
+    current_pulse_.sustain_ms = pixmob_time_to_ms(static_cast<uint8_t>(ev.sustain));
+    current_pulse_.release_ms = pixmob_time_to_ms(static_cast<uint8_t>(ev.release));
+    // Guard against a zero-length envelope (T_0 attack + T_0 sustain +
+    // T_0 release) - that would never render. Floor at 192 ms (one
+    // "natural" sparkle duration via T_192 sustain).
+    if (current_pulse_.attack_ms + current_pulse_.sustain_ms +
+        current_pulse_.release_ms == 0) {
+        current_pulse_.sustain_ms = 192;
+    }
+
+    // Per-pixel CHANCE roll. Each pixel is its own "bracelet" - a
+    // pulse with CHANCE_50 hits ~half the pixels; CHANCE_16 hits
+    // ~17 %. CHANCE_100 hits every pixel and effectively flashes
+    // the whole strip together.
+    const uint8_t chance_pct = chance_to_percent(static_cast<uint8_t>(ev.chance));
+    const uint32_t now       = now_ms();
+    const size_t   walk      = (pcount < kMaxPixels) ? pcount : kMaxPixels;
+    for (size_t i = 0; i < walk; ++i) {
+        if ((next_random() % 100) < chance_pct) {
+            pixel_pulse_started_[i] = now ? now : 1;   // 0 reserved as inactive sentinel
+        }
+    }
     return true;
 }
 
-size_t LedStripDriver::spawn_sparkle(uint8_t r, uint8_t g, uint8_t b,
-                                      uint32_t duration_ms, uint32_t now) {
-    auto* strip = active_strip();
-    if (!strip) return kMaxSparkles;
-    const size_t pcount = strip->pixel_count();
-    if (pcount == 0) return kMaxSparkles;
-
-    // Find a free slot, or evict the oldest if all are in flight.
-    size_t free_slot   = kMaxSparkles;
-    size_t oldest_slot = 0;
-    uint32_t oldest_started = 0xFFFFFFFFu;
-    for (size_t i = 0; i < kMaxSparkles; ++i) {
-        if (!sparkles_[i].active) { free_slot = i; break; }
-        if (sparkles_[i].started_ms < oldest_started) {
-            oldest_started = sparkles_[i].started_ms;
-            oldest_slot    = i;
-        }
+float LedStripDriver::pulse_envelope_fraction(uint32_t start_ms,
+                                                uint32_t now) const {
+    if (start_ms == 0) return 0.0f;
+    const uint32_t elapsed = now - start_ms;
+    const uint32_t a = current_pulse_.attack_ms;
+    const uint32_t s = current_pulse_.sustain_ms;
+    const uint32_t r = current_pulse_.release_ms;
+    const uint32_t total = a + s + r;
+    if (total == 0 || elapsed >= total) return 0.0f;
+    // ASR shape: 0..a ramps in, a..a+s holds at 1.0, a+s..total ramps out.
+    if (elapsed < a) {
+        return a == 0 ? 1.0f : static_cast<float>(elapsed) / static_cast<float>(a);
     }
-    const size_t slot = (free_slot != kMaxSparkles) ? free_slot : oldest_slot;
-
-    sparkles_[slot] = Sparkle{
-        /*active=*/      true,
-        /*pixel=*/       next_random() % pcount,
-        /*r=*/           r,
-        /*g=*/           g,
-        /*b=*/           b,
-        /*started_ms=*/  now,
-        /*duration_ms=*/ duration_ms,
-    };
-    return slot;
+    if (elapsed < a + s) {
+        return 1.0f;
+    }
+    return 1.0f - static_cast<float>(elapsed - a - s) / static_cast<float>(r);
 }
 
 // =============================================================================
@@ -293,33 +322,34 @@ void LedStripDriver::render_frame() {
     uint8_t base_r = 0, base_g = 0, base_b = 0;
     compute_wash_baseline(now, base_r, base_g, base_b);
 
-    // Paint baseline. Even with no wash active, we still walk every
-    // pixel - the indicator overlay may want pixel 0 lit on an
-    // otherwise-black strip.
-    for (size_t i = 0; i < pcount; ++i) {
-        strip->set_pixel(i, base_r, base_g, base_b);
+    // Walk every pixel. Each pixel is its own bracelet: paint the
+    // wash baseline first, then if this pixel is mid-pulse-envelope
+    // blend toward the pulse colour by the ASR position. A pixel
+    // with pixel_pulse_started_ == 0 just shows the baseline.
+    const size_t walk = (pcount < kMaxPixels) ? pcount : kMaxPixels;
+    for (size_t i = 0; i < walk; ++i) {
+        uint8_t r = base_r, g = base_g, b = base_b;
+        if (pixel_pulse_started_[i] != 0) {
+            const float alpha = pulse_envelope_fraction(
+                pixel_pulse_started_[i], now);
+            if (alpha <= 0.0f) {
+                pixel_pulse_started_[i] = 0;
+            } else {
+                // alpha = 0 -> baseline, alpha = 1 -> pulse peak.
+                // Linear blend baseline -> pulse colour. The
+                // baseline is whatever the wash gives us (often
+                // black for pulse-only shows).
+                r = lerp_u8(base_r, current_pulse_.r, alpha);
+                g = lerp_u8(base_g, current_pulse_.g, alpha);
+                b = lerp_u8(base_b, current_pulse_.b, alpha);
+            }
+        }
+        strip->set_pixel(i, r, g, b);
     }
-
-    // Sparkle overlay. Each active sparkle linearly blends its peak
-    // colour back to the baseline over duration_ms - bright at t=0,
-    // baseline at t=duration. Multiple sparkles on the same pixel
-    // overwrite (most-recent wins) which is fine in the 1-pixel-per
-    // -spark model and rare in practice.
-    for (size_t s = 0; s < kMaxSparkles; ++s) {
-        Sparkle& sp = sparkles_[s];
-        if (!sp.active) continue;
-        const uint32_t since = now - sp.started_ms;
-        if (sp.duration_ms == 0 || since >= sp.duration_ms) {
-            sp.active = false;
-            continue;
-        }
-        const float fade = static_cast<float>(since) / static_cast<float>(sp.duration_ms);
-        const uint8_t r = lerp_u8(sp.r, base_r, fade);
-        const uint8_t g = lerp_u8(sp.g, base_g, fade);
-        const uint8_t b = lerp_u8(sp.b, base_b, fade);
-        if (sp.pixel < pcount) {
-            strip->set_pixel(sp.pixel, r, g, b);
-        }
+    // Tail of the buffer past kMaxPixels (if the strip is larger than
+    // we can track envelopes for): paint baseline only.
+    for (size_t i = walk; i < pcount; ++i) {
+        strip->set_pixel(i, base_r, base_g, base_b);
     }
 
     // Pixel 0 overlay. LumeMode (or any other policy layer) sets the

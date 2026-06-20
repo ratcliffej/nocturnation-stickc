@@ -5,17 +5,19 @@
 // entity (onboard pixel + Grove pixels exposed as one contiguous array
 // by the backend; see include/hal/hal.h class LedStrip).
 //
-// Wash semantic (Phase 1):
-//   - Whole strip renders one colour at a time.
-//   - LIGHT_WASH with cycle_ms == 0 holds (r1,g1,b1) on every pixel.
-//   - LIGHT_WASH with cycle_ms > 0 cosine-eased ping-pong between
-//     (r1,g1,b1) and (r2,g2,b2) over cycle_ms - identical to the
-//     PixMob IR driver's drift envelope so cross-fleet cues land
-//     in colour-sync (within IR airtime jitter).
-//   - LIGHT_WASH_END fades to black over the release window.
-//   - LIGHT_WASH_PULSE / LIGHT_PULSE picks one random pixel and
-//     overlays the pulse colour for the sparkle duration, then
-//     blends back to wash.
+// Visual contract (Phase 1):
+//   - LIGHT_WASH paints every pixel with the wash baseline (drift +
+//     attack/release/intensity per LightWashEvent). Whole strip renders
+//     one colour at a time.
+//   - LIGHT_PULSE / LIGHT_WASH_PULSE rolls the pulse's CHANCE field
+//     independently per pixel. Each pixel that hits renders the pulse
+//     envelope (ASR) over the wash baseline, then returns to baseline.
+//     Treats each pixel as its own bracelet - identical semantics to
+//     a PixMob bracelet swarm or the Tildagon perimeter ring, just
+//     more pixels in the swarm.
+//     -> CHANCE_100 effectively flashes the whole strip together.
+//     -> CHANCE_16 lights ~17 % of pixels per pulse for a sparse twinkle.
+//   - LIGHT_WASH_END fades all pixels to black over the release window.
 //
 // Phase 2 (per-pixel crawl / rainbow / gradient) is opt-in via richer
 // event types not in this driver yet.
@@ -48,11 +50,10 @@ public:
     // when active.
     void loop_tick() override;
 
-    // Sparkle dispatch. Picks one random pixel, overlays the pulse
-    // colour, blends back to the wash baseline over the event's
-    // attack + sustain + release window. Multiple sparkles in flight
-    // are tracked up to kMaxSparkles; new sparkles past the cap
-    // replace the oldest still-in-flight slot.
+    // Pulse dispatch. Rolls the event's CHANCE field independently per
+    // pixel; hits start that pixel's envelope. Multiple pulses can
+    // overlap - the latest pulse's colour + envelope governs any pixel
+    // that gets re-triggered while still in a prior envelope.
     bool send(uint8_t group_id, const RgbPulseEvent&) override;
 
     // Wash family. Not driver-base overrides because the events take
@@ -78,7 +79,7 @@ public:
     // test TU lets the suite assert on actual pixel writes.
     void set_strip_override(hal::LedStrip* strip) { strip_override_ = strip; }
 
-    // Inject a deterministic RNG for sparkle pixel selection. nullptr
+    // Inject a deterministic RNG for the per-pixel CHANCE roll. nullptr
     // (default) uses a tiny xorshift seeded from millis() at first call.
     // Tests register a stub that returns a known sequence.
     using RandFn = uint32_t (*)();
@@ -101,8 +102,10 @@ public:
         return wash_.active ? &wash_ : nullptr;
     }
 
-    // Bench seams visible for test.
-    static constexpr size_t kMaxSparkles = 4;
+    // Bench seams visible for test. kMaxPixels caps the per-pixel
+    // envelope-state buffer. Larger strips (>64 pixels) would need
+    // this bumped; nothing in Phase 1 hardware exceeds 30 pixels.
+    static constexpr size_t kMaxPixels = 64;
 
     // -------------------------------------------------------------------------
     // Pixel 0 overlay (Epic 12 B5)
@@ -123,16 +126,27 @@ public:
     void set_overlay_pixel_0(uint8_t r, uint8_t g, uint8_t b, bool enabled);
 
 private:
-    struct Sparkle {
-        bool     active;
-        size_t   pixel;
+    // Most-recent pulse colour + envelope, shared across all pixels
+    // currently rendering this pulse's envelope. A new pulse arriving
+    // mid-envelope supersedes - any pixel re-triggered in the new
+    // pulse's CHANCE roll starts from this pulse's colour. Pixels
+    // still mid-envelope from the prior pulse will visually drift to
+    // the new colour as they re-trigger (or finish their envelope and
+    // return to baseline).
+    struct Pulse {
         uint8_t  r, g, b;
-        uint32_t started_ms;
-        uint32_t duration_ms;
+        uint32_t attack_ms;
+        uint32_t sustain_ms;
+        uint32_t release_ms;
     };
 
-    WashState wash_   = {};
-    Sparkle   sparkles_[kMaxSparkles] = {};
+    WashState wash_              = {};
+    Pulse     current_pulse_     = {};
+    // Per-pixel envelope start time. 0 = pixel is inactive (no pulse
+    // currently rendering on it). On a pulse arrival, the CHANCE roll
+    // sets started_ms = now for hits; render_frame walks each pixel
+    // and clears the stamp when the envelope elapses.
+    uint32_t  pixel_pulse_started_[kMaxPixels] = {};
 
     NowMsFn        clock_source_   = nullptr;
     hal::LedStrip* strip_override_ = nullptr;
@@ -150,9 +164,9 @@ private:
     uint32_t       now_ms() const;
     uint32_t       next_random();
 
-    // Per-tick render path. Computes the wash baseline RGB, paints
-    // every pixel with it (applying intensity), then overlays any
-    // active sparkles, then calls strip->show().
+    // Per-tick render path. Walks every pixel - computes the wash
+    // baseline, then if that pixel is mid-envelope blends in the
+    // current pulse colour by ASR position. Overlay pixel 0 last.
     void render_frame();
 
     // Compute the wash baseline RGB for the current tick, including
@@ -163,10 +177,10 @@ private:
     bool compute_wash_baseline(uint32_t now,
                                  uint8_t& out_r, uint8_t& out_g, uint8_t& out_b);
 
-    // Spawn a sparkle on a random pixel. Returns the slot index used
-    // (or kMaxSparkles when the strip has no pixels to spark on).
-    size_t spawn_sparkle(uint8_t r, uint8_t g, uint8_t b,
-                          uint32_t duration_ms, uint32_t now);
+    // Compute the per-pixel envelope multiplier (0..1) for a pulse that
+    // started at start_ms and is now at `now`. Returns 0 when the pulse
+    // has elapsed (caller treats as "envelope done, clear the slot").
+    float pulse_envelope_fraction(uint32_t start_ms, uint32_t now) const;
 };
 
 LedStripDriver* led_strip_driver_instance();
