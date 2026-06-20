@@ -34,6 +34,7 @@
 #include "ir_tx_stickcs3.h"
 #include "ir_rx_stickcs3.h"
 #include "esp_now_stickcs3.h"
+#include "led_strip_stickcs3.h"
 
 namespace nocturnation {
 namespace hal {
@@ -68,6 +69,11 @@ static constexpr Capability kCapabilities[] = {
     // DmxBridge mode is active. Mode-entry switches Serial off the
     // 115 200 console rate; mode-exit restores it.
     Capability::DmxInput,
+
+    // Epic 12 live B4: Grove-connected SK6812 flex strip on GPIO 10.
+    // Always declared - the LedStripDriver writes bits regardless of
+    // whether a strip is plugged in.
+    Capability::LedStrip,
 };
 static constexpr size_t kCapabilityCount =
     sizeof(kCapabilities) / sizeof(kCapabilities[0]);
@@ -87,14 +93,15 @@ bool HAL::has(Capability c) {
 // -----------------------------------------------------------------------------
 
 namespace {
-DisplayStickCS3 s_display;
-ButtonsStickCS3 s_buttons;
-IMUStickCS3     s_imu;
-BatteryStickCS3 s_battery;
-MicStickCS3     s_mic;
-IRTxStickCS3    s_ir_tx;
-IRRxStickCS3    s_ir_rx;
-ESPNowStickCS3  s_esp_now;
+DisplayStickCS3  s_display;
+ButtonsStickCS3  s_buttons;
+IMUStickCS3      s_imu;
+BatteryStickCS3  s_battery;
+MicStickCS3      s_mic;
+IRTxStickCS3     s_ir_tx;
+IRRxStickCS3     s_ir_rx;
+ESPNowStickCS3   s_esp_now;
+LedStripStickCS3 s_led_strip;
 }  // namespace
 
 // -----------------------------------------------------------------------------
@@ -139,10 +146,7 @@ Display* HAL::display()  { return &s_display; }
 Buttons* HAL::buttons()  { return &s_buttons; }
 IMU*     HAL::imu()      { return &s_imu; }
 Battery* HAL::battery()  { return &s_battery; }
-// Epic 12: declared by the Atom Lite backend; not present on the S3
-// today. A Grove SK6812 strip on the S3 lands as part of Epic 12 B4
-// (Config "LED Strip" toggle wires a real driver here).
-LedStrip* HAL::led_strip() { return nullptr; }
+LedStrip* HAL::led_strip() { return &s_led_strip; }
 
 }  // namespace hal
 }  // namespace nocturnation

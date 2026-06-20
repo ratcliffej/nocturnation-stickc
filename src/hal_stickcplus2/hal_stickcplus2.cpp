@@ -37,6 +37,7 @@
 #include "mic_stickcplus2.h"
 #include "ir_tx_stickcplus2.h"
 #include "esp_now_stickcplus2.h"
+#include "led_strip_stickcplus2.h"
 
 namespace nocturnation {
 namespace hal {
@@ -70,6 +71,13 @@ static constexpr Capability kCapabilities[] = {
     // entry switches Serial off the 115 200 console rate; mode-exit
     // restores it.
     Capability::DmxInput,
+
+    // Epic 12 live B4: Grove-connected SK6812 flex strip on GPIO 33.
+    // Always declared - the LedStripDriver writes bits regardless of
+    // whether a strip is plugged in (the data line just radiates to
+    // a dead pin). A future Config "LED Strip -> Enable" toggle can
+    // gate the driver at runtime once that wiring lands.
+    Capability::LedStrip,
 };
 static constexpr size_t kCapabilityCount =
     sizeof(kCapabilities) / sizeof(kCapabilities[0]);
@@ -98,6 +106,7 @@ IRTxStickCplus2    s_ir_tx;       // built-in IR LED, GPIO 19
 IRTxStickCplus2    s_ir_tx_ext(   // optional external IR unit, GPIO 26 header
     IRTxStickCplus2::kExternalIRPin);
 ESPNowStickCplus2  s_esp_now;
+LedStripStickCplus2 s_led_strip;
 }  // namespace
 
 // -----------------------------------------------------------------------------
@@ -157,10 +166,7 @@ Display* HAL::display()  { return &s_display; }
 Buttons* HAL::buttons()  { return &s_buttons; }
 IMU*     HAL::imu()      { return &s_imu; }
 Battery* HAL::battery()  { return &s_battery; }
-// Epic 12: declared by the Atom Lite backend; not present on the Plus2
-// today. A Grove SK6812 strip on the Plus2 lands as part of Epic 12 B4
-// (Config "LED Strip" toggle wires a real driver here).
-LedStrip* HAL::led_strip() { return nullptr; }
+LedStrip* HAL::led_strip() { return &s_led_strip; }
 
 }  // namespace hal
 }  // namespace nocturnation
