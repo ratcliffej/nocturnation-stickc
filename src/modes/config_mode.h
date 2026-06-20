@@ -177,16 +177,16 @@ private:
     };
     static constexpr size_t kDmxItemCount = sizeof(kDmxItems) / sizeof(kDmxItems[0]);
 
-    // Epic 12 B4 stub: planned settings for the LED Strip leaf. Live
-    // wiring (NVS persistence + driver enable + brightness cap) lands
-    // alongside the Plus2 / S3 HAL backends gaining a real LedStrip
-    // backend on the Grove port. Until then this list is read-only via
-    // draw_stub() - Btn2 cycles, Btn1 is a no-op.
-    static constexpr const char* kLedStripItems[] = {
-        "Enable", "Brightness", "Group size", "Repeat",
+    // LED Strip submenu items. Brightness is live (Btn1 cycles the
+    // value in handle_led_strip). Enable / Group size / Repeat are
+    // label-only for now; future B4-live wires them.
+    enum class LedStripItem : uint8_t {
+        Enable = 0,
+        Brightness,
+        GroupSize,
+        Repeat,
     };
-    static constexpr size_t kLedStripItemCount =
-        sizeof(kLedStripItems) / sizeof(kLedStripItems[0]);
+    static constexpr size_t kLedStripItemCount = 4;
 
     size_t stub_item_count() const;
 
@@ -272,6 +272,15 @@ private:
 
     void handle_ir(const dal::ButtonPressEvent& ev);
     void draw_ir();
+
+    // LED Strip submenu (Epic 12). Items kept stub-style except for
+    // Brightness, which is live: Btn1 cycles 100 / 10 / 1 % through
+    // the same level table the Btn1-in-Lume gesture uses, with the
+    // value persisted to NVS via persistence::save_strip_brightness().
+    // Enable, Group size, Repeat are reserved labels for now; future
+    // B4-live wiring lights them up.
+    void handle_led_strip(const dal::ButtonPressEvent& ev);
+    void draw_led_strip();
 
     // ESP-NOW submenu (functional: Director Channel + Lume Channel +
     // Lume Repeat). The Lume Group setting moved to the top-level

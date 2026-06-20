@@ -5,6 +5,7 @@
 #include "firmware_version.h"
 #include "persistence.h"
 #include "dal/dal.h"
+#include "../dal/drivers/led_strip_driver.h"
 #include "hal/hal.h"                        // for ir_tx_ext() emitter probe
 #include "../dal/drivers/local_driver.h"   // for set_pulse_enabled gating
 #include "../dal/drivers/pixmob_ir_driver.h"   // for internal/external IR toggles
@@ -75,7 +76,6 @@ constexpr ConfigMode::PickerEntry ConfigMode::kConnectivity[5];
 constexpr ConfigMode::PickerEntry ConfigMode::kUtilities[2];
 constexpr const char* ConfigMode::kWifiItems[];
 constexpr const char* ConfigMode::kDmxItems[];
-constexpr const char* ConfigMode::kLedStripItems[];
 
 void ConfigMode::enter() {
     level_           = Level::Top;
@@ -371,9 +371,9 @@ void ConfigMode::handle_sub(const ButtonPressEvent& ev) {
         case SubMenu::EspNow:      handle_espnow(ev);      break;
         case SubMenu::PixMob:      handle_pixmob(ev);      break;
         case SubMenu::LevelTuning: handle_level_tuning(ev); break;
+        case SubMenu::LedStrip:    handle_led_strip(ev); break;
         case SubMenu::WiFi:
         case SubMenu::Dmx:
-        case SubMenu::LedStrip:
             // Stub submenus accept Btn2 cycling for read-only browsing
             // of their planned-items list, but Btn1 is a no-op until
             // the relevant Epic wires real behaviour in.
@@ -392,9 +392,9 @@ void ConfigMode::draw_sub() {
         case SubMenu::Display:     draw_display(); break;
         case SubMenu::IR:          draw_ir(); break;
         case SubMenu::EspNow:      draw_espnow(); break;
-        case SubMenu::WiFi:        draw_stub("WiFi",      kWifiItems,     kWifiItemCount,     "Epic 4");  break;
-        case SubMenu::Dmx:         draw_stub("DMX",       kDmxItems,      kDmxItemCount,      "Epic 7");  break;
-        case SubMenu::LedStrip:    draw_stub("LED Strip", kLedStripItems, kLedStripItemCount, "Epic 12"); break;
+        case SubMenu::WiFi:        draw_stub("WiFi", kWifiItems, kWifiItemCount, "Epic 4"); break;
+        case SubMenu::Dmx:         draw_stub("DMX",  kDmxItems,  kDmxItemCount,  "Epic 7"); break;
+        case SubMenu::LedStrip:    draw_led_strip(); break;
         case SubMenu::PixMob:      draw_pixmob(); break;
         case SubMenu::LevelTuning: draw_level_tuning(); break;
         case SubMenu::System:      draw_system(); break;
@@ -409,7 +409,6 @@ size_t ConfigMode::stub_item_count() const {
         case SubMenu::EspNow:  return kEspNowFunctionalItemCount;
         case SubMenu::WiFi:    return kWifiItemCount;
         case SubMenu::Dmx:     return kDmxItemCount;
-        case SubMenu::LedStrip:return kLedStripItemCount;
         default:               return 1;
     }
 }
@@ -1191,6 +1190,88 @@ void ConfigMode::draw() {
         case Level::Picker: draw_picker(); break;
         case Level::Sub:    draw_sub();    break;
     }
+}
+
+// =============================================================================
+// LED Strip submenu (Epic 12)
+//
+// Brightness is the only live item for now; Enable / Group size / Repeat are
+// reserved labels that future B4-live wiring promotes to interactive. The
+// brightness cycle mirrors Btn1-in-Lume - same level table (100 / 10 / 1),
+// same NVS key (strip_bri), so toggling here vs Lume reaches the same
+// persisted value.
+// =============================================================================
+
+namespace {
+constexpr uint8_t kStripBrightnessLevels[] = { 100, 10, 1 };
+constexpr size_t  kStripBrightnessLevelCount =
+    sizeof(kStripBrightnessLevels) / sizeof(kStripBrightnessLevels[0]);
+
+uint8_t cycle_strip_brightness(uint8_t current_pct) {
+    for (size_t i = 0; i < kStripBrightnessLevelCount; ++i) {
+        if (kStripBrightnessLevels[i] == current_pct) {
+            return kStripBrightnessLevels[(i + 1) % kStripBrightnessLevelCount];
+        }
+    }
+    // current_pct isn't in the table (e.g. legacy NVS value, or a
+    // fresh boot with default 10 that happens to be in-table - or any
+    // operator-typed value). Snap to the first level.
+    return kStripBrightnessLevels[0];
+}
+}  // namespace
+
+void ConfigMode::handle_led_strip(const ButtonPressEvent& ev) {
+    if (ev.id == ButtonId::Btn2) {
+        sub_selected_ = (sub_selected_ + 1) % kLedStripItemCount;
+        draw();
+        return;
+    }
+    if (ev.id == ButtonId::Btn1) {
+        switch (static_cast<LedStripItem>(sub_selected_)) {
+            case LedStripItem::Brightness: {
+                const uint8_t current = persistence::load_strip_brightness();
+                const uint8_t next    = cycle_strip_brightness(current);
+                persistence::save_strip_brightness(next);
+                dal::led_strip_driver_instance()->set_brightness_percent(next);
+                break;
+            }
+            case LedStripItem::Enable:
+            case LedStripItem::GroupSize:
+            case LedStripItem::Repeat:
+                // Reserved labels - no Btn1 action yet.
+                break;
+        }
+        draw();
+    }
+}
+
+void ConfigMode::draw_led_strip() {
+    DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 5, "LED Strip", WHITE, BLACK, 2});
+
+    char bri[28];
+    std::snprintf(bri, sizeof(bri), "Brightness: %u%%",
+                  (unsigned)persistence::load_strip_brightness());
+
+    const char* lines[kLedStripItemCount] = {
+        "Enable",        // reserved
+        bri,             // live
+        "Group size",    // reserved
+        "Repeat",        // reserved
+    };
+    for (size_t i = 0; i < kLedStripItemCount; ++i) {
+        const bool sel = (i == sub_selected_);
+        char buf[40];
+        std::snprintf(buf, sizeof(buf), "%s %s",
+                      sel ? ">" : " ", lines[i]);
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 30 + (int)i * 16, buf,
+            sel ? YELLOW : WHITE, BLACK, 2});
+    }
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 122, "B: cycle  A: select  B-hold: back",
+        WHITE, BLACK, 1});
 }
 
 }  // namespace modes

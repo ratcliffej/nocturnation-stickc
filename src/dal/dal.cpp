@@ -224,6 +224,22 @@ bool dispatch_output_class_group(uint8_t target_class,
             local->increment_send_count();
         }
     }
+
+    // 4. Director-local LED-strip loopback (Epic 12 follow-on). Mirrors
+    // the IR step: when the strip is a Light-class surface and the
+    // event targets Light (1) or All (0), fire the strip driver so a
+    // Director with a Grove strip plugged in joins its own show. On a
+    // host without a strip the led_strip_driver_instance() returns a
+    // driver whose begin() refused registration (HAL::led_strip() ==
+    // nullptr), so find_driver_for_transport just returns null and
+    // this branch is a cheap miss.
+    if (target_class == 0 || target_class == 1) {
+        Driver* strip = find_driver_for_transport("led-strip");
+        if (strip && strip->enabled()) {
+            strip->send(target_group, ev);
+            strip->increment_send_count();
+        }
+    }
     return wire_ok;
 }
 
@@ -541,6 +557,12 @@ bool DAL::render_wash(const char* t, const LightWashEvent& ev) {
             ir->send_wash(grp, ev);
             ir->increment_send_count();
         }
+        // Epic 12 follow-on: Director-local LED-strip loopback for wash.
+        auto* strip = led_strip_driver_instance();
+        if (strip && strip->enabled()) {
+            strip->send_wash(grp, ev);
+            strip->increment_send_count();
+        }
     }
     return ok;
 }
@@ -563,6 +585,11 @@ bool DAL::render_wash_end(const char* t, uint8_t release_time) {
             ir->send_wash_end(grp, release_time);
             ir->increment_send_count();
         }
+        auto* strip = led_strip_driver_instance();
+        if (strip && strip->enabled()) {
+            strip->send_wash_end(grp, release_time);
+            strip->increment_send_count();
+        }
     }
     return ok;
 }
@@ -582,6 +609,11 @@ bool DAL::render_wash_pulse(const char* t, const RgbPulseEvent& ev) {
         if (ir && ir->enabled() && grp < PixMobIRDriver::kWashSlots) {
             ir->send_wash_pulse(grp, ev);
             ir->increment_send_count();
+        }
+        auto* strip = led_strip_driver_instance();
+        if (strip && strip->enabled()) {
+            strip->send_wash_pulse(grp, ev);
+            strip->increment_send_count();
         }
     }
     return ok;
