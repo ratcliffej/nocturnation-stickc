@@ -419,6 +419,29 @@ static void test_indicator_fresh_lock_then_yields_to_wash(void) {
     drv->set_signal_indicator_enabled(false);
 }
 
+static void test_indicator_pulse_alone_acquires_lock(void) {
+    // On a Director that's only firing LIGHT_PULSE (no LIGHT_WASH yet -
+    // e.g. SimpleBeatShow on the first few seconds), the Atom should
+    // still flip out of Searching when pulses arrive. Bench-observed
+    // 2026-06-20.
+    auto* drv = led_strip_driver_instance();
+    drv->set_signal_indicator_enabled(true);
+    TEST_ASSERT_EQUAL_INT((int)LedStripDriver::IndicatorState::Searching,
+                          (int)drv->indicator_state_for_tests());
+
+    RgbPulseEvent sp{};
+    sp.r = 255; sp.g = 0; sp.b = 0;
+    sp.attack = pixmob::T_0_MS;
+    sp.sustain = pixmob::T_192_MS;
+    sp.release = pixmob::T_0_MS;
+    sp.chance = pixmob::CHANCE_100;
+    drv->send(0, sp);
+
+    TEST_ASSERT_EQUAL_INT((int)LedStripDriver::IndicatorState::FreshlyLocked,
+                          (int)drv->indicator_state_for_tests());
+    drv->set_signal_indicator_enabled(false);
+}
+
 static void test_indicator_lost_signal_returns_to_searching(void) {
     auto* drv = led_strip_driver_instance();
     drv->set_signal_indicator_enabled(true);
@@ -456,6 +479,7 @@ int main(int, char**) {
     RUN_TEST(test_indicator_auto_enabled_when_no_display);
     RUN_TEST(test_indicator_searching_pulses_green_on_pixel_0);
     RUN_TEST(test_indicator_fresh_lock_then_yields_to_wash);
+    RUN_TEST(test_indicator_pulse_alone_acquires_lock);
     RUN_TEST(test_indicator_lost_signal_returns_to_searching);
     return UNITY_END();
 }

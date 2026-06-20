@@ -185,12 +185,24 @@ bool LedStripDriver::send(uint8_t /*group_id*/, const RgbPulseEvent& ev) {
     // received sparkle renders. Operator-visible stochasticity will
     // come from Phase 2 per-pixel effects.
 
+    // Signal-indicator hook (Epic 12 B5). A sparkle from the Director
+    // counts as live traffic for lock purposes - on a Director that's
+    // firing pulses but no washes, the Atom would otherwise sit in
+    // Searching forever. Mirrors the bookkeeping in send_wash().
+    const uint32_t now = now_ms();
+    last_wash_received_ms_ = now;
+    if (!has_ever_seen_wash_ || indicator_state_ == IndicatorState::Searching) {
+        has_ever_seen_wash_ = true;
+        lock_acquired_ms_   = now;
+        indicator_state_    = IndicatorState::FreshlyLocked;
+    }
+
     const uint32_t duration_ms = pixmob_time_to_ms(static_cast<uint8_t>(ev.attack))
                                + pixmob_time_to_ms(static_cast<uint8_t>(ev.sustain))
                                + pixmob_time_to_ms(static_cast<uint8_t>(ev.release));
     spawn_sparkle(ev.r, ev.g, ev.b,
                    duration_ms == 0 ? 192u : duration_ms,
-                   now_ms());
+                   now);
     return true;
 }
 
