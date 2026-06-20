@@ -67,6 +67,12 @@ private:
         PixMob,
         LevelTuning,
         System,
+        // Epic 12 B4 stub. Functional wiring (NVS-backed enable +
+        // brightness cap + group/repeat data model) lands once the
+        // Plus2 / S3 HAL backends gain a real LedStrip on the Grove
+        // port; until then this leaf renders read-only via the
+        // shared draw_stub() template.
+        LedStrip,
     };
 
     // Within the PixMob submenu, drilling into one of its items enters a
@@ -105,11 +111,12 @@ private:
         SubMenu     target;
         const char* label;
     };
-    static constexpr PickerEntry kConnectivity[4] = {
-        { SubMenu::IR,     "IR"      },
-        { SubMenu::EspNow, "ESP-NOW" },
-        { SubMenu::WiFi,   "WiFi"    },
-        { SubMenu::Dmx,    "DMX"     },
+    static constexpr PickerEntry kConnectivity[5] = {
+        { SubMenu::IR,       "IR"        },
+        { SubMenu::EspNow,   "ESP-NOW"   },
+        { SubMenu::WiFi,     "WiFi"      },
+        { SubMenu::Dmx,      "DMX"       },
+        { SubMenu::LedStrip, "LED Strip" },   // Epic 12 B4 (stub)
     };
     static constexpr size_t kConnectivityCount =
         sizeof(kConnectivity) / sizeof(kConnectivity[0]);
@@ -169,6 +176,17 @@ private:
         "Carrier", "Universe ID", "Channel mapping",
     };
     static constexpr size_t kDmxItemCount = sizeof(kDmxItems) / sizeof(kDmxItems[0]);
+
+    // Epic 12 B4 stub: planned settings for the LED Strip leaf. Live
+    // wiring (NVS persistence + driver enable + brightness cap) lands
+    // alongside the Plus2 / S3 HAL backends gaining a real LedStrip
+    // backend on the Grove port. Until then this list is read-only via
+    // draw_stub() - Btn2 cycles, Btn1 is a no-op.
+    static constexpr const char* kLedStripItems[] = {
+        "Enable", "Brightness", "Group size", "Repeat",
+    };
+    static constexpr size_t kLedStripItemCount =
+        sizeof(kLedStripItems) / sizeof(kLedStripItems[0]);
 
     size_t stub_item_count() const;
 

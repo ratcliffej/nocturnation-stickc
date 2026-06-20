@@ -71,10 +71,11 @@ size_t scroll_offset(size_t selected, size_t total, size_t max_visible) {
 
 // Out-of-class definitions for the ODR-used static constexpr members.
 constexpr ConfigMode::TopEntry    ConfigMode::kTop[6];
-constexpr ConfigMode::PickerEntry ConfigMode::kConnectivity[4];
+constexpr ConfigMode::PickerEntry ConfigMode::kConnectivity[5];
 constexpr ConfigMode::PickerEntry ConfigMode::kUtilities[2];
 constexpr const char* ConfigMode::kWifiItems[];
 constexpr const char* ConfigMode::kDmxItems[];
+constexpr const char* ConfigMode::kLedStripItems[];
 
 void ConfigMode::enter() {
     level_           = Level::Top;
@@ -372,6 +373,7 @@ void ConfigMode::handle_sub(const ButtonPressEvent& ev) {
         case SubMenu::LevelTuning: handle_level_tuning(ev); break;
         case SubMenu::WiFi:
         case SubMenu::Dmx:
+        case SubMenu::LedStrip:
             // Stub submenus accept Btn2 cycling for read-only browsing
             // of their planned-items list, but Btn1 is a no-op until
             // the relevant Epic wires real behaviour in.
@@ -390,8 +392,9 @@ void ConfigMode::draw_sub() {
         case SubMenu::Display:     draw_display(); break;
         case SubMenu::IR:          draw_ir(); break;
         case SubMenu::EspNow:      draw_espnow(); break;
-        case SubMenu::WiFi:        draw_stub("WiFi", kWifiItems, kWifiItemCount, "Epic 4"); break;
-        case SubMenu::Dmx:         draw_stub("DMX",  kDmxItems,  kDmxItemCount,  "Epic 7"); break;
+        case SubMenu::WiFi:        draw_stub("WiFi",      kWifiItems,     kWifiItemCount,     "Epic 4");  break;
+        case SubMenu::Dmx:         draw_stub("DMX",       kDmxItems,      kDmxItemCount,      "Epic 7");  break;
+        case SubMenu::LedStrip:    draw_stub("LED Strip", kLedStripItems, kLedStripItemCount, "Epic 12"); break;
         case SubMenu::PixMob:      draw_pixmob(); break;
         case SubMenu::LevelTuning: draw_level_tuning(); break;
         case SubMenu::System:      draw_system(); break;
@@ -406,6 +409,7 @@ size_t ConfigMode::stub_item_count() const {
         case SubMenu::EspNow:  return kEspNowFunctionalItemCount;
         case SubMenu::WiFi:    return kWifiItemCount;
         case SubMenu::Dmx:     return kDmxItemCount;
+        case SubMenu::LedStrip:return kLedStripItemCount;
         default:               return 1;
     }
 }
