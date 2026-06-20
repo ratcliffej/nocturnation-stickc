@@ -90,13 +90,13 @@ static void test_starts_in_boot_mode(void) {
     TEST_ASSERT_EQUAL_STRING("Boot", ModeMachine::current_name());
 }
 
-static void test_boot_timeout_enters_default_runtime_mode(void) {
-    // No NVS in native builds, so the persisted-mode loader returns the
-    // hard-coded default (Director). After 5s of countdown,
-    // BootMode::loop_tick() should switch to it.
+static void test_boot_timeout_enters_lume(void) {
+    // Boot always lands in Lume regardless of the persisted last-used
+    // mode (Epic 12) - units behave as Lumes by default; Director / Test
+    // / Config are reached via the Menu (any button during the splash).
     set_millis(5001);
     ModeMachine::loop_tick();
-    TEST_ASSERT_EQUAL_INT((int)ModeId::Director,
+    TEST_ASSERT_EQUAL_INT((int)ModeId::Lume,
                           (int)ModeMachine::current());
 }
 
@@ -105,40 +105,41 @@ static void test_boot_button_press_enters_menu(void) {
     TEST_ASSERT_EQUAL_INT((int)ModeId::Menu, (int)ModeMachine::current());
 }
 
-static void test_menu_btn1_selects_default_first_item(void) {
-    // Default cursor lands on the persisted last-used mode, which on first
-    // boot is Director - that's also the first menu item, so a
-    // straight Btn1 selects Director.
+static void test_menu_btn1_selects_default_cursor(void) {
+    // Menu cursor lands on the persisted last-used mode. On a fresh boot
+    // the default is Lume (Epic 12), so a straight Btn1 selects Lume.
     inject_button_press(hal::ButtonId::Btn1, hal::ButtonEvent::Pressed);  // Boot -> Menu
     TEST_ASSERT_EQUAL_INT((int)ModeId::Menu, (int)ModeMachine::current());
 
     inject_button_press(hal::ButtonId::Btn1, hal::ButtonEvent::Pressed);  // select
-    TEST_ASSERT_EQUAL_INT((int)ModeId::Director,
+    TEST_ASSERT_EQUAL_INT((int)ModeId::Lume,
                           (int)ModeMachine::current());
 }
 
-static void test_menu_btn2_cycles_then_btn1_selects_lume(void) {
+static void test_menu_btn2_cycles_then_btn1_selects_test(void) {
     inject_button_press(hal::ButtonId::Btn1, hal::ButtonEvent::Pressed);  // Boot -> Menu
     TEST_ASSERT_EQUAL_INT((int)ModeId::Menu, (int)ModeMachine::current());
 
-    // Menu order is Director, Lume, Test, Config - so one Btn2 press lands on Lume.
+    // Menu order is Director, Lume, Test, Config; cursor preset is Lume
+    // on a fresh boot (Epic 12 default), so one Btn2 press lands on Test.
     inject_button_press(hal::ButtonId::Btn2, hal::ButtonEvent::Pressed);
     inject_button_press(hal::ButtonId::Btn1, hal::ButtonEvent::Pressed);
-    TEST_ASSERT_EQUAL_INT((int)ModeId::Lume, (int)ModeMachine::current());
+    TEST_ASSERT_EQUAL_INT((int)ModeId::Test, (int)ModeMachine::current());
 }
 
 static void test_menu_cycle_wraps(void) {
     inject_button_press(hal::ButtonId::Btn1, hal::ButtonEvent::Pressed);  // Boot -> Menu
 
     // Four Btn2 presses with a 4-item menu (Director / Lume / Test /
-    // Config) cycles back to start; Btn1 then selects Director (the
-    // first item). DmxBridge moved off the top-level menu in Epic 7's
-    // Q4 revision - it's a Director-mode picker entry now.
+    // Config) cycles back to the starting cursor; Btn1 then selects the
+    // cursor preset, which is Lume on a fresh boot (Epic 12 default).
+    // DmxBridge moved off the top-level menu in Epic 7's Q4 revision -
+    // it's a Director-mode picker entry now.
     for (int i = 0; i < 4; ++i) {
         inject_button_press(hal::ButtonId::Btn2, hal::ButtonEvent::Pressed);
     }
     inject_button_press(hal::ButtonId::Btn1, hal::ButtonEvent::Pressed);
-    TEST_ASSERT_EQUAL_INT((int)ModeId::Director,
+    TEST_ASSERT_EQUAL_INT((int)ModeId::Lume,
                           (int)ModeMachine::current());
 }
 
@@ -276,10 +277,10 @@ static void test_test_mode_short_press_does_not_leave_mode(void) {
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_starts_in_boot_mode);
-    RUN_TEST(test_boot_timeout_enters_default_runtime_mode);
+    RUN_TEST(test_boot_timeout_enters_lume);
     RUN_TEST(test_boot_button_press_enters_menu);
-    RUN_TEST(test_menu_btn1_selects_default_first_item);
-    RUN_TEST(test_menu_btn2_cycles_then_btn1_selects_lume);
+    RUN_TEST(test_menu_btn1_selects_default_cursor);
+    RUN_TEST(test_menu_btn2_cycles_then_btn1_selects_test);
     RUN_TEST(test_menu_cycle_wraps);
     RUN_TEST(test_long_press_btnb_returns_to_menu_from_each_runtime_mode);
     RUN_TEST(test_director_picker_confirms_dmx_bridge);

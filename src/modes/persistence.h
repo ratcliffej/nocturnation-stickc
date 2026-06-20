@@ -34,7 +34,7 @@ constexpr AudioCalibration kCalibrationDefault = {
     /*auto =*/ false,
 };
 
-constexpr ModeId kDefaultRuntimeMode = ModeId::Director;
+constexpr ModeId kDefaultRuntimeMode = ModeId::Lume;
 
 bool is_persisted_runtime_mode(ModeId m);
 
