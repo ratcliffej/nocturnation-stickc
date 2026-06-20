@@ -157,6 +157,10 @@ Display* HAL::display()  { return &s_display; }
 Buttons* HAL::buttons()  { return &s_buttons; }
 IMU*     HAL::imu()      { return &s_imu; }
 Battery* HAL::battery()  { return &s_battery; }
+// Epic 12: declared by the Atom Lite backend; not present on the Plus2
+// today. A Grove SK6812 strip on the Plus2 lands as part of Epic 12 B4
+// (Config "LED Strip" toggle wires a real driver here).
+LedStrip* HAL::led_strip() { return nullptr; }
 
 }  // namespace hal
 }  // namespace nocturnation

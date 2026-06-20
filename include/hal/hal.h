@@ -107,6 +107,21 @@ enum class Capability : uint8_t {
     // Modes / Shows that require DMX input declare this capability and
     // ModeMachine refuses to enter them on a host that doesn't have it.
     DmxInput,                 // host can receive Enttec Pro DMX over its primary serial wire
+
+    // -------------------------------------------------------------------------
+    // Addressable LED strip (Epic 12)
+    // -------------------------------------------------------------------------
+    //
+    // Host can drive a one-wire addressable LED strip (SK6812 / WS2812
+    // family). One logical strip per host - if the backend has both an
+    // onboard LED and an external Grove strip, they are exposed as one
+    // contiguous pixel array (onboard pixel first, then external pixels)
+    // so the driver doesn't need to know the physical topology.
+    //
+    // Host examples: M5Atom Lite (1 onboard + Grove), StickC Plus2/S3
+    // (Grove only, when enabled in Config). Tildagon is not a LedStrip
+    // host - its perimeter ring is driven by the MicroPython renderer.
+    LedStrip,
 };
 
 // =============================================================================
@@ -403,6 +418,46 @@ public:
 };
 
 // =============================================================================
+// LedStrip - addressable one-wire LED strip (Epic 12)
+// =============================================================================
+//
+// A flat, fixed-size pixel buffer the host's backend pushes to its
+// physical LEDs on `show()`. The driver layer treats the strip as
+// opaque: pixel 0 is wherever the backend says pixel 0 is. On a host
+// with both an onboard LED and an external Grove strip, the backend
+// exposes them as one contiguous array (onboard at index 0, external
+// pixels following) so policy stays out of the driver. Brightness
+// scaling is the caller's responsibility - the strip writes whatever
+// RGB it's given.
+class LedStrip {
+public:
+    virtual ~LedStrip() = default;
+
+    // Initialise the underlying hardware (RMT channel allocation,
+    // pin claim, DMA setup as needed). Idempotent. Safe to call from
+    // any thread before show() is first invoked.
+    virtual void begin() = 0;
+
+    // How many addressable pixels this strip exposes. Fixed for the
+    // lifetime of the process; the driver caches it at init.
+    virtual size_t pixel_count() const = 0;
+
+    // Write one pixel. Indices >= pixel_count() are silently ignored
+    // so the caller doesn't need to bounds-check every call.
+    virtual void set_pixel(size_t index,
+                            uint8_t r, uint8_t g, uint8_t b) = 0;
+
+    // Convenience: zero every pixel. Doesn't push to hardware until
+    // show() is called.
+    virtual void clear() = 0;
+
+    // Push the in-memory buffer to the physical LEDs. Typically blocks
+    // for ~30 us per pixel on SK6812/WS2812 (RMT-driven). Callers
+    // should batch set_pixel writes and call show() once per frame.
+    virtual void show() = 0;
+};
+
+// =============================================================================
 // HAL - global accessor and lifecycle
 // =============================================================================
 
@@ -431,6 +486,9 @@ public:
     static Buttons*  buttons();
     static IMU*      imu();
     static Battery*  battery();
+    // Returns nullptr on backends without a Capability::LedStrip
+    // declaration. See class LedStrip above for the contract.
+    static LedStrip* led_strip();
 };
 
 }  // namespace hal

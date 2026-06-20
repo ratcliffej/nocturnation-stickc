@@ -10,6 +10,7 @@
 #include "drivers/local_driver.h"
 #include "drivers/pixmob_ir_driver.h"
 #include "drivers/espnow_broadcast_driver.h"
+#include "drivers/led_strip_driver.h"
 #include "output_bindings/output_binding.h"
 #include "output_bindings/output_binding_registry.h"
 
@@ -309,6 +310,10 @@ void DAL::begin() {
     register_driver(local_driver_instance());
     register_driver(pixmob_ir_driver_instance());
     register_driver(esp_now_broadcast_driver_instance());
+    // Epic 12: LED strip driver. Refuses registration on hosts where
+    // hal::HAL::led_strip() returns nullptr, so the rest of the fleet
+    // (Tildagon, StickC without Grove strip enabled) gets a no-op.
+    register_driver(led_strip_driver_instance());
 }
 
 void DAL::loop_tick() {

@@ -93,6 +93,7 @@ Display* HAL::display()  { return &s_stub_display; }
 Buttons* HAL::buttons()  { return nullptr; }
 IMU*     HAL::imu()      { return nullptr; }
 Battery* HAL::battery()  { return nullptr; }
+LedStrip* HAL::led_strip() { return nullptr; }
 
 }  // namespace hal
 }  // namespace nocturnation

@@ -51,6 +51,7 @@ Display* HAL::display()  { return nullptr; }
 Buttons* HAL::buttons()  { return nullptr; }
 IMU*     HAL::imu()      { return nullptr; }
 Battery* HAL::battery()  { return nullptr; }
+LedStrip* HAL::led_strip() { return nullptr; }
 
 }  // namespace hal
 }  // namespace nocturnation

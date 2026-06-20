@@ -24,6 +24,7 @@
 #include "output_bindings/output_binding_registry.h"
 #include "output_bindings/local_display.h"
 #include "output_bindings/pixmob_ir.h"
+#include "output_bindings/lume_led_strip.h"
 
 void setup() {
     // Bring up the USB-CDC / UART console. Required before any Serial.printf
@@ -67,6 +68,12 @@ void setup() {
         nocturnation::output_bindings::local_display_instance());
     nocturnation::output_bindings::output_binding_registry().register_plugin(
         nocturnation::output_bindings::pixmob_ir_instance());
+    // Epic 12: addressable LED strip binding. Activates only on hosts that
+    // declare Capability::LedStrip (Atom Lite ships with it; StickC Plus2 /
+    // S3 gain it via Config "LED Strip" in B4). LumeMode reads
+    // required_capabilities() and skips this binding on hosts without one.
+    nocturnation::output_bindings::output_binding_registry().register_plugin(
+        nocturnation::output_bindings::lume_led_strip_instance());
 
     nocturnation::modes::ModeMachine::begin();
 }
