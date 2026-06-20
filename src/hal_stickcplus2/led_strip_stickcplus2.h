@@ -3,10 +3,12 @@
 // Drives the Grove-connected SK6812 flex strip. Plus2 has no onboard
 // addressable LED of its own (the front LCD is a separate output
 // owned by LocalDisplayBinding), so this backend is Grove-only:
-// kGroveStripPixelCount pixels on GPIO 33 - the WHITE wire of the
-// HY2.0-4P Grove connector. Matches the convention bench-verified
-// on the Atom Lite (white = data for the M5Stack SK6812 flex-strip
-// SKU shipping with this project).
+// kGroveStripPixelCount pixels on GPIO 32 - per M5Stack's own canonical
+// example for the SK6812 RGB unit on M5StickC
+// (m5stack/M5StickC/examples/Unit/RGB_SK6812/RGB_SK6812.ino), which
+// hardwires PIN 32. The wire-colour convention diverges per board on
+// the M5 stack: Atom Lite uses G26 (SDA-side), StickC Plus2 uses G32
+// (SCL-side). Pin assignment is per-host, not a uniform Grove rule.
 //
 // Driven by Adafruit_NeoPixel (lib_deps in platformio.ini). If no
 // strip is plugged in the show() bursts are radiated to G33 with
@@ -25,8 +27,8 @@ namespace hal {
 
 class LedStripStickCplus2 : public LedStrip {
 public:
-    // Grove white wire on the M5StickC Plus2 = GPIO 33.
-    static constexpr uint8_t kGrovePin = 33;
+    // GPIO 32 = M5Stack's canonical SK6812 pin on the StickC family.
+    static constexpr uint8_t kGrovePin = 32;
     static constexpr size_t  kGroveStripPixelCount = 29;
 
     void begin() override;
