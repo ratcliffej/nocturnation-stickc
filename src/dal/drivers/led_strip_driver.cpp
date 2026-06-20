@@ -70,6 +70,17 @@ bool LedStripDriver::begin() {
     strip->begin();
     strip->clear();
     strip->show();
+    // Auto-enable the signal-state indicator when the host has no
+    // Display capability. Rationale: on Atom Lite the LED strip is
+    // the only visible affordance, and "the firmware booted and is
+    // searching" needs a pilot light. On StickC Plus2 / S3 the LCD
+    // already shows mode + status, so the indicator stays off there
+    // to keep the strip render clean. Callers can override post-
+    // begin via set_signal_indicator_enabled() (the future B4-live
+    // Config "LED Strip" toggle).
+    if (!hal::HAL::has(hal::Capability::Display)) {
+        signal_indicator_enabled_ = true;
+    }
     return true;
 }
 
@@ -111,6 +122,18 @@ uint32_t LedStripDriver::next_random() {
 bool LedStripDriver::send_wash(uint8_t /*target_group*/, const LightWashEvent& ev) {
     if (!enabled() || !active_strip()) return false;
 
+    // Signal-indicator hook: stamp last-wash-received time so the
+    // indicator state machine knows we're not stale. has_ever_seen_wash_
+    // gates the Searching -> FreshlyLocked transition (first lock gets
+    // the solid-green grace period).
+    const uint32_t now = now_ms();
+    last_wash_received_ms_ = now;
+    if (!has_ever_seen_wash_ || indicator_state_ == IndicatorState::Searching) {
+        has_ever_seen_wash_ = true;
+        lock_acquired_ms_   = now;
+        indicator_state_    = IndicatorState::FreshlyLocked;
+    }
+
     // Re-stamp on every wash event - a supersede resets the drift phase
     // so the new (r1,r2,cycle) takes immediate effect rather than
     // continuing the prior cycle's phase angle. Mirrors LocalDisplayBinding's
@@ -127,7 +150,7 @@ bool LedStripDriver::send_wash(uint8_t /*target_group*/, const LightWashEvent& e
     wash_.release_100ms         = ev.release;
     wash_.cycle_ms              = ev.cycle_ms;
     wash_.ttl_seconds           = ev.ttl_seconds;
-    wash_.started_ms            = now_ms();
+    wash_.started_ms            = now;
     wash_.releasing_started_ms  = 0;
     return true;
 }
@@ -283,10 +306,11 @@ void LedStripDriver::render_frame() {
     const uint32_t now = now_ms();
 
     uint8_t base_r = 0, base_g = 0, base_b = 0;
-    const bool wash_renders = compute_wash_baseline(now, base_r, base_g, base_b);
+    compute_wash_baseline(now, base_r, base_g, base_b);
 
-    // Paint baseline. Even when wash_renders is false we may still have
-    // sparkles to overlay - in that case the baseline is black.
+    // Paint baseline. Even with no wash active, we still walk every
+    // pixel - the indicator overlay may want pixel 0 lit on an
+    // otherwise-black strip.
     for (size_t i = 0; i < pcount; ++i) {
         strip->set_pixel(i, base_r, base_g, base_b);
     }
@@ -296,7 +320,6 @@ void LedStripDriver::render_frame() {
     // baseline at t=duration. Multiple sparkles on the same pixel
     // overwrite (most-recent wins) which is fine in the 1-pixel-per
     // -spark model and rare in practice.
-    bool any_sparkle = false;
     for (size_t s = 0; s < kMaxSparkles; ++s) {
         Sparkle& sp = sparkles_[s];
         if (!sp.active) continue;
@@ -305,7 +328,6 @@ void LedStripDriver::render_frame() {
             sp.active = false;
             continue;
         }
-        any_sparkle = true;
         const float fade = static_cast<float>(since) / static_cast<float>(sp.duration_ms);
         const uint8_t r = lerp_u8(sp.r, base_r, fade);
         const uint8_t g = lerp_u8(sp.g, base_g, fade);
@@ -315,21 +337,60 @@ void LedStripDriver::render_frame() {
         }
     }
 
-    // Skip the SPI/RMT burst when nothing's active AND we just finished
-    // a release (transitioning from active to inactive in this tick).
-    // The transition-tick still needs one final all-black show() so the
-    // hardware reflects the end state - that's served by wash_renders
-    // being true on the transition tick (release applies a fade < 1.0
-    // even on the very last sub-tick). Once inactive with no sparkles,
-    // we skip.
-    if (!wash_renders && !any_sparkle) {
-        // One final "all-off" push to commit any straggling end-of-
-        // release frame. Cheap (one show()) and keeps the hardware
-        // state in sync with the driver's model.
-        strip->show();
-        return;
-    }
+    // Signal-state indicator (Epic 12 B5). Runs unconditionally - the
+    // helper itself gates on signal_indicator_enabled_ and is a no-op
+    // when disabled. Painted AFTER wash + sparkles so pixel 0 reflects
+    // the indicator overlay during Searching / FreshlyLocked states,
+    // and the wash baseline during Active state.
+    update_and_paint_indicator(now, strip);
+
+    // Always push - even when wash + sparkles are inactive, the
+    // indicator may have written pixel 0 (Searching: pulsing green)
+    // and we want that visible. The PixMob driver's per-tick airtime
+    // concern doesn't apply here - one SPI/RMT show() is ~30 us per
+    // pixel and the host is otherwise idle.
     strip->show();
+}
+
+void LedStripDriver::update_and_paint_indicator(uint32_t now,
+                                                 hal::LedStrip* strip) {
+    if (!signal_indicator_enabled_) return;
+    if (!strip || strip->pixel_count() == 0) return;
+
+    // State transitions.
+    if (has_ever_seen_wash_) {
+        const uint32_t since_last_wash = now - last_wash_received_ms_;
+        if (since_last_wash > kNoSignalThresholdMs) {
+            // Stale - signal lost. Drop back to Searching; next wash
+            // will re-establish FreshlyLocked.
+            indicator_state_ = IndicatorState::Searching;
+        } else if (indicator_state_ == IndicatorState::FreshlyLocked) {
+            // Hold solid-green grace window, then promote to Active so
+            // pixel 0 reverts to wash render.
+            if ((now - lock_acquired_ms_) >= kFreshLockDurationMs) {
+                indicator_state_ = IndicatorState::Active;
+            }
+        }
+    }
+
+    // Paint pixel 0 per state.
+    switch (indicator_state_) {
+        case IndicatorState::Searching: {
+            // 1 Hz, 50 % duty pulse - on for the first half of each
+            // period, off for the second.
+            const uint32_t phase = now % kIndicatorFlashPeriodMs;
+            const bool     lit   = phase < (kIndicatorFlashPeriodMs / 2);
+            strip->set_pixel(0, 0, lit ? 96 : 0, 0);
+            break;
+        }
+        case IndicatorState::FreshlyLocked:
+            strip->set_pixel(0, 0, 160, 0);
+            break;
+        case IndicatorState::Active:
+            // Pixel 0 already painted by the wash + sparkle pass;
+            // leave it alone.
+            break;
+    }
 }
 
 void LedStripDriver::loop_tick() {

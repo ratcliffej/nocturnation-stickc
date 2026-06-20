@@ -180,9 +180,18 @@ void setUp(void) {
     auto* drv = led_strip_driver_instance();
     install_seams(drv);
     TEST_ASSERT_TRUE(drv->begin());
+    // Existing wash/sparkle tests assert on pixel 0 = baseline; the
+    // signal indicator overlay (Epic 12 B5) would interfere because
+    // the test HAL has no Display capability and begin() auto-enables
+    // the indicator. Disable here; the indicator suite below re-
+    // enables explicitly per test.
+    drv->set_signal_indicator_enabled(false);
+    drv->reset_indicator_for_tests();
     reset_driver();
     s_now_ms = 1000;
     install_seams(led_strip_driver_instance());
+    led_strip_driver_instance()->set_signal_indicator_enabled(false);
+    led_strip_driver_instance()->reset_indicator_for_tests();
 }
 
 void tearDown(void) {}
@@ -342,6 +351,95 @@ static void test_intensity_scalar_applies(void) {
 }
 
 // =============================================================================
+// Signal indicator (Epic 12 B5)
+// =============================================================================
+
+static void test_indicator_auto_enabled_when_no_display(void) {
+    // setUp() turns the indicator off explicitly; begin() auto-enables
+    // it based on HAL::Display absence. Re-begin and confirm.
+    auto* drv = led_strip_driver_instance();
+    TEST_ASSERT_TRUE(drv->begin());
+    TEST_ASSERT_TRUE(drv->signal_indicator_enabled());
+    drv->set_signal_indicator_enabled(false);   // restore test default
+}
+
+static void test_indicator_searching_pulses_green_on_pixel_0(void) {
+    auto* drv = led_strip_driver_instance();
+    drv->set_signal_indicator_enabled(true);
+
+    // Phase 0 (within first half of the 1000 ms period) -> lit.
+    s_now_ms = 1000;
+    drv->loop_tick();
+    TEST_ASSERT_EQUAL_UINT8(0,  s_strip.pixels[0].r);
+    TEST_ASSERT_TRUE_MESSAGE(s_strip.pixels[0].g > 0,
+        "searching first-half should light pixel 0 green");
+    TEST_ASSERT_EQUAL_UINT8(0,  s_strip.pixels[0].b);
+
+    // Phase ~600 ms -> dark half.
+    s_now_ms = 1600;
+    drv->loop_tick();
+    TEST_ASSERT_EQUAL_UINT8(0, s_strip.pixels[0].r);
+    TEST_ASSERT_EQUAL_UINT8(0, s_strip.pixels[0].g);
+    TEST_ASSERT_EQUAL_UINT8(0, s_strip.pixels[0].b);
+
+    // Other pixels stay black throughout (no wash, no sparkles).
+    for (size_t i = 1; i < kPixelCount; ++i) {
+        TEST_ASSERT_EQUAL_UINT8(0, s_strip.pixels[i].r);
+        TEST_ASSERT_EQUAL_UINT8(0, s_strip.pixels[i].g);
+        TEST_ASSERT_EQUAL_UINT8(0, s_strip.pixels[i].b);
+    }
+    drv->set_signal_indicator_enabled(false);
+}
+
+static void test_indicator_fresh_lock_then_yields_to_wash(void) {
+    auto* drv = led_strip_driver_instance();
+    drv->set_signal_indicator_enabled(true);
+
+    // First wash arrives -> FreshlyLocked. Solid green on pixel 0 for
+    // kFreshLockDurationMs (1000 ms) regardless of wash colour.
+    drv->send_wash(0, make_wash(255, 0, 0));      // red baseline
+    s_now_ms += 1;
+    drv->loop_tick();
+    TEST_ASSERT_EQUAL_INT((int)LedStripDriver::IndicatorState::FreshlyLocked,
+                          (int)drv->indicator_state_for_tests());
+    TEST_ASSERT_EQUAL_UINT8(0,   s_strip.pixels[0].r);
+    TEST_ASSERT_TRUE(s_strip.pixels[0].g > 0);
+    TEST_ASSERT_EQUAL_UINT8(0,   s_strip.pixels[0].b);
+    // Other pixels show wash baseline (red).
+    TEST_ASSERT_EQUAL_UINT8(255, s_strip.pixels[1].r);
+
+    // After the fresh-lock window: state moves to Active and pixel 0
+    // belongs to the wash render.
+    s_now_ms += 1100;
+    drv->loop_tick();
+    TEST_ASSERT_EQUAL_INT((int)LedStripDriver::IndicatorState::Active,
+                          (int)drv->indicator_state_for_tests());
+    TEST_ASSERT_EQUAL_UINT8(255, s_strip.pixels[0].r);
+
+    drv->set_signal_indicator_enabled(false);
+}
+
+static void test_indicator_lost_signal_returns_to_searching(void) {
+    auto* drv = led_strip_driver_instance();
+    drv->set_signal_indicator_enabled(true);
+
+    // Bring up a lock, then go past the no-signal threshold.
+    drv->send_wash(0, make_wash(0, 0, 255));
+    s_now_ms += 1100;
+    drv->loop_tick();   // promote to Active
+    TEST_ASSERT_EQUAL_INT((int)LedStripDriver::IndicatorState::Active,
+                          (int)drv->indicator_state_for_tests());
+
+    // Advance well past kNoSignalThresholdMs without new washes.
+    s_now_ms += 4000;
+    drv->loop_tick();
+    TEST_ASSERT_EQUAL_INT((int)LedStripDriver::IndicatorState::Searching,
+                          (int)drv->indicator_state_for_tests());
+
+    drv->set_signal_indicator_enabled(false);
+}
+
+// =============================================================================
 // Runner
 // =============================================================================
 
@@ -355,5 +453,9 @@ int main(int, char**) {
     RUN_TEST(test_sparkle_lands_on_one_pixel);
     RUN_TEST(test_sparkle_fade_returns_to_baseline);
     RUN_TEST(test_intensity_scalar_applies);
+    RUN_TEST(test_indicator_auto_enabled_when_no_display);
+    RUN_TEST(test_indicator_searching_pulses_green_on_pixel_0);
+    RUN_TEST(test_indicator_fresh_lock_then_yields_to_wash);
+    RUN_TEST(test_indicator_lost_signal_returns_to_searching);
     return UNITY_END();
 }
