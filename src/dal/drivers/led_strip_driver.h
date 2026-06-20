@@ -125,6 +125,23 @@ public:
     // duplicated state machines.
     void set_overlay_pixel_0(uint8_t r, uint8_t g, uint8_t b, bool enabled);
 
+    // -------------------------------------------------------------------------
+    // Device brightness (Epic 12 B5 follow-on)
+    // -------------------------------------------------------------------------
+    //
+    // Uniform 0..100 % multiplier applied to the wash + pulse render
+    // path before each pixel hits the strip. Multiplies on top of any
+    // per-event `intensity` field (LightWashEvent.intensity), so a
+    // wash with intensity = 200 at device brightness = 25 % renders
+    // at 200 * 0.25 = 50.
+    //
+    // Does NOT scale the LumeMode-driven pixel-0 overlay - that's
+    // system UI and stays at fixed brightness regardless of device
+    // setting. Operator owns the device value via Btn1 in Lume mode
+    // (cycles 100 / 50 / 25 / 10), persisted via NVS strip_bri.
+    void set_brightness_percent(uint8_t pct);
+    uint8_t brightness_percent() const { return brightness_pct_; }
+
 private:
     // Most-recent pulse colour + envelope, shared across all pixels
     // currently rendering this pulse's envelope. A new pulse arriving
@@ -158,6 +175,12 @@ private:
     uint8_t overlay_r_       = 0;
     uint8_t overlay_g_       = 0;
     uint8_t overlay_b_       = 0;
+
+    // Device brightness. 0..100; defaults to 100 so a freshly-constructed
+    // driver matches pre-brightness-feature behaviour. LumeMode loads
+    // the persisted value via persistence::load_strip_brightness() and
+    // applies it on enter().
+    uint8_t brightness_pct_ = 100;
 
     // Active strip - the override (test) or HAL::led_strip() (production).
     hal::LedStrip* active_strip() const;

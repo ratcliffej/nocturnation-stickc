@@ -81,6 +81,11 @@ void LedStripDriver::set_overlay_pixel_0(uint8_t r, uint8_t g, uint8_t b,
     overlay_b_       = b;
 }
 
+void LedStripDriver::set_brightness_percent(uint8_t pct) {
+    if (pct > 100) pct = 100;
+    brightness_pct_ = pct;
+}
+
 LedStrip* LedStripDriver::active_strip() const {
     return strip_override_ ? strip_override_ : hal::HAL::led_strip();
 }
@@ -326,7 +331,13 @@ void LedStripDriver::render_frame() {
     // wash baseline first, then if this pixel is mid-pulse-envelope
     // blend toward the pulse colour by the ASR position. A pixel
     // with pixel_pulse_started_ == 0 just shows the baseline.
-    const size_t walk = (pcount < kMaxPixels) ? pcount : kMaxPixels;
+    // Device brightness (0..100) scales the final colour BEFORE
+    // set_pixel - so an operator-chosen dim setting brings the whole
+    // wash + pulse render down. The signal indicator overlay is
+    // applied after this loop and intentionally bypasses brightness
+    // (system UI stays visible at any device setting).
+    const size_t walk    = (pcount < kMaxPixels) ? pcount : kMaxPixels;
+    const float  bri_mul = static_cast<float>(brightness_pct_) / 100.0f;
     for (size_t i = 0; i < walk; ++i) {
         uint8_t r = base_r, g = base_g, b = base_b;
         if (pixel_pulse_started_[i] != 0) {
@@ -335,21 +346,23 @@ void LedStripDriver::render_frame() {
             if (alpha <= 0.0f) {
                 pixel_pulse_started_[i] = 0;
             } else {
-                // alpha = 0 -> baseline, alpha = 1 -> pulse peak.
-                // Linear blend baseline -> pulse colour. The
-                // baseline is whatever the wash gives us (often
-                // black for pulse-only shows).
                 r = lerp_u8(base_r, current_pulse_.r, alpha);
                 g = lerp_u8(base_g, current_pulse_.g, alpha);
                 b = lerp_u8(base_b, current_pulse_.b, alpha);
             }
         }
-        strip->set_pixel(i, r, g, b);
+        strip->set_pixel(i,
+                          clip255(static_cast<int>(r * bri_mul)),
+                          clip255(static_cast<int>(g * bri_mul)),
+                          clip255(static_cast<int>(b * bri_mul)));
     }
     // Tail of the buffer past kMaxPixels (if the strip is larger than
-    // we can track envelopes for): paint baseline only.
+    // we can track envelopes for): paint baseline only, still scaled.
     for (size_t i = walk; i < pcount; ++i) {
-        strip->set_pixel(i, base_r, base_g, base_b);
+        strip->set_pixel(i,
+                          clip255(static_cast<int>(base_r * bri_mul)),
+                          clip255(static_cast<int>(base_g * bri_mul)),
+                          clip255(static_cast<int>(base_b * bri_mul)));
     }
 
     // Pixel 0 overlay. LumeMode (or any other policy layer) sets the

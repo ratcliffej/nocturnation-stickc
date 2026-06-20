@@ -183,10 +183,15 @@ void setUp(void) {
     // Clear the pixel-0 overlay between tests so a previous test's
     // override doesn't leak into the next one's baseline assertions.
     drv->set_overlay_pixel_0(0, 0, 0, false);
+    // Default brightness to 100 % so existing wash/sparkle tests
+    // (written before brightness landed) keep their literal RGB
+    // assertions. The brightness-specific tests below override this.
+    drv->set_brightness_percent(100);
     reset_driver();
     s_now_ms = 1000;
     install_seams(led_strip_driver_instance());
     led_strip_driver_instance()->set_overlay_pixel_0(0, 0, 0, false);
+    led_strip_driver_instance()->set_brightness_percent(100);
 }
 
 void tearDown(void) {}
@@ -397,6 +402,41 @@ static void test_overlay_writes_pixel_0_over_wash(void) {
     TEST_ASSERT_EQUAL_UINT8(200, s_strip.pixels[1].r);
 }
 
+static void test_brightness_scales_wash(void) {
+    // Wash red 200 at device brightness 25 % -> renders ~50 on every pixel.
+    auto* drv = led_strip_driver_instance();
+    drv->set_brightness_percent(25);
+    drv->send_wash(0, make_wash(200, 0, 0));
+    s_now_ms += 50;
+    drv->loop_tick();
+    for (size_t i = 0; i < kPixelCount; ++i) {
+        const uint8_t r = s_strip.pixels[i].r;
+        TEST_ASSERT_TRUE_MESSAGE(r >= 45 && r <= 55,
+            "wash at 25 % brightness should land near 50/255 red");
+        TEST_ASSERT_EQUAL_UINT8(0, s_strip.pixels[i].g);
+        TEST_ASSERT_EQUAL_UINT8(0, s_strip.pixels[i].b);
+    }
+}
+
+static void test_brightness_does_not_scale_overlay(void) {
+    // The pixel-0 overlay is system UI and must remain at the colour
+    // LumeMode passes in regardless of device brightness.
+    auto* drv = led_strip_driver_instance();
+    drv->set_brightness_percent(10);
+    drv->send_wash(0, make_wash(200, 0, 0));
+    drv->set_overlay_pixel_0(0, 96, 0, true);
+    s_now_ms += 50;
+    drv->loop_tick();
+    // Pixel 0 = the overlay's literal 96 g (not 96 * 10% = 10).
+    TEST_ASSERT_EQUAL_UINT8(0,  s_strip.pixels[0].r);
+    TEST_ASSERT_EQUAL_UINT8(96, s_strip.pixels[0].g);
+    TEST_ASSERT_EQUAL_UINT8(0,  s_strip.pixels[0].b);
+    // Other pixels are wash at 10 % - red ~20.
+    const uint8_t r1 = s_strip.pixels[1].r;
+    TEST_ASSERT_TRUE_MESSAGE(r1 >= 15 && r1 <= 25,
+        "wash at 10 % should be ~20/255 red, overlay should be untouched");
+}
+
 static void test_overlay_disabled_yields_pixel_0_to_wash(void) {
     auto* drv = led_strip_driver_instance();
     drv->send_wash(0, make_wash(200, 0, 0));
@@ -428,6 +468,8 @@ int main(int, char**) {
     RUN_TEST(test_pulse_fade_returns_pixels_to_baseline);
     RUN_TEST(test_intensity_scalar_applies);
     RUN_TEST(test_overlay_writes_pixel_0_over_wash);
+    RUN_TEST(test_brightness_scales_wash);
+    RUN_TEST(test_brightness_does_not_scale_overlay);
     RUN_TEST(test_overlay_disabled_yields_pixel_0_to_wash);
     return UNITY_END();
 }

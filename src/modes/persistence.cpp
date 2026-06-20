@@ -181,6 +181,23 @@ void save_lume_group(uint8_t g) {
     prefs.end();
 }
 
+uint8_t load_strip_brightness() {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/true);
+    uint8_t pct = prefs.getUChar("strip_bri", kDefaultStripBrightness);
+    prefs.end();
+    if (pct > 100) pct = 100;
+    return pct;
+}
+
+void save_strip_brightness(uint8_t pct) {
+    if (pct > 100) pct = 100;
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/false);
+    prefs.putUChar("strip_bri", pct);
+    prefs.end();
+}
+
 uint8_t load_director_source_id() {
     Preferences prefs;
     prefs.begin("noct", /*readOnly=*/true);
@@ -406,6 +423,15 @@ uint8_t          load_lume_group()                       { return s_native_lume_
 void             save_lume_group(uint8_t g)              {
     s_native_lume_group     = g;
     s_native_lume_group_set = true;
+}
+
+namespace {
+uint8_t s_native_strip_brightness = kDefaultStripBrightness;
+}  // namespace
+uint8_t          load_strip_brightness()                 { return s_native_strip_brightness; }
+void             save_strip_brightness(uint8_t pct)      {
+    if (pct > 100) pct = 100;
+    s_native_strip_brightness = pct;
 }
 
 uint8_t load_director_source_id() {

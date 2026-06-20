@@ -91,6 +91,21 @@ void             save_lume_repeat_enabled(bool e);
 uint8_t          load_lume_group();
 void             save_lume_group(uint8_t g);
 
+// LED strip brightness cap (Epic 12 B5 follow-on). Uniform 0..100 %
+// multiplier applied to the wash + pulse render path inside
+// LedStripDriver. Defaults to 25 % - SK6812 at full white draws
+// ~60 mA/pixel, so 30 pixels at 100 % can exceed the Grove 5 V rail's
+// 500 mA budget on Atom Lite. 25 % gives a comfortable margin while
+// still being clearly visible. Operator can step up via Btn1 in
+// Lume mode (cycles 100 / 50 / 25 / 10).
+//
+// Brightness does NOT scale LumeMode's signal-state overlay (the
+// green pilot on pixel 0): that's system UI and stays at fixed
+// brightness regardless of device brightness.
+uint8_t          load_strip_brightness();
+void             save_strip_brightness(uint8_t pct);
+constexpr uint8_t kDefaultStripBrightness = 25;
+
 // Director source_id for channel 1 (community range, 0x00-0x3F) per
 // protocol manual §3.4. Stable per device: chosen randomly within the
 // community range on first boot by migrate_legacy_nvs_keys, persisted

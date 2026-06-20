@@ -75,6 +75,14 @@ void LumeMode::enter() {
     lume_group_           = persistence::load_lume_group();
     quality_.reset();
 
+    // Apply persisted LED-strip brightness to the driver. Cheap no-op
+    // on hosts without a strip (the driver still stores the value
+    // even if no strip is wired).
+    if (hal::HAL::led_strip() != nullptr) {
+        led_strip_driver_instance()->set_brightness_percent(
+            persistence::load_strip_brightness());
+    }
+
     // Auto-scan starts on channel 11 (show priority) per spec §4.5.
     // Locked configs start on the configured channel.
     current_listen_chan_  = (lume_channel_pref_ == 0)
@@ -314,6 +322,48 @@ void LumeMode::loop_tick() {
 void LumeMode::on_button_event(const ButtonPressEvent& ev) {
     if (ev.id == ButtonId::Btn2 && ev.kind == ButtonEvent::LongPressed) {
         ModeMachine::switch_to(ModeId::Menu);
+        return;
+    }
+
+    // Btn1 short-press cycles the LED-strip brightness through
+    // 100 / 50 / 25 / 10 (per cent), persists to NVS, and applies
+    // to the driver immediately. Works on every host with a strip;
+    // a cheap no-op on hosts without one.
+    if (ev.id == ButtonId::Btn1
+        && (ev.kind == ButtonEvent::Clicked
+            || ev.kind == ButtonEvent::Pressed)
+        && hal::HAL::led_strip() != nullptr) {
+        // We accept both Clicked (StickC's M5Unified path) and
+        // Pressed (Atom's hand-rolled debouncer) so the gesture
+        // works uniformly across backends - the Atom button doesn't
+        // surface Clicked events, only Pressed/Released.
+        // Guard against firing twice on a StickC press by only
+        // acting on one of them per press; ButtonEvent::Pressed
+        // arrives first and we'd lose the Clicked-only contract.
+        // The safe rule is: act on Clicked when present, otherwise
+        // act on Pressed. The dispatch above gives us both - we use
+        // a static last-handled timestamp to debounce.
+        static uint32_t s_last_brightness_change_ms = 0;
+        const uint32_t now = millis();
+        if (now - s_last_brightness_change_ms < 200) return;
+        s_last_brightness_change_ms = now;
+
+        static constexpr uint8_t kLevels[] = { 100, 50, 25, 10 };
+        static constexpr size_t kLevelCount = sizeof(kLevels) / sizeof(kLevels[0]);
+
+        const uint8_t current_pct = persistence::load_strip_brightness();
+        size_t idx = 0;
+        for (size_t i = 0; i < kLevelCount; ++i) {
+            if (kLevels[i] == current_pct) { idx = i; break; }
+        }
+        const uint8_t next_pct = kLevels[(idx + 1) % kLevelCount];
+
+        persistence::save_strip_brightness(next_pct);
+        led_strip_driver_instance()->set_brightness_percent(next_pct);
+#ifdef ARDUINO
+        Serial.printf("[lume] strip brightness: %u%% -> %u%%\n",
+                      (unsigned)current_pct, (unsigned)next_pct);
+#endif
     }
 }
 
