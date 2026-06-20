@@ -11,16 +11,13 @@
 //   Buttons   - 1 front button (Btn1), active-low on GPIO 39.
 //   LedStrip  - onboard pixel + Grove strip exposed as one
 //               contiguous addressable strip (1 + 29 = 30 pixels).
-//
-// Capabilities deliberately NOT declared:
-//
-//   ESPNow    - the Atom has a radio but Phase 1 ships without wiring
-//               an ESP-NOW backend here. Lume reception lands in a
-//               follow-on block once the rest of the boot path is
-//               bench-validated. Until then the Atom is an
-//               output-only host - useful for bench-side LED testing
-//               via direct USB-CDC commands (B2 driver seam) but not
-//               yet field-deployable as a Lume.
+//   ESPNow    - WiFi-radio broadcast/peer messaging. begin() is NOT
+//               called from HAL::begin(); LumeMode brings the radio
+//               up on entering Lume + auto-scans channels 11 / 1 /
+//               6 (spec §5.3) until a Director frame locks the
+//               channel. Implementation is a port of the Plus2
+//               backend (board-agnostic Arduino-ESP32 + ESP-IDF
+//               calls).
 //
 // PlatformIO env: [env:m5stack-atomlite] in platformio.ini. Board id
 // `m5stack-atom` is shared between the Atom Lite and the Atom Matrix
@@ -35,6 +32,7 @@
 
 #include "buttons_atomlite.h"
 #include "led_strip_atomlite.h"
+#include "esp_now_atomlite.h"
 
 namespace nocturnation {
 namespace hal {
@@ -46,6 +44,7 @@ namespace hal {
 static constexpr Capability kCapabilities[] = {
     Capability::Buttons,
     Capability::LedStrip,
+    Capability::ESPNow,
 };
 static constexpr size_t kCapabilityCount =
     sizeof(kCapabilities) / sizeof(kCapabilities[0]);
@@ -67,6 +66,7 @@ bool HAL::has(Capability c) {
 namespace {
 ButtonsAtomLite  s_buttons;
 LedStripAtomLite s_led_strip;
+ESPNowAtomLite   s_esp_now;
 }  // namespace
 
 // -----------------------------------------------------------------------------
@@ -94,7 +94,7 @@ Mic*      HAL::mic()       { return nullptr; }
 IRTx*     HAL::ir_tx()     { return nullptr; }
 IRTx*     HAL::ir_tx_ext() { return nullptr; }
 IRRx*     HAL::ir_rx()     { return nullptr; }
-ESPNow*   HAL::esp_now()   { return nullptr; }
+ESPNow*   HAL::esp_now()   { return &s_esp_now; }
 Display*  HAL::display()   { return nullptr; }
 Buttons*  HAL::buttons()   { return &s_buttons; }
 IMU*      HAL::imu()       { return nullptr; }
