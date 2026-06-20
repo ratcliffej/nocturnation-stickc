@@ -81,6 +81,16 @@ private:
     uint8_t   last_msg_type_      = 0xFF;
     bool      no_signal_          = false;   // sticky once threshold crossed
 
+    // Lock-acquire timestamp. Stamped in on_recv whenever signal is
+    // (re-)acquired - either the very first frame, or the recovery
+    // edge out of a NO SIGNAL window. Drives the brief "freshly
+    // locked" indication on the LED-strip status overlay (and could
+    // be reused for a future LCD lock-acquire flash). 0 = never
+    // acquired yet (still Searching from cold boot).
+    uint32_t  lock_acquired_ms_   = 0;
+    static constexpr uint32_t kFreshLockMs           = 1000;
+    static constexpr uint32_t kIndicatorFlashPeriodMs = 1000;     // 1 Hz, 50 % duty
+
     // Active output bindings. Walked at enter() against
     // output_binding_registry(): each binding whose
     // required_capabilities() are a subset of host_caps() gets added

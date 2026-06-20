@@ -105,48 +105,22 @@ public:
     static constexpr size_t kMaxSparkles = 4;
 
     // -------------------------------------------------------------------------
-    // Signal-state indicator (Epic 12 B5)
+    // Pixel 0 overlay (Epic 12 B5)
     // -------------------------------------------------------------------------
     //
-    // Pixel 0 doubles as a search-state pilot light on hosts where the
-    // LED strip is the only visible output (Atom Lite). When enabled,
-    // the indicator overlays pixel 0 with:
+    // LumeMode owns the signal-state policy (when to flash, when to
+    // hold solid, when to yield) - this driver is the mechanism layer
+    // that simply overrides pixel 0 with whatever colour LumeMode
+    // hands it on each tick. When `enabled` is false the driver
+    // renders pixel 0 as part of the normal wash/sparkle pass.
     //
-    //   - Searching (no wash ever received, or no wash for kNoSignalThresholdMs)
-    //         flashing green at 1 Hz, 50 % duty
-    //   - FreshlyLocked (kFreshLockDurationMs after the first wash arrives)
-    //         solid green
-    //   - Active (after FreshlyLocked, while wash is current)
-    //         pixel 0 belongs to the wash render, no overlay
-    //
-    // Enable defaults to OFF; the Atom HAL backend or main.cpp turns it
-    // on at boot for hosts where a strip is the only feedback surface.
-    // The Plus2 + S3 keep it off (LCD shows status). Future B4-live
-    // wires a Config toggle.
-    static constexpr uint32_t kNoSignalThresholdMs   = 3000;
-    static constexpr uint32_t kFreshLockDurationMs   = 1000;
-    static constexpr uint32_t kIndicatorFlashPeriodMs = 1000;     // 1 Hz
-
-    void set_signal_indicator_enabled(bool e) { signal_indicator_enabled_ = e; }
-    bool signal_indicator_enabled() const { return signal_indicator_enabled_; }
-
-    enum class IndicatorState : uint8_t {
-        Searching,        // never received a wash, or signal lost
-        FreshlyLocked,    // just received first/recovering wash; solid green
-        Active,           // wash is current; pixel 0 = wash colour
-    };
-    IndicatorState indicator_state_for_tests() const { return indicator_state_; }
-
-    // Test-only: hard-reset the indicator state to fresh-Searching.
-    // Production code never needs this - the state machine progresses
-    // naturally - but native tests share a static singleton across
-    // RUN_TEST invocations and need an isolation seam.
-    void reset_indicator_for_tests() {
-        indicator_state_       = IndicatorState::Searching;
-        has_ever_seen_wash_    = false;
-        last_wash_received_ms_ = 0;
-        lock_acquired_ms_      = 0;
-    }
+    // The decoupling reflects the architecture's DRY principle: on
+    // hosts with a Display, LumeMode draws the NO SIGNAL pip via
+    // fire_display_*; on hosts with only LedStrip (Atom Lite), it
+    // drives this overlay. Same Lume logic, different output sink -
+    // the variance lives in HAL capability queries, not in
+    // duplicated state machines.
+    void set_overlay_pixel_0(uint8_t r, uint8_t g, uint8_t b, bool enabled);
 
 private:
     struct Sparkle {
@@ -165,15 +139,11 @@ private:
     RandFn         rng_source_     = nullptr;
     uint32_t       rng_state_      = 0;
 
-    // Signal-indicator state. last_wash_received_ms_ is the wall-clock
-    // stamp of the most recent send_wash() (or send_wash_pulse) - the
-    // indicator state machine treats stale > kNoSignalThresholdMs as
-    // "lost signal" and returns to Searching.
-    bool           signal_indicator_enabled_ = false;
-    IndicatorState indicator_state_          = IndicatorState::Searching;
-    uint32_t       last_wash_received_ms_    = 0;
-    uint32_t       lock_acquired_ms_         = 0;
-    bool           has_ever_seen_wash_       = false;
+    // Pixel 0 overlay state. Owned by LumeMode via set_overlay_pixel_0.
+    bool    overlay_enabled_ = false;
+    uint8_t overlay_r_       = 0;
+    uint8_t overlay_g_       = 0;
+    uint8_t overlay_b_       = 0;
 
     // Active strip - the override (test) or HAL::led_strip() (production).
     hal::LedStrip* active_strip() const;
@@ -197,10 +167,6 @@ private:
     // (or kMaxSparkles when the strip has no pixels to spark on).
     size_t spawn_sparkle(uint8_t r, uint8_t g, uint8_t b,
                           uint32_t duration_ms, uint32_t now);
-
-    // Advance the signal-indicator state machine + overlay pixel 0.
-    // Called at the end of render_frame() before strip->show().
-    void update_and_paint_indicator(uint32_t now, hal::LedStrip* strip);
 };
 
 LedStripDriver* led_strip_driver_instance();

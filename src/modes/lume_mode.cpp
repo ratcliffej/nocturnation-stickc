@@ -5,6 +5,7 @@
 #include "persistence.h"
 #include "dal/dal.h"
 #include "../dal/drivers/local_driver.h"   // for set_pulse_rect / pulse_enabled
+#include "../dal/drivers/led_strip_driver.h"   // signal-state pixel-0 overlay
 #include "output_bindings/output_binding_registry.h"
 #include "output_bindings/local_display.h"
 #include "output_bindings/pixmob_ir.h"
@@ -58,6 +59,7 @@ void LumeMode::enter() {
     radio_active_     = false;
     no_signal_        = false;
     last_pip_draw_ms_ = 0;
+    lock_acquired_ms_ = 0;
 
     // Load operator-configured preferences from NVS. Channel preference
     // picks hobby (1) / show (11) / advanced (6) / auto-scan (0) per
@@ -148,6 +150,11 @@ void LumeMode::exit() {
     active_binding_count_ = 0;
     // Restore full-screen pulse rect for whichever mode comes next.
     dal::local_driver_instance()->reset_pulse_rect();
+    // Release the LED-strip status overlay so subsequent modes get a
+    // clean strip render. Cheap no-op on hosts without a strip.
+    if (hal::HAL::led_strip() != nullptr) {
+        led_strip_driver_instance()->set_overlay_pixel_0(0, 0, 0, false);
+    }
 }
 
 void LumeMode::loop_tick() {
@@ -274,6 +281,29 @@ void LumeMode::loop_tick() {
     if (no_signal_ && now - last_draw_ms_ > 200) {
         draw_no_signal_body();
         last_draw_ms_ = now;
+    }
+
+    // LED-strip status overlay (Epic 12 B5, DRY refactor). On hosts
+    // with a Display the LCD pip already carries this information;
+    // on display-less hosts (Atom Lite) the LED strip is the only
+    // surface, and pixel 0 doubles as the status indicator. Same
+    // Lume state, different output sink - the variance is the HAL
+    // capability query below, nothing about the signal logic itself.
+    //
+    //   Searching        flashing green at 1 Hz, 50 % duty
+    //   FreshlyLocked    solid green for kFreshLockMs after a lock edge
+    //   Active           overlay disabled; pixel 0 belongs to the wash
+    if (hal::HAL::led_strip() != nullptr && hal::HAL::display() == nullptr) {
+        auto* strip_drv = led_strip_driver_instance();
+        if (no_signal_ || rx_count_ == 0) {
+            const uint32_t phase = now % kIndicatorFlashPeriodMs;
+            const bool     lit   = phase < (kIndicatorFlashPeriodMs / 2);
+            strip_drv->set_overlay_pixel_0(0, lit ? 96 : 0, 0, true);
+        } else if ((now - lock_acquired_ms_) < kFreshLockMs) {
+            strip_drv->set_overlay_pixel_0(0, 160, 0, true);
+        } else {
+            strip_drv->set_overlay_pixel_0(0, 0, 0, false);
+        }
     }
 }
 
@@ -430,6 +460,13 @@ void LumeMode::on_recv(const hal::ESPNowMessage& m) {
 
     const bool was_no_signal = no_signal_;
     no_signal_ = false;
+    // Stamp lock_acquired_ms_ on the first frame ever and on the
+    // recovery edge out of a NO SIGNAL window. Drives the brief
+    // "freshly locked" indication on the LED-strip status overlay
+    // (and matches the natural moment to flash a future LCD pip).
+    if (was_no_signal || rx_count_ == 1) {
+        lock_acquired_ms_ = last_rx_ms_;
+    }
     if (was_no_signal) {
 #ifdef ARDUINO
         Serial.println("[espnow] lume SIGNAL RECOVERED");
