@@ -420,21 +420,23 @@ static void test_brightness_scales_wash(void) {
 
 static void test_brightness_does_not_scale_overlay(void) {
     // The pixel-0 overlay is system UI and must remain at the colour
-    // LumeMode passes in regardless of device brightness.
+    // LumeMode passes in regardless of device brightness. Use 1 %
+    // (the lowest cycle level) as the extreme case - the overlay
+    // should still be visible at literally 1 % of-everything-else.
     auto* drv = led_strip_driver_instance();
-    drv->set_brightness_percent(10);
+    drv->set_brightness_percent(1);
     drv->send_wash(0, make_wash(200, 0, 0));
     drv->set_overlay_pixel_0(0, 96, 0, true);
     s_now_ms += 50;
     drv->loop_tick();
-    // Pixel 0 = the overlay's literal 96 g (not 96 * 10% = 10).
+    // Pixel 0 = the overlay's literal 96 g (not 96 * 1 % = 1).
     TEST_ASSERT_EQUAL_UINT8(0,  s_strip.pixels[0].r);
     TEST_ASSERT_EQUAL_UINT8(96, s_strip.pixels[0].g);
     TEST_ASSERT_EQUAL_UINT8(0,  s_strip.pixels[0].b);
-    // Other pixels are wash at 10 % - red ~20.
+    // Other pixels are wash at 1 % - red 200 * 0.01 = 2/255.
     const uint8_t r1 = s_strip.pixels[1].r;
-    TEST_ASSERT_TRUE_MESSAGE(r1 >= 15 && r1 <= 25,
-        "wash at 10 % should be ~20/255 red, overlay should be untouched");
+    TEST_ASSERT_TRUE_MESSAGE(r1 <= 3,
+        "wash at 1 % should be near-zero red, overlay should be untouched");
 }
 
 static void test_overlay_disabled_yields_pixel_0_to_wash(void) {
