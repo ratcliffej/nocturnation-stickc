@@ -9,6 +9,7 @@
 #include "output_bindings/output_binding_registry.h"
 #include "output_bindings/local_display.h"
 #include "output_bindings/pixmob_ir.h"
+#include "output_bindings/lume_led_strip.h"
 
 #include <cstdio>
 #include <cstring>
@@ -32,6 +33,8 @@ using nocturnation::output_bindings::pixmob_ir_instance;
 using nocturnation::output_bindings::pixmob_ir_context;
 using nocturnation::output_bindings::local_display_instance;
 using nocturnation::output_bindings::local_display_context;
+using nocturnation::output_bindings::lume_led_strip_instance;
+using nocturnation::output_bindings::lume_led_strip_context;
 
 namespace {
 
@@ -46,6 +49,7 @@ namespace {
 OutputBindingContext* context_for(const OutputBinding* binding) {
     if (binding == pixmob_ir_instance())      return &pixmob_ir_context();
     if (binding == local_display_instance())  return &local_display_context();
+    if (binding == lume_led_strip_instance()) return &lume_led_strip_context();
     return nullptr;
 }
 
