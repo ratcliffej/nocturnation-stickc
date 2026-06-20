@@ -104,7 +104,7 @@ void             save_lume_group(uint8_t g);
 // brightness regardless of device brightness.
 uint8_t          load_strip_brightness();
 void             save_strip_brightness(uint8_t pct);
-constexpr uint8_t kDefaultStripBrightness = 25;
+constexpr uint8_t kDefaultStripBrightness = 10;
 
 // Director source_id for channel 1 (community range, 0x00-0x3F) per
 // protocol manual §3.4. Stable per device: chosen randomly within the

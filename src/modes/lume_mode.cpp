@@ -348,13 +348,13 @@ void LumeMode::on_button_event(const ButtonPressEvent& ev) {
         if (now - s_last_brightness_change_ms < 200) return;
         s_last_brightness_change_ms = now;
 
-        // Wide perceptual spread - the previous 100/50/25/10 set
-        // clustered together visually because LED brightness is
-        // logarithmic. 100/25/1 gives clearly distinct steps:
-        //   100 % = full power (for daylight / outdoor bench)
-        //    25 % = comfortable indoor / desk level
+        // Wide perceptual spread - LED brightness is logarithmic in
+        // human perception so the steps need to be big to read as
+        // distinct. 100/10/1 gives three clearly different settings:
+        //   100 % = full power (daylight / outdoor bench)
+        //    10 % = comfortable indoor / desk level
         //     1 % = ambient hint, near-darkness operation
-        static constexpr uint8_t kLevels[] = { 100, 25, 1 };
+        static constexpr uint8_t kLevels[] = { 100, 10, 1 };
         static constexpr size_t kLevelCount = sizeof(kLevels) / sizeof(kLevels[0]);
 
         const uint8_t current_pct = persistence::load_strip_brightness();

@@ -403,16 +403,16 @@ static void test_overlay_writes_pixel_0_over_wash(void) {
 }
 
 static void test_brightness_scales_wash(void) {
-    // Wash red 200 at device brightness 25 % -> renders ~50 on every pixel.
+    // Wash red 200 at device brightness 10 % -> renders ~20 on every pixel.
     auto* drv = led_strip_driver_instance();
-    drv->set_brightness_percent(25);
+    drv->set_brightness_percent(10);
     drv->send_wash(0, make_wash(200, 0, 0));
     s_now_ms += 50;
     drv->loop_tick();
     for (size_t i = 0; i < kPixelCount; ++i) {
         const uint8_t r = s_strip.pixels[i].r;
-        TEST_ASSERT_TRUE_MESSAGE(r >= 45 && r <= 55,
-            "wash at 25 % brightness should land near 50/255 red");
+        TEST_ASSERT_TRUE_MESSAGE(r >= 18 && r <= 22,
+            "wash at 10 % brightness should land near 20/255 red");
         TEST_ASSERT_EQUAL_UINT8(0, s_strip.pixels[i].g);
         TEST_ASSERT_EQUAL_UINT8(0, s_strip.pixels[i].b);
     }
