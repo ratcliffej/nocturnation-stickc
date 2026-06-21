@@ -22,9 +22,9 @@
 #include "shows/wash_demo_show.h"
 #include "shows/bass_and_drift_show.h"
 #include "output_bindings/output_binding_registry.h"
-#include "output_bindings/local_display.h"
 #include "output_bindings/pixmob_ir.h"
 #include "output_bindings/lume_led_strip.h"
+#include "output_bindings/lume_text.h"
 
 void setup() {
     // Bring up the USB-CDC / UART console. Required before any Serial.printf
@@ -32,8 +32,47 @@ void setup() {
     // peripheral but doesn't open the stream until begin() is called). 115200
     // matches platformio.ini's monitor_speed.
     Serial.begin(115200);
-    delay(50);                  // brief settle so the boot banner isn't lost
+
+    // S3 quirk: native USB-CDC takes ~700 ms to enumerate with the
+    // host after a reboot. Anything printed before then is lost.
+    // Checking `if (!Serial)` doesn't work here - HWCDC's operator
+    // bool() reflects peripheral state, not host-connection state,
+    // so it returns true immediately and the wait loop exits at 0 ms
+    // (verified empirically: banner still missing from monitor logs).
+    // A fixed 1.5 s delay is crude but reliably puts the reset-reason
+    // banner past the host's reconnect threshold. The splash countdown
+    // absorbs this delay so user-visible boot time is unchanged. On
+    // Plus2 the delay is harmless waiting (UART-bridge USB doesn't
+    // need it but doesn't notice it either).
+    delay(1500);
     Serial.println("[noct] boot");
+
+    // Print the reset reason so an unexpected reboot is one log line
+    // away from being diagnosed (panic vs brownout vs watchdog vs
+    // external reset). Especially useful when a USB-CDC drop swallows
+    // any panic backtrace - the reset reason persists across the boot
+    // boundary and tells us the category even without the stack frames.
+    {
+        const esp_reset_reason_t reason = esp_reset_reason();
+        const char* label = "?";
+        switch (reason) {
+            case ESP_RST_POWERON:    label = "POWERON";   break;
+            case ESP_RST_EXT:        label = "EXT";       break;
+            case ESP_RST_SW:         label = "SW";        break;
+            case ESP_RST_PANIC:      label = "PANIC";     break;
+            case ESP_RST_INT_WDT:    label = "INT_WDT";   break;
+            case ESP_RST_TASK_WDT:   label = "TASK_WDT";  break;
+            case ESP_RST_WDT:        label = "WDT";       break;
+            case ESP_RST_DEEPSLEEP:  label = "DEEPSLEEP"; break;
+            case ESP_RST_BROWNOUT:   label = "BROWNOUT";  break;
+            case ESP_RST_SDIO:       label = "SDIO";      break;
+            default: break;
+        }
+        Serial.printf("[noct] reset_reason=%d (%s)\n",
+                      static_cast<int>(reason), label);
+        Serial.flush();   // make sure the banner reaches the host
+                          // even if the next init phase crashes hard.
+    }
 
     nocturnation::dal::DAL::begin();
 
@@ -59,13 +98,11 @@ void setup() {
     nocturnation::shows::show_registry().register_plugin(
         nocturnation::shows::bass_and_drift_show_instance());
 
-    // Register Lume-side output bindings (Epic 4.6 Block 9). LumeMode
-    // walks this registry on enter() and activates every binding whose
-    // required capabilities the host supports. LocalDisplayBinding
-    // owns the "local" render surface (screen); PixMobIrBinding owns
-    // IR forward to bracelets in this Lume's configured group.
-    nocturnation::output_bindings::output_binding_registry().register_plugin(
-        nocturnation::output_bindings::local_display_instance());
+    // Register Lume-side output bindings. LumeMode walks this registry
+    // on enter() and activates every binding whose required capabilities
+    // the host supports. PixMobIrBinding owns IR forward to bracelets in
+    // this Lume's configured group. Epic 13 retired LocalDisplayBinding -
+    // the LCD no longer acts as a lighting surface in Lume mode.
     nocturnation::output_bindings::output_binding_registry().register_plugin(
         nocturnation::output_bindings::pixmob_ir_instance());
     // Epic 12: addressable LED strip binding. Activates only on hosts that
@@ -74,6 +111,11 @@ void setup() {
     // required_capabilities() and skips this binding on hosts without one.
     nocturnation::output_bindings::output_binding_registry().register_plugin(
         nocturnation::output_bindings::lume_led_strip_instance());
+    // Epic 13: text rendering binding. Activates only on hosts that declare
+    // Capability::DisplayText (StickC Plus2 + S3). Atom Lite silently skips
+    // - no display, no DisplayText capability.
+    nocturnation::output_bindings::output_binding_registry().register_plugin(
+        nocturnation::output_bindings::lume_text_instance());
 
     nocturnation::modes::ModeMachine::begin();
 }

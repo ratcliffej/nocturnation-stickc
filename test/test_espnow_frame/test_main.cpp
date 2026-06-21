@@ -522,6 +522,269 @@ static void test_is_performance_range(void) {
 }
 
 // ---------------------------------------------------------------------------
+// Epic 13: display-content payloads (TEXT_DISPLAY, BITMAP_HEADER,
+// BITMAP_PLANE, CLEAR_SCREEN). Variable-length round-trips, fixed-size
+// round-trips, and the new payload-length validation paths.
+// ---------------------------------------------------------------------------
+
+static void test_text_display_round_trip(void) {
+    uint8_t buf[kMaxFrameSize] = {};
+    const Header in = make_header();
+    TextDisplayPayload p_in{};
+    p_in.target_group = 3;
+    p_in.r            = 0xFF;
+    p_in.g            = 0x80;
+    p_in.b            = 0x10;
+    p_in.ttl_ms       = 2500;
+    const char hdr_str[] = "Coldplay";
+    const char body_str[] = "Adventure of a Lifetime";
+    p_in.header_len = static_cast<uint8_t>(sizeof(hdr_str) - 1);
+    std::memcpy(p_in.header, hdr_str, p_in.header_len);
+    p_in.body_len = static_cast<uint8_t>(sizeof(body_str) - 1);
+    std::memcpy(p_in.body, body_str, p_in.body_len);
+
+    const size_t n = encode_text_display(buf, sizeof(buf), in, p_in);
+    const size_t expected_total = kHeaderSize + kTextDisplayMinPayloadLen
+                                + p_in.header_len + p_in.body_len;
+    TEST_ASSERT_EQUAL_size_t(expected_total, n);
+    assert_header_bytes(buf, MessageType::TextDisplay,
+                        static_cast<uint8_t>(n - kHeaderSize));
+
+    Header decoded{};
+    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
+                      static_cast<int>(decode_header(buf, n, decoded)));
+    TextDisplayPayload p_out{};
+    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
+                      static_cast<int>(decode_text_display(decoded,
+                                                            buf + kHeaderSize,
+                                                            decoded.payload_len,
+                                                            p_out)));
+    TEST_ASSERT_EQUAL_UINT8 (p_in.target_group, p_out.target_group);
+    TEST_ASSERT_EQUAL_UINT8 (p_in.r, p_out.r);
+    TEST_ASSERT_EQUAL_UINT8 (p_in.g, p_out.g);
+    TEST_ASSERT_EQUAL_UINT8 (p_in.b, p_out.b);
+    TEST_ASSERT_EQUAL_UINT16(p_in.ttl_ms, p_out.ttl_ms);
+    TEST_ASSERT_EQUAL_UINT8 (p_in.header_len, p_out.header_len);
+    TEST_ASSERT_EQUAL_INT   (0, std::memcmp(p_in.header, p_out.header, p_in.header_len));
+    TEST_ASSERT_EQUAL_UINT8 (p_in.body_len, p_out.body_len);
+    TEST_ASSERT_EQUAL_INT   (0, std::memcmp(p_in.body, p_out.body, p_in.body_len));
+}
+
+static void test_text_display_empty_strings_round_trip(void) {
+    uint8_t buf[kMaxFrameSize] = {};
+    const Header in = make_header();
+    TextDisplayPayload p_in{};
+    p_in.target_group = 0;
+    p_in.r = 0; p_in.g = 0; p_in.b = 0;
+    p_in.ttl_ms = 0;
+    p_in.header_len = 0;
+    p_in.body_len = 0;
+
+    const size_t n = encode_text_display(buf, sizeof(buf), in, p_in);
+    TEST_ASSERT_EQUAL_size_t(kHeaderSize + kTextDisplayMinPayloadLen, n);
+
+    Header decoded{};
+    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
+                      static_cast<int>(decode_header(buf, n, decoded)));
+    TextDisplayPayload p_out{};
+    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
+                      static_cast<int>(decode_text_display(decoded,
+                                                            buf + kHeaderSize,
+                                                            decoded.payload_len,
+                                                            p_out)));
+    TEST_ASSERT_EQUAL_UINT8(0, p_out.header_len);
+    TEST_ASSERT_EQUAL_UINT8(0, p_out.body_len);
+}
+
+// Maximum-size text frame: header 64 bytes + body 128 bytes.
+// 8 + 8 + 64 + 128 = 208 bytes total - well inside the 250-byte MTU.
+static void test_text_display_max_strings_round_trip(void) {
+    uint8_t buf[kMaxFrameSize] = {};
+    const Header in = make_header();
+    TextDisplayPayload p_in{};
+    p_in.target_group = 0;
+    p_in.ttl_ms = 0;
+    p_in.header_len = kTextDisplayMaxHeaderLen;
+    for (size_t i = 0; i < p_in.header_len; ++i) p_in.header[i] = 'A' + (i & 0x0F);
+    p_in.body_len = kTextDisplayMaxBodyLen;
+    for (size_t i = 0; i < p_in.body_len; ++i) p_in.body[i] = 'a' + (i & 0x0F);
+
+    const size_t n = encode_text_display(buf, sizeof(buf), in, p_in);
+    TEST_ASSERT_EQUAL_size_t(kHeaderSize + kTextDisplayMaxPayloadLen, n);
+
+    Header decoded{};
+    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
+                      static_cast<int>(decode_header(buf, n, decoded)));
+    TextDisplayPayload p_out{};
+    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
+                      static_cast<int>(decode_text_display(decoded,
+                                                            buf + kHeaderSize,
+                                                            decoded.payload_len,
+                                                            p_out)));
+    TEST_ASSERT_EQUAL_UINT8(kTextDisplayMaxHeaderLen, p_out.header_len);
+    TEST_ASSERT_EQUAL_UINT8(kTextDisplayMaxBodyLen, p_out.body_len);
+    TEST_ASSERT_EQUAL_INT(0, std::memcmp(p_in.header, p_out.header, p_in.header_len));
+    TEST_ASSERT_EQUAL_INT(0, std::memcmp(p_in.body, p_out.body, p_in.body_len));
+}
+
+static void test_text_display_rejects_oversize_header(void) {
+    uint8_t buf[kMaxFrameSize] = {};
+    const Header in = make_header();
+    TextDisplayPayload p_in{};
+    p_in.header_len = kTextDisplayMaxHeaderLen + 1;   // 65 - over the cap
+    const size_t n = encode_text_display(buf, sizeof(buf), in, p_in);
+    TEST_ASSERT_EQUAL_size_t(0, n);
+}
+
+static void test_bitmap_header_round_trip(void) {
+    uint8_t buf[kMaxFrameSize] = {};
+    const Header in = make_header();
+    BitmapHeaderPayload p_in{};
+    p_in.target_group = 2;
+    p_in.width  = 32;
+    p_in.height = 32;
+    p_in.plane_count = 3;
+    p_in.colours[0][0] = 0xFF; p_in.colours[0][1] = 0x00; p_in.colours[0][2] = 0xFF;
+    p_in.colours[1][0] = 0x00; p_in.colours[1][1] = 0xFF; p_in.colours[1][2] = 0xFF;
+    p_in.colours[2][0] = 0xFF; p_in.colours[2][1] = 0xFF; p_in.colours[2][2] = 0xFF;
+    p_in.fit       = 1;     // FIT
+    p_in.zoom_pct  = 100;
+    p_in.overwrite = 1;
+    p_in.checksum  = 0xDEADBEEFu;
+    p_in.ttl_ms    = 5000;
+
+    const size_t n = encode_bitmap_header(buf, sizeof(buf), in, p_in);
+    TEST_ASSERT_EQUAL_size_t(kHeaderSize + kBitmapHeaderPayloadLen, n);
+    assert_header_bytes(buf, MessageType::BitmapHeader, kBitmapHeaderPayloadLen);
+
+    Header decoded{};
+    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
+                      static_cast<int>(decode_header(buf, n, decoded)));
+    BitmapHeaderPayload p_out{};
+    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
+                      static_cast<int>(decode_bitmap_header(decoded,
+                                                             buf + kHeaderSize,
+                                                             decoded.payload_len,
+                                                             p_out)));
+    TEST_ASSERT_EQUAL_UINT8 (p_in.target_group, p_out.target_group);
+    TEST_ASSERT_EQUAL_UINT8 (p_in.width,        p_out.width);
+    TEST_ASSERT_EQUAL_UINT8 (p_in.height,       p_out.height);
+    TEST_ASSERT_EQUAL_UINT8 (p_in.plane_count,  p_out.plane_count);
+    TEST_ASSERT_EQUAL_INT   (0, std::memcmp(p_in.colours, p_out.colours,
+                                            sizeof(p_in.colours)));
+    TEST_ASSERT_EQUAL_UINT8 (p_in.fit,           p_out.fit);
+    TEST_ASSERT_EQUAL_UINT8 (p_in.zoom_pct,      p_out.zoom_pct);
+    TEST_ASSERT_EQUAL_UINT8 (p_in.overwrite,     p_out.overwrite);
+    TEST_ASSERT_EQUAL_UINT32(p_in.checksum,      p_out.checksum);
+    TEST_ASSERT_EQUAL_UINT16(p_in.ttl_ms,        p_out.ttl_ms);
+}
+
+static void test_bitmap_header_rejects_invalid_dimensions(void) {
+    uint8_t buf[kMaxFrameSize] = {};
+    const Header in = make_header();
+    BitmapHeaderPayload p_in{};
+    p_in.plane_count = 1;
+    p_in.colours[0][0] = 0xFF;
+    p_in.width  = 0;     // invalid
+    p_in.height = 16;
+    TEST_ASSERT_EQUAL_size_t(0, encode_bitmap_header(buf, sizeof(buf), in, p_in));
+    p_in.width  = 16;
+    p_in.height = kBitmapMaxDimension + 1;   // invalid
+    TEST_ASSERT_EQUAL_size_t(0, encode_bitmap_header(buf, sizeof(buf), in, p_in));
+    p_in.height = 16;
+    p_in.plane_count = kBitmapMaxPlanes + 1;   // invalid
+    TEST_ASSERT_EQUAL_size_t(0, encode_bitmap_header(buf, sizeof(buf), in, p_in));
+}
+
+static void test_bitmap_plane_round_trip(void) {
+    uint8_t buf[kMaxFrameSize] = {};
+    const Header in = make_header();
+    BitmapPlanePayload p_in{};
+    p_in.target_group = 2;
+    p_in.plane_index  = 1;
+    p_in.byte_offset  = 0x1234;
+    p_in.data_len     = 128;   // 32x32 binary plane = 128 bytes - fits in one frame
+    for (size_t i = 0; i < p_in.data_len; ++i) {
+        p_in.data[i] = static_cast<uint8_t>(0xA0 + (i & 0x1F));
+    }
+
+    const size_t n = encode_bitmap_plane(buf, sizeof(buf), in, p_in);
+    TEST_ASSERT_EQUAL_size_t(kHeaderSize + kBitmapPlaneFixedPrefixLen + p_in.data_len, n);
+    assert_header_bytes(buf, MessageType::BitmapPlane,
+                        static_cast<uint8_t>(n - kHeaderSize));
+
+    Header decoded{};
+    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
+                      static_cast<int>(decode_header(buf, n, decoded)));
+    BitmapPlanePayload p_out{};
+    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
+                      static_cast<int>(decode_bitmap_plane(decoded,
+                                                            buf + kHeaderSize,
+                                                            decoded.payload_len,
+                                                            p_out)));
+    TEST_ASSERT_EQUAL_UINT8 (p_in.target_group, p_out.target_group);
+    TEST_ASSERT_EQUAL_UINT8 (p_in.plane_index,  p_out.plane_index);
+    TEST_ASSERT_EQUAL_UINT16(p_in.byte_offset,  p_out.byte_offset);
+    TEST_ASSERT_EQUAL_UINT8 (p_in.data_len,     p_out.data_len);
+    TEST_ASSERT_EQUAL_INT   (0, std::memcmp(p_in.data, p_out.data, p_in.data_len));
+}
+
+static void test_bitmap_plane_rejects_oversize_data(void) {
+    uint8_t buf[kMaxFrameSize] = {};
+    const Header in = make_header();
+    BitmapPlanePayload p_in{};
+    p_in.data_len = kBitmapPlaneMaxDataLen + 1;   // one past the cap
+    TEST_ASSERT_EQUAL_size_t(0, encode_bitmap_plane(buf, sizeof(buf), in, p_in));
+}
+
+static void test_clear_screen_round_trip(void) {
+    uint8_t buf[kMaxFrameSize] = {};
+    const Header in = make_header();
+    const ClearScreenPayload p_in{
+        /*target_group=*/0,
+        /*clear_text=*/1,      /*clear_bitmap=*/0,
+    };
+
+    const size_t n = encode_clear_screen(buf, sizeof(buf), in, p_in);
+    TEST_ASSERT_EQUAL_size_t(kHeaderSize + kClearScreenPayloadLen, n);
+    assert_header_bytes(buf, MessageType::ClearScreen, kClearScreenPayloadLen);
+
+    Header decoded{};
+    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
+                      static_cast<int>(decode_header(buf, n, decoded)));
+    ClearScreenPayload p_out{};
+    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
+                      static_cast<int>(decode_clear_screen(decoded,
+                                                            buf + kHeaderSize,
+                                                            decoded.payload_len,
+                                                            p_out)));
+    TEST_ASSERT_EQUAL_UINT8(0, p_out.target_group);
+    TEST_ASSERT_EQUAL_UINT8(1, p_out.clear_text);
+    TEST_ASSERT_EQUAL_UINT8(0, p_out.clear_bitmap);
+}
+
+// Capability-required map: verify the four Display family entries map
+// to the correct HAL capabilities, and that the wash family / Heartbeat
+// return the "no-specific-capability" sentinel.
+static void test_message_type_required_capability_map(void) {
+    using nocturnation::hal::Capability;
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(Capability::DisplayText),
+                          static_cast<int>(message_type_required_capability(MessageType::TextDisplay)));
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(Capability::DisplayBitmap),
+                          static_cast<int>(message_type_required_capability(MessageType::BitmapHeader)));
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(Capability::DisplayBitmap),
+                          static_cast<int>(message_type_required_capability(MessageType::BitmapPlane)));
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(Capability::DisplayText),
+                          static_cast<int>(message_type_required_capability(MessageType::ClearScreen)));
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(kNoSpecificCapability),
+                          static_cast<int>(message_type_required_capability(MessageType::Heartbeat)));
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(kNoSpecificCapability),
+                          static_cast<int>(message_type_required_capability(MessageType::LightPulse)));
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(kNoSpecificCapability),
+                          static_cast<int>(message_type_required_capability(MessageType::LightWash)));
+}
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
@@ -547,5 +810,16 @@ int main(int, char**) {
     RUN_TEST(test_source_id_partition_boundary_values);
     RUN_TEST(test_is_community_range);
     RUN_TEST(test_is_performance_range);
+    // Epic 13 display-content codecs
+    RUN_TEST(test_text_display_round_trip);
+    RUN_TEST(test_text_display_empty_strings_round_trip);
+    RUN_TEST(test_text_display_max_strings_round_trip);
+    RUN_TEST(test_text_display_rejects_oversize_header);
+    RUN_TEST(test_bitmap_header_round_trip);
+    RUN_TEST(test_bitmap_header_rejects_invalid_dimensions);
+    RUN_TEST(test_bitmap_plane_round_trip);
+    RUN_TEST(test_bitmap_plane_rejects_oversize_data);
+    RUN_TEST(test_clear_screen_round_trip);
+    RUN_TEST(test_message_type_required_capability_map);
     return UNITY_END();
 }

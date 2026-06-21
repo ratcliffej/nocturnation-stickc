@@ -122,6 +122,23 @@ enum class Capability : uint8_t {
     // (Grove only, when enabled in Config). Tildagon is not a LedStrip
     // host - its perimeter ring is driven by the MicroPython renderer.
     LedStrip,
+
+    // -------------------------------------------------------------------------
+    // Display content (Epic 13)
+    // -------------------------------------------------------------------------
+    //
+    // Two sub-capabilities layered onto an existing Capability::Display.
+    // A host that can render strings declares DisplayText; a host that
+    // can render bitmaps declares DisplayBitmap. Both bind to the same
+    // HAL::display() instance - the flags differentiate WHAT can be
+    // rendered onto the existing surface, not what hardware is there.
+    //
+    // Host examples: StickC Plus2 + S3 (both true, drive M5Unified LCD).
+    // Atom Lite has no Display, so neither true. Tildagon declares both
+    // through its capability table (MicroPython renderer handles the
+    // circular badge display).
+    DisplayText,
+    DisplayBitmap,
 };
 
 // =============================================================================
@@ -310,6 +327,17 @@ public:
     virtual void set_text_color(uint16_t fg, uint16_t bg) = 0;
     virtual void set_text_size(uint8_t size) = 0;
     virtual void draw_text(int x, int y, const char* text) = 0;
+
+    // M5GFX backing defaults to setTextWrap(true, false) - text printed
+    // past the right edge wraps onto subsequent lines. That's the right
+    // default for the menu / config UI (their strings fit), but the
+    // wrong default for a horizontal marquee (we want clipping, not
+    // wrapping). Bindings that need explicit control toggle this on
+    // entry; backends without a wrap concept (a future hypothetical
+    // ANSI-text backend, the test stub) no-op. Default impl in HAL
+    // header is no-op so existing backends compile without change;
+    // M5GFX-backed implementations override.
+    virtual void set_text_wrap(bool /*wrap_x*/, bool /*wrap_y*/) {}
 
     // No-op on direct backends; meaningful on double-buffered ones.
     virtual void flush() = 0;

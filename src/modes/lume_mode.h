@@ -97,14 +97,15 @@ private:
     // here paired with its own context, and its enter() called. Drained
     // in exit(). Inbound LIGHT_PULSE frames decoded in on_recv fan
     // out via loop_tick() to every active binding's on_light_pulse.
-    // Soft cap of 4 - we ship two concrete bindings (LocalDisplay +
-    // PixMobIr) today; the headroom covers near-future additions
-    // (DMX-out, Tildagon LED ring) without resizing.
+    // Soft cap of 8 - we ship PixMobIrBinding + LumeLedStripBinding
+    // today; Epic 13 adds LumeTextBinding + LumeBitmapBinding; the
+    // headroom covers near-future additions (DMX-out, etc.) without
+    // resizing.
     struct ActiveBinding {
         output_bindings::OutputBinding*        binding = nullptr;
         output_bindings::OutputBindingContext* ctx     = nullptr;
     };
-    static constexpr size_t kMaxActiveBindings = 4;
+    static constexpr size_t kMaxActiveBindings = 8;
     std::array<ActiveBinding, kMaxActiveBindings> active_bindings_{};
     size_t                                        active_binding_count_ = 0;
 
@@ -166,7 +167,11 @@ private:
     bool          lume_repeat_en_      = false;
     volatile bool pending_repeat_       = false;
     size_t        pending_repeat_len_   = 0;
-    static constexpr size_t kRepeatBufSize  = 32;
+    // Bumped to 250 in Epic 13 to match the new wire-side
+    // transport::espnow::kMaxFrameSize (Epic 13 introduces BITMAP_PLANE
+    // payloads up to ~240 bytes). Costs a single buffer's worth of
+    // RAM per Lume - immaterial against the device's 320 KB.
+    static constexpr size_t kRepeatBufSize  = 250;
     static constexpr uint8_t kMaxHopCount   = 3;
     uint8_t       pending_repeat_buf_[kRepeatBufSize] = {};
 
@@ -191,11 +196,20 @@ private:
     void mark_seen(uint8_t src, uint8_t seq);
 
     // Convert a decoded LIGHT_PULSE payload into an RgbPulseEvent
-    // and fan out to every active OutputBinding. The fan-out is the
-    // pre-migration render_light() body's two render_fx calls, now
-    // owned by LocalDisplayBinding + PixMobIrBinding respectively
-    // (Block 9).
+    // and fan out to every active OutputBinding (PixMobIrBinding,
+    // LumeLedStripBinding, etc. — each owns one render surface).
     void fan_out_light_pulse(const transport::espnow::LightPulsePayload& p);
+
+    // Epic 13: Display-family fan-out. Filters bindings by
+    // device_class() == Display + the local-binding group rule (no
+    // target_class on the wire; no relay concept for Display). Each
+    // call delivers to the per-class on_X hook on each matching
+    // binding (LumeTextBinding for text+clear, LumeBitmapBinding for
+    // bitmap+clear).
+    void fan_out_text_display  (const transport::espnow::TextDisplayPayload& p);
+    void fan_out_bitmap_header (const transport::espnow::BitmapHeaderPayload& p);
+    void fan_out_bitmap_plane  (const transport::espnow::BitmapPlanePayload& p);
+    void fan_out_clear_screen  (const transport::espnow::ClearScreenPayload& p);
 
     // Epic 6C Phase F: WASH-family fan-out. Same class+group filter as
     // fan_out_light_pulse + a capability gate (binding's can_wash). The

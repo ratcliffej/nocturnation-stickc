@@ -144,8 +144,7 @@ bool LedStripDriver::send_wash(uint8_t /*target_group*/, const LightWashEvent& e
 
     // Re-stamp on every wash event - a supersede resets the drift phase
     // so the new (r1,r2,cycle) takes immediate effect rather than
-    // continuing the prior cycle's phase angle. Mirrors LocalDisplayBinding's
-    // on_light_wash behaviour.
+    // continuing the prior cycle's phase angle.
     wash_.active                = true;
     wash_.r1                    = ev.r1;
     wash_.g1                    = ev.g1;

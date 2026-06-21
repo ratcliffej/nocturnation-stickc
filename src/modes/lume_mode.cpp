@@ -7,9 +7,9 @@
 #include "../dal/drivers/local_driver.h"   // for set_pulse_rect / pulse_enabled
 #include "../dal/drivers/led_strip_driver.h"   // signal-state pixel-0 overlay
 #include "output_bindings/output_binding_registry.h"
-#include "output_bindings/local_display.h"
 #include "output_bindings/pixmob_ir.h"
 #include "output_bindings/lume_led_strip.h"
+#include "output_bindings/lume_text.h"
 
 #include <cstdio>
 #include <cstring>
@@ -31,10 +31,10 @@ using nocturnation::output_bindings::OutputBinding;
 using nocturnation::output_bindings::OutputBindingContext;
 using nocturnation::output_bindings::pixmob_ir_instance;
 using nocturnation::output_bindings::pixmob_ir_context;
-using nocturnation::output_bindings::local_display_instance;
-using nocturnation::output_bindings::local_display_context;
 using nocturnation::output_bindings::lume_led_strip_instance;
 using nocturnation::output_bindings::lume_led_strip_context;
+using nocturnation::output_bindings::lume_text_instance;
+using nocturnation::output_bindings::lume_text_context;
 
 namespace {
 
@@ -48,8 +48,8 @@ namespace {
 // always have a context).
 OutputBindingContext* context_for(const OutputBinding* binding) {
     if (binding == pixmob_ir_instance())      return &pixmob_ir_context();
-    if (binding == local_display_instance())  return &local_display_context();
     if (binding == lume_led_strip_instance()) return &lume_led_strip_context();
+    if (binding == lume_text_instance())      return &lume_text_context();
     return nullptr;
 }
 
@@ -94,14 +94,13 @@ void LumeMode::enter() {
                             : lume_channel_pref_;
     last_chan_switch_ms_  = millis();
 
-    // Block 13: pulse rect runs full-screen. The 38x12 px status pip
-    // (top-right corner) paints OVER the pulse on its own cadence; the
-    // pulse may briefly paint underneath between pip refreshes, which
-    // is accepted in exchange for full-screen colour impact during a
-    // show. reset_pulse_rect() is the explicit "no strip exclusion"
-    // signal - LocalDriver's default is also full-screen, but calling
-    // it makes the contract obvious to readers and survives any
-    // future change to the default.
+    // Epic 13 B0: LCD is no longer a lighting surface in Lume mode.
+    // Blank it on entry and let the status pip be the only system UI
+    // overlay; future Epic 13 blocks land the new text + bitmap
+    // bindings that paint content here. reset_pulse_rect keeps the
+    // driver's pulse-rect state consistent if any non-binding path
+    // ever fires a pulse on "local" (e.g. Director-side loopback when
+    // this Stick is in Director mode rather than Lume).
     dal::local_driver_instance()->reset_pulse_rect();
 
     DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
@@ -110,9 +109,9 @@ void LumeMode::enter() {
     // Activate output bindings whose required capabilities the host
     // supports. Walks the registry, gates each one on
     // required_capabilities().subset_of(host_caps), and calls
-    // binding->enter(ctx) on each accepted entry. Block 9 ships two
-    // bindings (LocalDisplayBinding + PixMobIrBinding); the soft cap
-    // of kMaxActiveBindings (4) gives near-future bindings room.
+    // binding->enter(ctx) on each accepted entry. Post-Epic-12 ships
+    // PixMobIrBinding + LumeLedStripBinding; Epic 13 adds text +
+    // bitmap. kMaxActiveBindings (4) will need bumping when those land.
     active_binding_count_ = 0;
     auto& reg = output_binding_registry();
     for (size_t i = 0; i < reg.count() && active_binding_count_ < kMaxActiveBindings; ++i) {
@@ -177,8 +176,8 @@ void LumeMode::loop_tick() {
     const uint32_t now = millis();
 
     // Epic 6C Phase F: pump every active binding's tick(). Bindings that
-    // don't override stay no-op; LocalDisplayBinding uses this to drive
-    // the cosine-eased wash drift continuously between LIGHT_WASH events.
+    // don't override stay no-op; tick-driven bindings (e.g. text scroll
+    // animation post-Epic-13) drive their own continuous render here.
     // The Lume's loop_tick already runs at the main-loop cadence (~20 Hz
     // via the delay(1) yield + the audio cadence), which is fine for
     // smooth visual interpolation.
@@ -397,12 +396,12 @@ void LumeMode::mark_seen(uint8_t src, uint8_t seq) {
 // -------------------------------------------------------------------------
 // Lume-as-target-device: an inbound LIGHT_PULSE fans out to every
 // active OutputBinding. Each binding owns one render surface (e.g.
-// LocalDisplayBinding -> screen on the StickC; PixMobIrBinding -> IR
-// to bracelets in the Lume's configured group). Bindings are
-// fail-silent if their underlying transport / driver isn't enabled;
-// neither auto-forwards from inside render_fx - keeps each call to one
-// job and respects toggles like IR mute (Config > IR > Enable, which
-// gates the ir-pixmob driver via DAL::set_driver_enabled).
+// PixMobIrBinding -> IR to bracelets in the Lume's configured group;
+// LumeLedStripBinding -> attached SK6812 strip via HAL::led_strip()).
+// Bindings are fail-silent if their underlying transport / driver
+// isn't enabled; nothing auto-forwards from inside render_fx - keeps
+// each call to one job and respects toggles like IR mute (Config >
+// IR > Enable, which gates the ir-pixmob driver via DAL::set_driver_enabled).
 // -------------------------------------------------------------------------
 
 void LumeMode::fan_out_light_pulse(const transport::espnow::LightPulsePayload& p) {
@@ -509,6 +508,60 @@ void LumeMode::fan_out_light_wash_pulse(const transport::espnow::LightWashPulseP
 
         slot.ctx->set_current_target(p.target_class, p.target_group);
         slot.binding->on_light_wash_pulse(*slot.ctx, ev);
+    }
+}
+
+// Epic 13: display-content fan-out. The Display family doesn't carry a
+// target_class byte on the wire (the message type IS the class), so we
+// filter bindings by device_class() == Display directly. Target group
+// follows the Lume's local-binding rule: 0 = broadcast, non-zero must
+// equal this Lume's configured group. No relay concept for Display
+// bindings.
+void LumeMode::fan_out_text_display(const transport::espnow::TextDisplayPayload& p) {
+    for (size_t i = 0; i < active_binding_count_; ++i) {
+        const auto& slot = active_bindings_[i];
+        if (!slot.binding || !slot.ctx) continue;
+        if (slot.binding->device_class() != hal::DeviceClass::Display) continue;
+        if (p.target_group != 0 && p.target_group != lume_group_) continue;
+        slot.ctx->set_current_target(
+            static_cast<uint8_t>(hal::DeviceClass::Display), p.target_group);
+        slot.binding->on_text_display(*slot.ctx, p);
+    }
+}
+
+void LumeMode::fan_out_bitmap_header(const transport::espnow::BitmapHeaderPayload& p) {
+    for (size_t i = 0; i < active_binding_count_; ++i) {
+        const auto& slot = active_bindings_[i];
+        if (!slot.binding || !slot.ctx) continue;
+        if (slot.binding->device_class() != hal::DeviceClass::Display) continue;
+        if (p.target_group != 0 && p.target_group != lume_group_) continue;
+        slot.ctx->set_current_target(
+            static_cast<uint8_t>(hal::DeviceClass::Display), p.target_group);
+        slot.binding->on_bitmap_header(*slot.ctx, p);
+    }
+}
+
+void LumeMode::fan_out_bitmap_plane(const transport::espnow::BitmapPlanePayload& p) {
+    for (size_t i = 0; i < active_binding_count_; ++i) {
+        const auto& slot = active_bindings_[i];
+        if (!slot.binding || !slot.ctx) continue;
+        if (slot.binding->device_class() != hal::DeviceClass::Display) continue;
+        if (p.target_group != 0 && p.target_group != lume_group_) continue;
+        slot.ctx->set_current_target(
+            static_cast<uint8_t>(hal::DeviceClass::Display), p.target_group);
+        slot.binding->on_bitmap_plane(*slot.ctx, p);
+    }
+}
+
+void LumeMode::fan_out_clear_screen(const transport::espnow::ClearScreenPayload& p) {
+    for (size_t i = 0; i < active_binding_count_; ++i) {
+        const auto& slot = active_bindings_[i];
+        if (!slot.binding || !slot.ctx) continue;
+        if (slot.binding->device_class() != hal::DeviceClass::Display) continue;
+        if (p.target_group != 0 && p.target_group != lume_group_) continue;
+        slot.ctx->set_current_target(
+            static_cast<uint8_t>(hal::DeviceClass::Display), p.target_group);
+        slot.binding->on_clear_screen(*slot.ctx, p);
     }
 }
 
@@ -619,8 +672,9 @@ void LumeMode::on_recv(const hal::ESPNowMessage& m) {
 
     // Epic 6C Phase F: WASH-family dispatch. Phase D's log-and-discard
     // stubs are replaced here with capability-gated fan-out to active
-    // bindings (LocalDisplayBinding accepts; PixMobIrBinding declares
-    // can_wash = false and is silently filtered out by the fan-out).
+    // bindings (LumeLedStripBinding + PixMobIrBinding accept the wash
+    // family; bindings that declare can_wash = false are silently
+    // filtered out by the fan-out).
     if (hdr.message_type == MessageType::LightWash
         && m.len == kHeaderSize + kLightWashPayloadLen) {
         LightWashPayload p{};
@@ -643,6 +697,80 @@ void LumeMode::on_recv(const hal::ESPNowMessage& m) {
         if (decode_light_wash_pulse(hdr, m.data + kHeaderSize,
                                     m.len - kHeaderSize, p) == DecodeResult::Ok) {
             fan_out_light_wash_pulse(p);
+        }
+    }
+
+    // Epic 13 B1: display-content family dispatch. Decode only -
+    // the rendering bindings (LumeTextBinding, LumeBitmapBinding)
+    // land in B2 / B6. Quick-drop gate first: any message type that
+    // maps to a specific capability the host lacks is silently
+    // discarded here without decoding the payload. Atom Lite (no
+    // Display) hits this path for every inbound TEXT/BITMAP/CLEAR
+    // and pays only the message_type_required_capability lookup.
+    const hal::Capability req_cap =
+        message_type_required_capability(hdr.message_type);
+    if (req_cap != kNoSpecificCapability && !hal::HAL::has(req_cap)) {
+        return;
+    }
+
+    if (hdr.message_type == MessageType::TextDisplay
+        && m.len >= kHeaderSize + kTextDisplayMinPayloadLen) {
+        TextDisplayPayload p{};
+        if (decode_text_display(hdr, m.data + kHeaderSize,
+                                m.len - kHeaderSize, p) == DecodeResult::Ok) {
+#ifdef ARDUINO
+            Serial.printf("[espnow RX TextDisplay group=%u rgb=%02X%02X%02X ttl=%u hdr=\"%.*s\" body=\"%.*s\"]\n",
+                          (unsigned)p.target_group,
+                          (unsigned)p.r, (unsigned)p.g, (unsigned)p.b,
+                          (unsigned)p.ttl_ms,
+                          (int)p.header_len, p.header,
+                          (int)p.body_len, p.body);
+#endif
+            fan_out_text_display(p);
+        }
+    }
+    if (hdr.message_type == MessageType::BitmapHeader
+        && m.len == kHeaderSize + kBitmapHeaderPayloadLen) {
+        BitmapHeaderPayload p{};
+        if (decode_bitmap_header(hdr, m.data + kHeaderSize,
+                                 m.len - kHeaderSize, p) == DecodeResult::Ok) {
+#ifdef ARDUINO
+            Serial.printf("[espnow RX BitmapHeader group=%u w=%u h=%u planes=%u fit=%u zoom=%u ow=%u crc=%08X ttl=%u]\n",
+                          (unsigned)p.target_group,
+                          (unsigned)p.width, (unsigned)p.height,
+                          (unsigned)p.plane_count,
+                          (unsigned)p.fit, (unsigned)p.zoom_pct,
+                          (unsigned)p.overwrite,
+                          (unsigned)p.checksum, (unsigned)p.ttl_ms);
+#endif
+            fan_out_bitmap_header(p);
+        }
+    }
+    if (hdr.message_type == MessageType::BitmapPlane
+        && m.len >= kHeaderSize + kBitmapPlaneMinPayloadLen) {
+        BitmapPlanePayload p{};
+        if (decode_bitmap_plane(hdr, m.data + kHeaderSize,
+                                m.len - kHeaderSize, p) == DecodeResult::Ok) {
+#ifdef ARDUINO
+            Serial.printf("[espnow RX BitmapPlane group=%u plane=%u offset=%u len=%u]\n",
+                          (unsigned)p.target_group,
+                          (unsigned)p.plane_index,
+                          (unsigned)p.byte_offset, (unsigned)p.data_len);
+#endif
+            fan_out_bitmap_plane(p);
+        }
+    }
+    if (hdr.message_type == MessageType::ClearScreen
+        && m.len == kHeaderSize + kClearScreenPayloadLen) {
+        ClearScreenPayload p{};
+        if (decode_clear_screen(hdr, m.data + kHeaderSize,
+                                m.len - kHeaderSize, p) == DecodeResult::Ok) {
+#ifdef ARDUINO
+            Serial.printf("[espnow RX ClearScreen group=%u text=%u bitmap=%u]\n",
+                          (unsigned)p.target_group,
+                          (unsigned)p.clear_text, (unsigned)p.clear_bitmap);
+#endif
+            fan_out_clear_screen(p);
         }
     }
 }

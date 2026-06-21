@@ -31,6 +31,7 @@ public:
     void set_text_color(uint16_t fg, uint16_t bg) override;
     void set_text_size(uint8_t size) override;
     void draw_text(int x, int y, const char* text) override;
+    void set_text_wrap(bool wrap_x, bool wrap_y) override;
 
     void flush() override;
 

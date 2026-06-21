@@ -4,7 +4,9 @@
 
 #include "dal/dal.h"
 #include "dal/drivers/dmx_usb_cdc_adapter.h"
+#include "dal/drivers/dmx_input_parser.h"   // kLabelEspNowBroadcast
 #include "../dal/drivers/espnow_broadcast_driver.h"
+#include "hal/hal.h"                         // HAL::esp_now() for passthrough
 #include "persistence.h"
 
 #include <cstdio>
@@ -173,6 +175,26 @@ void DmxBridgeMode::loop_tick() {
                     parser.copy_dmx_channels(universe_, kUniverseBufferSize);
                 run_mappers(universe_, copied, now);
             }
+
+            // Epic 13: ESP-NOW passthrough label. When a freshly-
+            // completed Enttec frame's label is kLabelEspNowBroadcast,
+            // the payload is a fully-formed NocturNation ESP-NOW frame
+            // (the laptop orchestrator built it client-side with the
+            // same encoders as frame.cpp); forward it verbatim to the
+            // radio so display-content frames can flow through the
+            // bridge alongside DMX traffic. Gated on frame_count() to
+            // fire exactly once per FrameComplete (parser state is
+            // sticky across ticks).
+            const uint32_t new_count = parser.frame_count();
+            if (new_count > last_frame_count_) {
+                if (parser.last_label() == dal::enttec_pro::kLabelEspNowBroadcast) {
+                    if (auto* radio = hal::HAL::esp_now()) {
+                        radio->send_broadcast(parser.last_payload(),
+                                              parser.last_payload_len());
+                    }
+                }
+                last_frame_count_ = new_count;
+            }
         }
     }
 
@@ -213,12 +235,16 @@ void DmxBridgeMode::draw_status() {
         currently_active ? GREEN    : RED,
         BLACK, 3});
 
-    // Last-frame age (ms since last) - 0 if none ever observed.
+    // Last-frame age (seconds since last) - "--" if none ever observed.
+    // Rounds to the nearest whole second; sub-second granularity isn't
+    // useful for an idle display where the operator's question is "is
+    // the orchestrator still feeding it?".
     char age_buf[32];
     if (ever_seen) {
-        const uint32_t age = now - last_frame_seen_ms_;
-        std::snprintf(age_buf, sizeof(age_buf), " age: %lu ms",
-                      (unsigned long)age);
+        const uint32_t age_ms = now - last_frame_seen_ms_;
+        const uint32_t age_s  = (age_ms + 500) / 1000;
+        std::snprintf(age_buf, sizeof(age_buf), " age: %lu s",
+                      (unsigned long)age_s);
     } else {
         std::snprintf(age_buf, sizeof(age_buf), " age: --");
     }

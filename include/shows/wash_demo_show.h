@@ -12,7 +12,8 @@
 //
 // Phase E uses this Show to verify the Director side end-to-end on a
 // serial monitor or logic analyser; Phase F's hardware integration test
-// uses the visible result on a StickC screen (LocalDisplayBinding).
+// uses the visible result on a StickC (post-Epic-13 the strip via
+// LumeLedStripBinding is the in-fleet visible surface).
 
 #pragma once
 

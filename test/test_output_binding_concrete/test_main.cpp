@@ -1,16 +1,18 @@
-// Native test: concrete OutputBindings (Epic 4.6 Block 9).
+// Native test: concrete OutputBindings.
 //
-// Exercises the two bindings that landed in Block 9 -
-// LocalDisplayBinding and PixMobIrBinding - against recording
-// drivers registered on the standard "local", "all-pixmobs", and
-// "group-N" targets. The legacy slv_ir_grp -> "group" NVS migration
-// is also covered here because it requires the binding's property
-// bag to be present (i.e. linked into the same env).
+// Exercises PixMobIrBinding against a recording driver registered on
+// the standard "all-pixmobs" and "group-N" targets. The legacy
+// slv_ir_grp -> "group" NVS migration is also covered here because
+// it requires the binding's property bag to be present (i.e. linked
+// into the same env).
 //
-// Provides a HAL backend with Display + IRTx so both bindings'
-// required_capabilities pass the gate. AnalyserBeatDetection is
-// intentionally absent - bindings sit downstream of analysis and
-// don't care.
+// Epic 13 B0 retired LocalDisplayBinding (the LCD-as-pixel role); its
+// tests were removed alongside the binding.
+//
+// Provides a HAL backend with Display + IRTx so the binding's
+// required_capabilities pass the gate (Display kept for the future
+// LumeTextBinding tests). AnalyserBeatDetection is intentionally
+// absent - bindings sit downstream of analysis and don't care.
 
 #include <unity.h>
 #include <cstring>
@@ -22,8 +24,8 @@
 #include "output_bindings/output_binding.h"
 #include "output_bindings/output_binding_context.h"
 #include "output_bindings/output_binding_registry.h"
-#include "output_bindings/local_display.h"
 #include "output_bindings/pixmob_ir.h"
+#include "output_bindings/lume_text.h"
 #include "../../src/modes/persistence.h"
 #include "../../src/dal/drivers/espnow_broadcast_driver.h"
 
@@ -110,15 +112,13 @@ using nocturnation::plugins::PropertyType;
 using nocturnation::plugins::PropertyValue;
 using nocturnation::hal::Capability;
 using nocturnation::hal::make_capability_mask;
-using nocturnation::output_bindings::LocalDisplayBinding;
 using nocturnation::output_bindings::PixMobIrBinding;
+using nocturnation::output_bindings::LumeTextBinding;
 using nocturnation::output_bindings::OutputBinding;
 using nocturnation::output_bindings::OutputBindingContext;
-using nocturnation::output_bindings::local_display_instance;
-using nocturnation::output_bindings::local_display_property_bag;
-using nocturnation::output_bindings::local_display_context;
 using nocturnation::output_bindings::pixmob_ir_instance;
 using nocturnation::output_bindings::pixmob_ir_context;
+using nocturnation::output_bindings::lume_text_instance;
 using nocturnation::output_bindings::output_binding_registry;
 
 namespace {
@@ -179,45 +179,6 @@ void setUp(void) {
 void tearDown(void) {}
 
 // =============================================================================
-// LocalDisplayBinding identity / schema / caps
-// =============================================================================
-
-static void test_local_display_identity(void) {
-    LocalDisplayBinding* b = local_display_instance();
-    TEST_ASSERT_NOT_NULL(b);
-    TEST_ASSERT_EQUAL_STRING("local-display", b->id());
-    TEST_ASSERT_NOT_NULL(b->display_name());
-    TEST_ASSERT_EQUAL_INT((int)PluginKind::OutputBinding, (int)b->kind());
-    TEST_ASSERT_EQUAL_INT((int)DeviceClass::Screen, (int)b->device_class());
-    // No properties initially.
-    TEST_ASSERT_EQUAL_size_t(0, b->properties().size);
-}
-
-static void test_local_display_requires_display_capability(void) {
-    LocalDisplayBinding* b = local_display_instance();
-    const auto req = b->required_capabilities();
-    TEST_ASSERT_TRUE(req.has(Capability::Display));
-    // Host (test HAL) has Display + IRTx, so the requirement opens.
-    const auto host = make_capability_mask(Capability::Display, Capability::IRTx);
-    TEST_ASSERT_TRUE(req.subset_of(host));
-    // A host without Display fails the gate.
-    const auto host_no_display = make_capability_mask(Capability::IRTx);
-    TEST_ASSERT_FALSE(req.subset_of(host_no_display));
-}
-
-// Epic 6C Phase B: LocalDisplayBinding can pulse, wash, and overlay -
-// the LCD is a stateful render surface that paints whatever it's last
-// told to paint. The dispatch layer reads these flags to decide whether
-// WASH-family messages reach this binding.
-static void test_local_display_capabilities_full(void) {
-    LocalDisplayBinding* b = local_display_instance();
-    const auto caps = b->capabilities();
-    TEST_ASSERT_TRUE(caps.can_pulse);
-    TEST_ASSERT_TRUE(caps.can_wash);
-    TEST_ASSERT_TRUE(caps.can_overlay);
-}
-
-// =============================================================================
 // PixMobIrBinding identity / schema / caps
 // =============================================================================
 
@@ -247,17 +208,15 @@ static void test_pixmob_ir_requires_irtx_capability(void) {
     TEST_ASSERT_FALSE(req.subset_of(host_no_ir));
 }
 
-// Epic 6C Phase B: PixMob bracelets are fire-and-forget IR pulses with
-// no state between commands - pulse-only, no wash, no overlay. The
-// dispatch layer reads these flags to silently drop WASH-family
-// messages on this binding (i.e. no IR frame is built or transmitted
-// for a LIGHT_WASH inbound on a PixMob target).
-static void test_pixmob_ir_capabilities_pulse_only(void) {
+// Epic 11 update: PixMobIrBinding now handles the wash family natively
+// (native PixMob wash via the DAL capability path). All three caps are
+// true; the dispatch layer routes the full wash-family to this binding.
+static void test_pixmob_ir_capabilities_full(void) {
     PixMobIrBinding* b = pixmob_ir_instance();
     const auto caps = b->capabilities();
-    TEST_ASSERT_TRUE (caps.can_pulse);
-    TEST_ASSERT_FALSE(caps.can_wash);
-    TEST_ASSERT_FALSE(caps.can_overlay);
+    TEST_ASSERT_TRUE(caps.can_pulse);
+    TEST_ASSERT_TRUE(caps.can_wash);
+    TEST_ASSERT_TRUE(caps.can_overlay);
 }
 
 // =============================================================================
@@ -269,27 +228,6 @@ static void test_pixmob_ir_default_power(void) {
     auto p = b->power();
     // Default profile - event-driven, ticks off.
     TEST_ASSERT_EQUAL_UINT16(0, p.tick_hz);
-}
-
-// =============================================================================
-// LocalDisplayBinding::on_light_pulse fires render_fx("local", ev)
-// =============================================================================
-//
-// LocalDriver is registered by DAL::begin() and claims the "local"
-// target. We measure the fire by reading DAL::driver_send_count("local")
-// delta before and after - the same technique test_beat_pulse uses.
-
-static void test_local_display_fires_local(void) {
-    LocalDisplayBinding*  b   = local_display_instance();
-    OutputBindingContext& ctx = local_display_context();
-
-    const uint32_t before = dal::DAL::driver_send_count("local");
-    RgbPulseEvent ev{0x11, 0x22, 0x33,
-                     pixmob::T_32_MS, pixmob::T_96_MS,
-                     pixmob::T_192_MS, pixmob::CHANCE_100};
-    b->on_light_pulse(ctx, ev);
-
-    TEST_ASSERT_EQUAL_UINT32(before + 1, dal::DAL::driver_send_count("local"));
 }
 
 // =============================================================================
@@ -361,33 +299,72 @@ static void test_pixmob_ir_target_group_over_31_falls_back_to_all(void) {
 }
 
 // =============================================================================
+// Epic 13: LumeTextBinding identity / schema / caps
+// =============================================================================
+
+static void test_lume_text_identity(void) {
+    LumeTextBinding* b = lume_text_instance();
+    TEST_ASSERT_NOT_NULL(b);
+    TEST_ASSERT_EQUAL_STRING("lume-text", b->id());
+    TEST_ASSERT_NOT_NULL(b->display_name());
+    TEST_ASSERT_EQUAL_INT((int)PluginKind::OutputBinding, (int)b->kind());
+    // Epic 13 introduces DeviceClass::Display - separate addressing axis
+    // from Light. Strips + PixMobs stay on Light; screens go to Display.
+    TEST_ASSERT_EQUAL_INT((int)DeviceClass::Display, (int)b->device_class());
+    TEST_ASSERT_EQUAL_size_t(0, b->properties().size);
+}
+
+static void test_lume_text_requires_display_text_capability(void) {
+    LumeTextBinding* b = lume_text_instance();
+    const auto req = b->required_capabilities();
+    TEST_ASSERT_TRUE(req.has(Capability::DisplayText));
+    // Host (test HAL) only has Display + IRTx, NOT DisplayText - so the
+    // requirement is NOT satisfied. That's correct: a Stick declares
+    // DisplayText explicitly via its HAL backend, the test HAL doesn't
+    // (yet). This is the gate that keeps the binding from activating
+    // on hosts without text rendering support.
+    const auto host_display_only = make_capability_mask(Capability::Display, Capability::IRTx);
+    TEST_ASSERT_FALSE(req.subset_of(host_display_only));
+    // Adding DisplayText opens the gate.
+    const auto host_with_text = make_capability_mask(Capability::Display,
+                                                     Capability::IRTx,
+                                                     Capability::DisplayText);
+    TEST_ASSERT_TRUE(req.subset_of(host_with_text));
+}
+
+// LumeTextBinding's wash-family capabilities are all false - it
+// renders text, not lighting. The dispatch layer reads can_wash etc.
+// for the LIGHT_WASH family fan-out; the text + clearscreen hooks
+// route through device_class() == Display instead.
+static void test_lume_text_wash_caps_all_false(void) {
+    LumeTextBinding* b = lume_text_instance();
+    const auto caps = b->capabilities();
+    TEST_ASSERT_FALSE(caps.can_pulse);
+    TEST_ASSERT_FALSE(caps.can_wash);
+    TEST_ASSERT_FALSE(caps.can_overlay);
+}
+
+static void test_lume_text_is_not_relay(void) {
+    TEST_ASSERT_FALSE(lume_text_instance()->is_relay());
+}
+
+// =============================================================================
 // Singleton registration via the registry.
 // =============================================================================
 
-static void test_registry_register_both(void) {
+static void test_registry_register_pixmob(void) {
     auto& reg = output_binding_registry();
-    TEST_ASSERT_TRUE(reg.register_plugin(local_display_instance()));
     TEST_ASSERT_TRUE(reg.register_plugin(pixmob_ir_instance()));
-    TEST_ASSERT_EQUAL_size_t(2, reg.count());
-    TEST_ASSERT_EQUAL_PTR(local_display_instance(),
-                           reg.find("local-display"));
+    TEST_ASSERT_EQUAL_size_t(1, reg.count());
     TEST_ASSERT_EQUAL_PTR(pixmob_ir_instance(),
                            reg.find("pixmob-ir"));
 }
 
-// =============================================================================
-// Fan-out: both bindings registered and entered, a single on_light_pulse
-// per binding fires both transport surfaces with the SAME byte-identical
-// RgbPulseEvent. This is the LumeMode shell's primary behaviour
-// (preserved byte-for-byte from the pre-Block-9 render_light() path).
-// =============================================================================
-
 // Epic 4.65 Block 5: relay flag distinguishes pass-through bindings
-// (PixMobIr) from local bindings (LocalDisplay). The LumeMode filter
-// uses this to decide whether to apply the slv_group check.
+// (PixMobIr) from local bindings. The LumeMode filter uses this to
+// decide whether to apply the slv_group check.
 static void test_is_relay_flag(void) {
-    TEST_ASSERT_FALSE(local_display_instance()->is_relay());
-    TEST_ASSERT_TRUE (pixmob_ir_instance()->is_relay());
+    TEST_ASSERT_TRUE(pixmob_ir_instance()->is_relay());
 }
 
 // Epic 4.65 Block 5: PixMobIrBinding takes its IR group code from the
@@ -421,58 +398,6 @@ static void test_slv_group_nvs_round_trip(void) {
     TEST_ASSERT_EQUAL_UINT8(7, nocturnation::modes::persistence::load_lume_group());
     nocturnation::modes::persistence::save_lume_group(0);
     TEST_ASSERT_EQUAL_UINT8(0, nocturnation::modes::persistence::load_lume_group());
-}
-
-static void test_fan_out_both_bindings_fire_with_same_event(void) {
-    auto& reg = output_binding_registry();
-    reg.register_plugin(local_display_instance());
-    reg.register_plugin(pixmob_ir_instance());
-
-    // Set inbound target_group=3 so the relay path lands at "group-3"
-    // (group_id=3 on the ir-pixmob transport).
-    pixmob_ir_context().set_current_target(0x01, 3);
-
-    const uint32_t local_before = dal::DAL::driver_send_count("local");
-
-    RgbPulseEvent ev{0x42, 0x84, 0xC6,
-                     pixmob::T_32_MS, pixmob::T_96_MS,
-                     pixmob::T_96_MS, pixmob::CHANCE_100};
-
-    // Manual fan-out using the same ev for both - this mirrors what
-    // LumeMode::fan_out_light_pulse does over the active_bindings_
-    // list.
-    local_display_instance()->on_light_pulse(local_display_context(), ev);
-    pixmob_ir_instance()->on_light_pulse(pixmob_ir_context(),       ev);
-
-    // Local target fired once.
-    TEST_ASSERT_EQUAL_UINT32(local_before + 1, dal::DAL::driver_send_count("local"));
-    // IR target fired once at group 3 with the same byte-identical
-    // event (r/g/b + envelope).
-    TEST_ASSERT_EQUAL_INT(1, g_ir_driver.rgb_pulse_count());
-    TEST_ASSERT_EQUAL_UINT8(3, g_ir_driver.last_group_id());
-    auto last = g_ir_driver.last_rgb_pulse();
-    TEST_ASSERT_EQUAL_UINT8(0x42, last.r);
-    TEST_ASSERT_EQUAL_UINT8(0x84, last.g);
-    TEST_ASSERT_EQUAL_UINT8(0xC6, last.b);
-    TEST_ASSERT_EQUAL_INT((int)pixmob::T_32_MS, (int)last.attack);
-    TEST_ASSERT_EQUAL_INT((int)pixmob::T_96_MS, (int)last.sustain);
-    TEST_ASSERT_EQUAL_INT((int)pixmob::T_96_MS, (int)last.release);
-    TEST_ASSERT_EQUAL_INT((int)pixmob::CHANCE_100, (int)last.chance);
-}
-
-// =============================================================================
-// Selective registration: skipping a binding means only the registered
-// one fires. Covers the "operator disabled this binding" path.
-// =============================================================================
-
-static void test_only_local_registered_skips_pixmob(void) {
-    auto& reg = output_binding_registry();
-    reg.register_plugin(local_display_instance());
-    // PixMobIrBinding deliberately NOT registered.
-
-    TEST_ASSERT_EQUAL_size_t(1, reg.count());
-    TEST_ASSERT_NULL(reg.find("pixmob-ir"));
-    TEST_ASSERT_NOT_NULL(reg.find("local-display"));
 }
 
 // =============================================================================
@@ -960,24 +885,22 @@ static void test_stop_broadcast_mid_listening_cleans_up(void) {
 
 int main(int, char**) {
     UNITY_BEGIN();
-    RUN_TEST(test_local_display_identity);
-    RUN_TEST(test_local_display_requires_display_capability);
-    RUN_TEST(test_local_display_capabilities_full);
     RUN_TEST(test_pixmob_ir_identity);
     RUN_TEST(test_pixmob_ir_has_no_properties);
     RUN_TEST(test_pixmob_ir_requires_irtx_capability);
-    RUN_TEST(test_pixmob_ir_capabilities_pulse_only);
+    RUN_TEST(test_pixmob_ir_capabilities_full);
     RUN_TEST(test_pixmob_ir_default_power);
-    RUN_TEST(test_local_display_fires_local);
     RUN_TEST(test_pixmob_ir_target_group_zero_fires_all_pixmobs);
     RUN_TEST(test_pixmob_ir_target_group_n_fires_group_n);
     RUN_TEST(test_pixmob_ir_target_group_over_31_falls_back_to_all);
-    RUN_TEST(test_registry_register_both);
+    RUN_TEST(test_registry_register_pixmob);
     RUN_TEST(test_is_relay_flag);
+    RUN_TEST(test_lume_text_identity);
+    RUN_TEST(test_lume_text_requires_display_text_capability);
+    RUN_TEST(test_lume_text_wash_caps_all_false);
+    RUN_TEST(test_lume_text_is_not_relay);
     RUN_TEST(test_pixmob_ir_uses_current_target_group);
     RUN_TEST(test_slv_group_nvs_round_trip);
-    RUN_TEST(test_fan_out_both_bindings_fire_with_same_event);
-    RUN_TEST(test_only_local_registered_skips_pixmob);
     RUN_TEST(test_migration_consumes_legacy_key);
     RUN_TEST(test_migration_no_op_when_legacy_absent);
     RUN_TEST(test_first_boot_assigns_random_group);

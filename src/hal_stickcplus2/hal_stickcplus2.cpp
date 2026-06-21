@@ -78,6 +78,13 @@ static constexpr Capability kCapabilities[] = {
     // a dead pin). A future Config "LED Strip -> Enable" toggle can
     // gate the driver at runtime once that wiring lands.
     Capability::LedStrip,
+
+    // Epic 13: the Stick's LCD can render orchestrator-pushed text
+    // and bitmap content. Both surfaces share the same M5Unified
+    // framebuffer; the LumeTextBinding + LumeBitmapBinding compose
+    // text on top of bitmap as their layering policy.
+    Capability::DisplayText,
+    Capability::DisplayBitmap,
 };
 static constexpr size_t kCapabilityCount =
     sizeof(kCapabilities) / sizeof(kCapabilities[0]);

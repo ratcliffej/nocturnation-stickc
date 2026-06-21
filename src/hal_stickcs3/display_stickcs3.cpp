@@ -78,6 +78,13 @@ void DisplayStickCS3::draw_text(int x, int y, const char* text) {
     }
 }
 
+void DisplayStickCS3::set_text_wrap(bool wrap_x, bool wrap_y) {
+    M5.Display.setTextWrap(wrap_x, wrap_y);
+    if (buffered_) {
+        buffer_sprite_.setTextWrap(wrap_x, wrap_y);
+    }
+}
+
 void DisplayStickCS3::flush() {
     // No-op: direct backend, no buffering. Buffered paint sessions push
     // explicitly via end_buffered_paint().

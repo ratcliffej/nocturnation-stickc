@@ -119,6 +119,29 @@ public:
     virtual void on_light_wash_pulse(OutputBindingContext&,
                                       const dal::RgbPulseEvent&) {}
 
+    // Display family hooks (Epic 13). Dispatched only on bindings whose
+    // device_class() is DeviceClass::Display (orthogonal to the wash
+    // family, which targets Light / MultiLedScreen). Bindings that don't
+    // care leave the defaults as no-ops. See [[epic-13-lume-display-content]]
+    // for the per-payload semantic contract.
+    //
+    //   on_text_display - render a header/body string set onto the bound
+    //                      surface, optionally TTL-bounded.
+    //   on_bitmap_header - prepare to receive a multi-plane bitmap; stage
+    //                       dimensions + colours + checksum. Render only
+    //                       after all planes arrive and the checksum matches.
+    //   on_bitmap_plane  - chunk of one plane's pixel bytes. Appends into
+    //                       the staging buffer at byte_offset.
+    //   on_clear_screen  - clear the text and/or bitmap layer on this surface.
+    virtual void on_text_display(OutputBindingContext&,
+                                  const transport::espnow::TextDisplayPayload&) {}
+    virtual void on_bitmap_header(OutputBindingContext&,
+                                   const transport::espnow::BitmapHeaderPayload&) {}
+    virtual void on_bitmap_plane(OutputBindingContext&,
+                                  const transport::espnow::BitmapPlanePayload&) {}
+    virtual void on_clear_screen(OutputBindingContext&,
+                                  const transport::espnow::ClearScreenPayload&) {}
+
     // Optional: bindings that need to react to user input (e.g. a
     // diagnostic test-fire button). Default no-op.
     virtual void on_input_action(OutputBindingContext&,
