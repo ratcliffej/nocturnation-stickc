@@ -455,6 +455,14 @@ public:
     // for ~30 us per pixel on SK6812/WS2812 (RMT-driven). Callers
     // should batch set_pixel writes and call show() once per frame.
     virtual void show() = 0;
+
+    // Resize the underlying pixel buffer at runtime (Epic 12 follow-on
+    // for chained strips). Default no-op for backends that don't
+    // support dynamic length. Backends that wrap Adafruit_NeoPixel
+    // forward to NeoPixel::updateLength() so show() time scales with
+    // the actual configured length, not the max. Clamps to whatever
+    // ceiling the backend was constructed with.
+    virtual void set_pixel_count(size_t /*n*/) {}
 };
 
 // =============================================================================

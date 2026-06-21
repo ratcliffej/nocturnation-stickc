@@ -75,12 +75,16 @@ void LumeMode::enter() {
     lume_group_           = persistence::load_lume_group();
     quality_.reset();
 
-    // Apply persisted LED-strip brightness to the driver. Cheap no-op
-    // on hosts without a strip (the driver still stores the value
-    // even if no strip is wired).
+    // Apply persisted LED-strip settings to the driver. Cheap no-op
+    // on hosts without a strip (the driver still stores the values
+    // even if no strip is wired). The driver's enabled() flag is
+    // toggled via DAL so the rest of the dispatch path sees it.
     if (hal::HAL::led_strip() != nullptr) {
-        led_strip_driver_instance()->set_brightness_percent(
-            persistence::load_strip_brightness());
+        auto* strip_drv = led_strip_driver_instance();
+        strip_drv->set_brightness_percent(persistence::load_strip_brightness());
+        strip_drv->set_group_size(persistence::load_strip_group_size());
+        strip_drv->set_pixel_count(persistence::load_strip_chain_size());
+        DAL::set_driver_enabled("led-strip", persistence::load_strip_enabled());
     }
 
     // Auto-scan starts on channel 11 (show priority) per spec §4.5.

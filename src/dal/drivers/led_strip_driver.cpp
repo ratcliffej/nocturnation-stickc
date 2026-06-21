@@ -86,6 +86,24 @@ void LedStripDriver::set_brightness_percent(uint8_t pct) {
     brightness_pct_ = pct;
 }
 
+void LedStripDriver::set_group_size(uint16_t n) {
+    if (n == 0) n = 1;
+    group_size_ = n;
+}
+
+void LedStripDriver::set_pixel_count(size_t n) {
+    auto* strip = active_strip();
+    if (!strip) return;
+    strip->set_pixel_count(n);
+    // Any in-flight per-pixel envelopes past the new count become
+    // invisible (the render loop only walks up to pixel_count()) but
+    // we clear them defensively so a future resize doesn't surface
+    // a half-finished envelope on a pixel that wasn't being driven.
+    for (size_t i = n; i < kMaxPixels; ++i) {
+        pixel_pulse_started_[i] = 0;
+    }
+}
+
 LedStrip* LedStripDriver::active_strip() const {
     return strip_override_ ? strip_override_ : hal::HAL::led_strip();
 }
@@ -211,16 +229,22 @@ bool LedStripDriver::send(uint8_t /*group_id*/, const RgbPulseEvent& ev) {
         current_pulse_.sustain_ms = 192;
     }
 
-    // Per-pixel CHANCE roll. Each pixel is its own "bracelet" - a
-    // pulse with CHANCE_50 hits ~half the pixels; CHANCE_16 hits
-    // ~17 %. CHANCE_100 hits every pixel and effectively flashes
-    // the whole strip together.
-    const uint8_t chance_pct = chance_to_percent(static_cast<uint8_t>(ev.chance));
-    const uint32_t now       = now_ms();
-    const size_t   walk      = (pcount < kMaxPixels) ? pcount : kMaxPixels;
-    for (size_t i = 0; i < walk; ++i) {
-        if ((next_random() % 100) < chance_pct) {
-            pixel_pulse_started_[i] = now ? now : 1;   // 0 reserved as inactive sentinel
+    // Per-group CHANCE roll. Each group of group_size_ consecutive
+    // pixels shares one roll - all pixels in that group light or all
+    // stay dark per pulse. group_size_ = 1 means per-pixel rolls
+    // (Phase 1 behaviour). A partial group at the strip's tail
+    // shares a roll too.
+    const uint8_t  chance_pct = chance_to_percent(static_cast<uint8_t>(ev.chance));
+    const uint32_t now        = now_ms();
+    const size_t   walk       = (pcount < kMaxPixels) ? pcount : kMaxPixels;
+    const size_t   group      = (group_size_ == 0) ? 1u : group_size_;
+    for (size_t i = 0; i < walk; i += group) {
+        const bool hit = (next_random() % 100) < chance_pct;
+        if (!hit) continue;
+        const size_t end = (i + group < walk) ? (i + group) : walk;
+        const uint32_t stamp = now ? now : 1;     // 0 reserved as inactive sentinel
+        for (size_t p = i; p < end; ++p) {
+            pixel_pulse_started_[p] = stamp;
         }
     }
     return true;

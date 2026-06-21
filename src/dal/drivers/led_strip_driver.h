@@ -103,9 +103,10 @@ public:
     }
 
     // Bench seams visible for test. kMaxPixels caps the per-pixel
-    // envelope-state buffer. Larger strips (>64 pixels) would need
-    // this bumped; nothing in Phase 1 hardware exceeds 30 pixels.
-    static constexpr size_t kMaxPixels = 64;
+    // envelope-state buffer. Operator can configure chain length up
+    // to 288 pixels (2 m strip) via Config > LED Strip > Chain Size,
+    // so the per-pixel envelope state needs that headroom too.
+    static constexpr size_t kMaxPixels = 288;
 
     // -------------------------------------------------------------------------
     // Pixel 0 overlay (Epic 12 B5)
@@ -141,6 +142,27 @@ public:
     // (cycles 100 / 50 / 25 / 10), persisted via NVS strip_bri.
     void set_brightness_percent(uint8_t pct);
     uint8_t brightness_percent() const { return brightness_pct_; }
+
+    // -------------------------------------------------------------------------
+    // Group size (Epic 12 follow-on, Config > LED Strip > Group Size)
+    // -------------------------------------------------------------------------
+    //
+    // CHANCE rolls run per group of N pixels instead of per pixel.
+    // group_size = 1 (default constructor value)  -> every pixel
+    // rolls its own die (the original Phase 1 behaviour). group_size
+    // = 12 -> 12 pixels share a roll and flash together (matches the
+    // Tildagon perimeter ring's behaviour, applied to a strip). A
+    // partial group at the strip's tail rolls together too.
+    //
+    // Only affects LIGHT_PULSE / LIGHT_WASH_PULSE rolls; wash baseline
+    // is uniform across all pixels regardless of group size.
+    void set_group_size(uint16_t n);
+    uint16_t group_size() const { return group_size_; }
+
+    // Resize the underlying HAL strip. Forwards to HAL::LedStrip::
+    // set_pixel_count which (for Adafruit_NeoPixel-backed backends)
+    // reallocates the buffer so show() only walks the configured count.
+    void set_pixel_count(size_t n);
 
 private:
     // Most-recent pulse colour + envelope, shared across all pixels
@@ -181,6 +203,9 @@ private:
     // the persisted value via persistence::load_strip_brightness() and
     // applies it on enter().
     uint8_t brightness_pct_ = 100;
+
+    // Group size for CHANCE rolls. 1 = per-pixel (original Phase 1).
+    uint16_t group_size_ = 1;
 
     // Active strip - the override (test) or HAL::led_strip() (production).
     hal::LedStrip* active_strip() const;

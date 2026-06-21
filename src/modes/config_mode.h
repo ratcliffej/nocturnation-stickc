@@ -177,14 +177,17 @@ private:
     };
     static constexpr size_t kDmxItemCount = sizeof(kDmxItems) / sizeof(kDmxItems[0]);
 
-    // LED Strip submenu items. Brightness is live (Btn1 cycles the
-    // value in handle_led_strip). Enable / Group size / Repeat are
-    // label-only for now; future B4-live wires them.
+    // LED Strip submenu items - all live. Btn1 toggles / cycles the
+    // selected value through the table below in handle_led_strip:
+    //   Enable      -> ON / OFF
+    //   Brightness  -> 100 / 10 / 1 %
+    //   Group size  -> 6 / 12 / 24 pixels-per-CHANCE-roll
+    //   Chain size  -> 10 cm (15) / 20 cm (29) / 50 cm (72) / 1 m (144) / 2 m (288)
     enum class LedStripItem : uint8_t {
         Enable = 0,
         Brightness,
         GroupSize,
-        Repeat,
+        ChainSize,
     };
     static constexpr size_t kLedStripItemCount = 4;
 

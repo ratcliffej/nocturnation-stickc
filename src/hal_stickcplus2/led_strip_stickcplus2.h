@@ -28,19 +28,22 @@ namespace hal {
 class LedStripStickCplus2 : public LedStrip {
 public:
     // GPIO 32 = M5Stack's canonical SK6812 pin on the StickC family.
-    static constexpr uint8_t kGrovePin = 32;
-    static constexpr size_t  kGroveStripPixelCount = 29;
+    static constexpr uint8_t kGrovePin            = 32;
+    static constexpr size_t  kGroveStripMaxPixels  = 288;    // 2 m strip
+    static constexpr size_t  kGroveStripPixelCount = 29;     // default
 
     void begin() override;
     size_t pixel_count() const override;
     void set_pixel(size_t index, uint8_t r, uint8_t g, uint8_t b) override;
     void clear() override;
     void show() override;
+    void set_pixel_count(size_t n) override;
 
 private:
 #ifdef ARDUINO
-    Adafruit_NeoPixel grove_{kGroveStripPixelCount, kGrovePin, NEO_GRB + NEO_KHZ800};
+    Adafruit_NeoPixel grove_{kGroveStripMaxPixels, kGrovePin, NEO_GRB + NEO_KHZ800};
 #endif
+    size_t grove_count_ = kGroveStripPixelCount;
     bool begun_ = false;
 };
 

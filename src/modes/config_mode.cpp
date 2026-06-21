@@ -1213,10 +1213,60 @@ uint8_t cycle_strip_brightness(uint8_t current_pct) {
             return kStripBrightnessLevels[(i + 1) % kStripBrightnessLevelCount];
         }
     }
-    // current_pct isn't in the table (e.g. legacy NVS value, or a
-    // fresh boot with default 10 that happens to be in-table - or any
-    // operator-typed value). Snap to the first level.
     return kStripBrightnessLevels[0];
+}
+
+// Group sizes the operator can pick from. 6 / 12 (Tildagon-ring) / 24.
+// The Phase 1 "every pixel rolls its own die" mode (group_size = 1)
+// is omitted from the cycle - the operator can still get it by
+// writing 1 directly to NVS, but the menu offers the three useful
+// chunkiness levels.
+constexpr uint8_t kStripGroupSizes[] = { 6, 12, 24 };
+constexpr size_t  kStripGroupSizeCount =
+    sizeof(kStripGroupSizes) / sizeof(kStripGroupSizes[0]);
+
+uint8_t cycle_strip_group_size(uint8_t current) {
+    for (size_t i = 0; i < kStripGroupSizeCount; ++i) {
+        if (kStripGroupSizes[i] == current) {
+            return kStripGroupSizes[(i + 1) % kStripGroupSizeCount];
+        }
+    }
+    return kStripGroupSizes[0];
+}
+
+// Chain sizes match the M5Stack shop SKUs. Showing the physical
+// length is the operator-friendly label (counting LEDs on a 1 m
+// strip is a poor UX); the pixel count tags along in brackets.
+struct ChainSize {
+    uint16_t    pixels;
+    const char* label;     // e.g. "1 m (144)"
+};
+constexpr ChainSize kStripChainSizes[] = {
+    { 15,  "10cm (15)"  },
+    { 29,  "20cm (29)"  },
+    { 72,  "50cm (72)"  },
+    { 144, "1m (144)"   },
+    { 288, "2m (288)"   },
+};
+constexpr size_t kStripChainSizeCount =
+    sizeof(kStripChainSizes) / sizeof(kStripChainSizes[0]);
+
+uint16_t cycle_strip_chain_size(uint16_t current) {
+    for (size_t i = 0; i < kStripChainSizeCount; ++i) {
+        if (kStripChainSizes[i].pixels == current) {
+            return kStripChainSizes[(i + 1) % kStripChainSizeCount].pixels;
+        }
+    }
+    return kStripChainSizes[0].pixels;
+}
+
+const char* strip_chain_size_label(uint16_t pixels) {
+    for (size_t i = 0; i < kStripChainSizeCount; ++i) {
+        if (kStripChainSizes[i].pixels == pixels) {
+            return kStripChainSizes[i].label;
+        }
+    }
+    return "?";
 }
 }  // namespace
 
@@ -1228,6 +1278,12 @@ void ConfigMode::handle_led_strip(const ButtonPressEvent& ev) {
     }
     if (ev.id == ButtonId::Btn1) {
         switch (static_cast<LedStripItem>(sub_selected_)) {
+            case LedStripItem::Enable: {
+                const bool next = !persistence::load_strip_enabled();
+                persistence::save_strip_enabled(next);
+                DAL::set_driver_enabled("led-strip", next);
+                break;
+            }
             case LedStripItem::Brightness: {
                 const uint8_t current = persistence::load_strip_brightness();
                 const uint8_t next    = cycle_strip_brightness(current);
@@ -1235,11 +1291,20 @@ void ConfigMode::handle_led_strip(const ButtonPressEvent& ev) {
                 dal::led_strip_driver_instance()->set_brightness_percent(next);
                 break;
             }
-            case LedStripItem::Enable:
-            case LedStripItem::GroupSize:
-            case LedStripItem::Repeat:
-                // Reserved labels - no Btn1 action yet.
+            case LedStripItem::GroupSize: {
+                const uint8_t current = persistence::load_strip_group_size();
+                const uint8_t next    = cycle_strip_group_size(current);
+                persistence::save_strip_group_size(next);
+                dal::led_strip_driver_instance()->set_group_size(next);
                 break;
+            }
+            case LedStripItem::ChainSize: {
+                const uint16_t current = persistence::load_strip_chain_size();
+                const uint16_t next    = cycle_strip_chain_size(current);
+                persistence::save_strip_chain_size(next);
+                dal::led_strip_driver_instance()->set_pixel_count(next);
+                break;
+            }
         }
         draw();
     }
@@ -1250,16 +1315,17 @@ void ConfigMode::draw_led_strip() {
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         10, 5, "LED Strip", WHITE, BLACK, 2});
 
-    char bri[28];
+    char ena[28], bri[28], grp[28], chn[28];
+    std::snprintf(ena, sizeof(ena), "Enable: %s",
+                  persistence::load_strip_enabled() ? "ON" : "OFF");
     std::snprintf(bri, sizeof(bri), "Brightness: %u%%",
                   (unsigned)persistence::load_strip_brightness());
+    std::snprintf(grp, sizeof(grp), "Group size: %u",
+                  (unsigned)persistence::load_strip_group_size());
+    std::snprintf(chn, sizeof(chn), "Chain: %s",
+                  strip_chain_size_label(persistence::load_strip_chain_size()));
 
-    const char* lines[kLedStripItemCount] = {
-        "Enable",        // reserved
-        bri,             // live
-        "Group size",    // reserved
-        "Repeat",        // reserved
-    };
+    const char* lines[kLedStripItemCount] = { ena, bri, grp, chn };
     for (size_t i = 0; i < kLedStripItemCount; ++i) {
         const bool sel = (i == sub_selected_);
         char buf[40];

@@ -106,6 +106,28 @@ uint8_t          load_strip_brightness();
 void             save_strip_brightness(uint8_t pct);
 constexpr uint8_t kDefaultStripBrightness = 10;
 
+// Per-strip render gate (Config > LED Strip > Enable). When false,
+// LumeMode disables the led-strip driver so no pixel writes hit the
+// hardware. Persisted as `strip_en` (uchar 0/1).
+bool             load_strip_enabled();
+void             save_strip_enabled(bool e);
+
+// Physical chain length the operator has plugged in (Config > LED
+// Strip > Chain Size). Drives HAL::LedStrip::set_pixel_count() so a
+// chained 144-pixel run actually walks all pixels (the HAL backend
+// allocates buffer space at construction-time max and updateLength
+// resizes at runtime). Persisted as `strip_cnt` (ushort).
+uint16_t         load_strip_chain_size();
+void             save_strip_chain_size(uint16_t n);
+constexpr uint16_t kDefaultStripChainSize = 29;     // 20 cm strip out-of-box
+
+// Visual group size (Config > LED Strip > Group Size). Pixels within
+// a group share one CHANCE roll per pulse. Default 12 matches the
+// Tildagon perimeter ring's chunkiness. Persisted as `strip_grp` (uchar).
+uint8_t          load_strip_group_size();
+void             save_strip_group_size(uint8_t n);
+constexpr uint8_t kDefaultStripGroupSize = 12;
+
 // Director source_id for channel 1 (community range, 0x00-0x3F) per
 // protocol manual §3.4. Stable per device: chosen randomly within the
 // community range on first boot by migrate_legacy_nvs_keys, persisted

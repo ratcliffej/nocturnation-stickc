@@ -198,6 +198,57 @@ void save_strip_brightness(uint8_t pct) {
     prefs.end();
 }
 
+bool load_strip_enabled() {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/true);
+    const uint8_t v = prefs.getUChar("strip_en", 1);
+    prefs.end();
+    return v != 0;
+}
+
+void save_strip_enabled(bool e) {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/false);
+    prefs.putUChar("strip_en", e ? 1 : 0);
+    prefs.end();
+}
+
+uint16_t load_strip_chain_size() {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/true);
+    uint16_t n = prefs.getUShort("strip_cnt", kDefaultStripChainSize);
+    prefs.end();
+    if (n == 0)  n = kDefaultStripChainSize;
+    if (n > 288) n = 288;
+    return n;
+}
+
+void save_strip_chain_size(uint16_t n) {
+    if (n == 0)  n = kDefaultStripChainSize;
+    if (n > 288) n = 288;
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/false);
+    prefs.putUShort("strip_cnt", n);
+    prefs.end();
+}
+
+uint8_t load_strip_group_size() {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/true);
+    uint8_t n = prefs.getUChar("strip_grp", kDefaultStripGroupSize);
+    prefs.end();
+    if (n == 0) n = 1;
+    return n;
+}
+
+void save_strip_group_size(uint8_t n) {
+    if (n == 0) n = 1;
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/false);
+    prefs.putUChar("strip_grp", n);
+    prefs.end();
+}
+
 uint8_t load_director_source_id() {
     Preferences prefs;
     prefs.begin("noct", /*readOnly=*/true);
@@ -426,12 +477,28 @@ void             save_lume_group(uint8_t g)              {
 }
 
 namespace {
-uint8_t s_native_strip_brightness = kDefaultStripBrightness;
+uint8_t  s_native_strip_brightness = kDefaultStripBrightness;
+bool     s_native_strip_enabled    = true;
+uint16_t s_native_strip_chain_size = kDefaultStripChainSize;
+uint8_t  s_native_strip_group_size = kDefaultStripGroupSize;
 }  // namespace
 uint8_t          load_strip_brightness()                 { return s_native_strip_brightness; }
 void             save_strip_brightness(uint8_t pct)      {
     if (pct > 100) pct = 100;
     s_native_strip_brightness = pct;
+}
+bool             load_strip_enabled()                    { return s_native_strip_enabled; }
+void             save_strip_enabled(bool e)              { s_native_strip_enabled = e; }
+uint16_t         load_strip_chain_size()                 { return s_native_strip_chain_size; }
+void             save_strip_chain_size(uint16_t n)       {
+    if (n == 0)  n = kDefaultStripChainSize;
+    if (n > 288) n = 288;
+    s_native_strip_chain_size = n;
+}
+uint8_t          load_strip_group_size()                 { return s_native_strip_group_size; }
+void             save_strip_group_size(uint8_t n)        {
+    if (n == 0) n = 1;
+    s_native_strip_group_size = n;
 }
 
 uint8_t load_director_source_id() {

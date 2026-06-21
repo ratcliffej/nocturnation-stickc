@@ -10,14 +10,19 @@ void LedStripAtomLite::begin() {
     grove_.begin();
     onboard_.setBrightness(255);
     grove_.setBrightness(255);
+    // Start at the default count; LumeMode applies the persisted
+    // value via set_pixel_count() on enter().
+    grove_.updateLength(grove_count_);
 #endif
     begun_ = true;
 }
 
-size_t LedStripAtomLite::pixel_count() const { return kTotalPixelCount; }
+size_t LedStripAtomLite::pixel_count() const {
+    return kOnboardPixelCount + grove_count_;
+}
 
 void LedStripAtomLite::set_pixel(size_t index, uint8_t r, uint8_t g, uint8_t b) {
-    if (index >= kTotalPixelCount) return;
+    if (index >= kOnboardPixelCount + grove_count_) return;
 #ifdef ARDUINO
     if (index < kOnboardPixelCount) {
         onboard_.setPixelColor(index, onboard_.Color(r, g, b));
@@ -26,6 +31,20 @@ void LedStripAtomLite::set_pixel(size_t index, uint8_t r, uint8_t g, uint8_t b) 
     }
 #else
     (void)r; (void)g; (void)b;
+#endif
+}
+
+void LedStripAtomLite::set_pixel_count(size_t n) {
+    // Operator-configurable chain size only affects the Grove strip;
+    // the onboard pixel is always exactly one pixel. Clamp to the
+    // construction-time max so updateLength() can't grow past the
+    // initial buffer allocation.
+    if (n < kOnboardPixelCount) n = kOnboardPixelCount;
+    size_t grove_n = n - kOnboardPixelCount;
+    if (grove_n > kGroveStripMaxPixels) grove_n = kGroveStripMaxPixels;
+    grove_count_ = grove_n;
+#ifdef ARDUINO
+    if (begun_) grove_.updateLength(grove_count_);
 #endif
 }
 

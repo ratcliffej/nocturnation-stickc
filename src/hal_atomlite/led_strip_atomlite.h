@@ -46,21 +46,30 @@ public:
     // strips daisy-chained off Grove would update this constant once
     // bench confirms the timing budget.
     static constexpr size_t kOnboardPixelCount    = 1;
-    static constexpr size_t kGroveStripPixelCount = 29;
+    // Max Grove strip length the operator can configure via Config >
+    // LED Strip > Chain Size. The Adafruit_NeoPixel object is sized
+    // here at construction; LedStripDriver::set_pixel_count() resizes
+    // at runtime via updateLength() so show() walks only the
+    // configured count. 288 matches the largest M5Stack flex strip
+    // SKU (2 m).
+    static constexpr size_t kGroveStripMaxPixels   = 288;
+    static constexpr size_t kGroveStripPixelCount  = 29;     // default
     static constexpr size_t kTotalPixelCount =
-        kOnboardPixelCount + kGroveStripPixelCount;
+        kOnboardPixelCount + kGroveStripMaxPixels;
 
     void begin() override;
     size_t pixel_count() const override;
     void set_pixel(size_t index, uint8_t r, uint8_t g, uint8_t b) override;
     void clear() override;
     void show() override;
+    void set_pixel_count(size_t n) override;
 
 private:
 #ifdef ARDUINO
-    Adafruit_NeoPixel onboard_{kOnboardPixelCount,    kOnboardPin, NEO_GRB + NEO_KHZ800};
-    Adafruit_NeoPixel grove_  {kGroveStripPixelCount, kGrovePin,   NEO_GRB + NEO_KHZ800};
+    Adafruit_NeoPixel onboard_{kOnboardPixelCount,     kOnboardPin, NEO_GRB + NEO_KHZ800};
+    Adafruit_NeoPixel grove_  {kGroveStripMaxPixels,   kGrovePin,   NEO_GRB + NEO_KHZ800};
 #endif
+    size_t grove_count_ = kGroveStripPixelCount;
     bool begun_ = false;
 };
 
