@@ -185,12 +185,42 @@ void DmxBridgeMode::loop_tick() {
             // bridge alongside DMX traffic. Gated on frame_count() to
             // fire exactly once per FrameComplete (parser state is
             // sticky across ticks).
+            //
+            // Retransmit: each passthrough frame is broadcast 3x in
+            // rapid succession. ESP-NOW broadcasts are unacknowledged;
+            // single-packet RF loss is the dominant failure mode for
+            // display frames. The wash family uses the broadcast
+            // driver's per-message-type retransmit (spec §4.3); the
+            // passthrough has no such driver, so we inline the same
+            // strategy here. Lumes dedup on (source_id, sequence_number)
+            // so duplicate frames are processed-once on receipt - no
+            // double-render risk. Three sends = single-packet loss
+            // probability cubed, well below the human-perceptible
+            // threshold for missed display events.
             const uint32_t new_count = parser.frame_count();
             if (new_count > last_frame_count_) {
                 if (parser.last_label() == dal::enttec_pro::kLabelEspNowBroadcast) {
+                    const uint8_t* p = parser.last_payload();
+                    const uint16_t n = parser.last_payload_len();
                     if (auto* radio = hal::HAL::esp_now()) {
-                        radio->send_broadcast(parser.last_payload(),
-                                              parser.last_payload_len());
+                        constexpr int kPassthroughRetx = 3;
+                        bool any_ok = false;
+                        for (int i = 0; i < kPassthroughRetx; ++i) {
+                            if (radio->send_broadcast(p, n)) any_ok = true;
+                        }
+#ifdef ARDUINO
+                        // Log the passthrough so bench monitor can
+                        // confirm display frames reached the radio.
+                        // Byte 6 of the inner ESP-NOW frame is the
+                        // MessageType (Epic 13: 0x09=TextDisplay,
+                        // 0x0A=BitmapHeader, 0x0B=BitmapPlane,
+                        // 0x0C=ClearScreen).
+                        Serial.printf("[espnow TX PASS %s msg=%02X len=%u x%d]\n",
+                                      any_ok ? "OK" : "FAIL",
+                                      (unsigned)(n >= 7 ? p[6] : 0xFF),
+                                      (unsigned)n,
+                                      (int)kPassthroughRetx);
+#endif
                     }
                 }
                 last_frame_count_ = new_count;

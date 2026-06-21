@@ -55,6 +55,17 @@ public:
         };
     }
 
+    // Epic 13: handlers update in-RAM state on LedStripDriver
+    // (CHANCE roll + pixel envelope start-time stamps for pulses;
+    // wash anchor RGB + drift phase for wash). No SPI / NeoPixel
+    // bit-bang here - that's deferred to LedStripDriver::render() on
+    // loop_tick. Safe to call from the WiFi receive callback.
+    // CRITICAL: stamping pulse start-time here (vs in the deferred
+    // loop_tick fan-out) eliminates inter-Lume render variance: all
+    // strips anchor to the same broadcast-receipt moment, so
+    // simultaneous sparkles land in unison across the fleet.
+    bool can_render_in_callback() const override { return true; }
+
     // Hooks. Each one forwards to LedStripDriver::send_* - the driver
     // owns the wash state machine and the sparkle slot table. The
     // binding has no per-instance state today.

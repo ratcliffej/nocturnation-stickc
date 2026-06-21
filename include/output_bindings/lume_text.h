@@ -61,6 +61,11 @@ public:
         };
     }
 
+    // Epic 13: handler runs in WiFi-callback context safely - we only
+    // update in-RAM state + flip a dirty flag here; the actual SPI
+    // burst to the LCD happens later in tick() on the main task.
+    bool can_render_in_callback() const override { return true; }
+
     void enter(OutputBindingContext&) override;
     void exit (OutputBindingContext&) override;
 

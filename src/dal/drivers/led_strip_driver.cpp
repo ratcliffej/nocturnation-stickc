@@ -22,6 +22,29 @@ inline uint8_t clip255(int x) {
     return static_cast<uint8_t>(x);
 }
 
+// Apply brightness scaling to a single 8-bit channel. Two fixes over
+// the naive `static_cast<int>(value * mul)`:
+//   1. Round-half-up via `+ 0.5f` so 0.5 becomes 1 rather than the
+//      truncation default of 0. Recovers borderline values - matters
+//      enormously at low brightness where most products fall in the
+//      0.0-1.0 range.
+//   2. Min-1 floor: a non-zero authored channel with non-zero
+//      brightness produces at least 1 on the wire. Without this, an
+//      authored "subtle dim grey" like RGB(2, 5, 10) at brightness
+//      10% renders as pure black on the strip (the operator-visible
+//      colour goes missing). The proper fix for low-brightness
+//      fidelity is temporal / spatial dithering (drives sub-8-bit
+//      effective resolution by varying outputs across frames /
+//      pixels); the min-1 floor is the simplest stopgap that
+//      preserves *which channels are non-zero* even when the
+//      magnitude rounds to 0.
+inline uint8_t scale_channel(uint8_t value, float bri_mul) {
+    if (value == 0 || bri_mul <= 0.0f) return 0;
+    const int scaled = static_cast<int>(value * bri_mul + 0.5f);
+    if (scaled <= 0) return 1;     // min-1 floor for visible authored colour
+    return clip255(scaled);
+}
+
 inline uint8_t lerp_u8(uint8_t a, uint8_t b, float t) {
     if (t <= 0.0f) return a;
     if (t >= 1.0f) return b;
@@ -375,17 +398,17 @@ void LedStripDriver::render_frame() {
             }
         }
         strip->set_pixel(i,
-                          clip255(static_cast<int>(r * bri_mul)),
-                          clip255(static_cast<int>(g * bri_mul)),
-                          clip255(static_cast<int>(b * bri_mul)));
+                          scale_channel(r, bri_mul),
+                          scale_channel(g, bri_mul),
+                          scale_channel(b, bri_mul));
     }
     // Tail of the buffer past kMaxPixels (if the strip is larger than
     // we can track envelopes for): paint baseline only, still scaled.
     for (size_t i = walk; i < pcount; ++i) {
         strip->set_pixel(i,
-                          clip255(static_cast<int>(base_r * bri_mul)),
-                          clip255(static_cast<int>(base_g * bri_mul)),
-                          clip255(static_cast<int>(base_b * bri_mul)));
+                          scale_channel(base_r, bri_mul),
+                          scale_channel(base_g, bri_mul),
+                          scale_channel(base_b, bri_mul));
     }
 
     // Pixel 0 overlay. LumeMode (or any other policy layer) sets the

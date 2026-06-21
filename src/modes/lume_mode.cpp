@@ -112,6 +112,15 @@ void LumeMode::enter() {
     // binding->enter(ctx) on each accepted entry. Post-Epic-12 ships
     // PixMobIrBinding + LumeLedStripBinding; Epic 13 adds text +
     // bitmap. kMaxActiveBindings (4) will need bumping when those land.
+    // Epic 13: PixMob IR relay vs LedStrip mutex. On a host that has
+    // both IRTx + LedStrip and the strip is actually enabled in Config,
+    // skip activating PixMobIrBinding - IRsend::sendRaw is a ~30 ms
+    // cli/sei blocking bit-bang that breaks inter-Lume sparkle unison.
+    // Operator who explicitly wants Stick-as-PixMob-IR-satellite turns
+    // the strip off via Config > LED Strip > Enable; PixMobIrBinding
+    // then activates as normal on the next Lume re-entry.
+    const bool strip_active = hal::HAL::has(hal::Capability::LedStrip)
+                              && persistence::load_strip_enabled();
     active_binding_count_ = 0;
     auto& reg = output_binding_registry();
     for (size_t i = 0; i < reg.count() && active_binding_count_ < kMaxActiveBindings; ++i) {
@@ -120,6 +129,10 @@ void LumeMode::enter() {
         OutputBindingContext* bctx = context_for(b);
         if (!bctx) continue;     // unknown binding; skip until wiring lands
         if (!b->required_capabilities().subset_of(bctx->host_caps())) {
+            continue;
+        }
+        // Strip / IR mutex gate (see comment above the loop).
+        if (b == pixmob_ir_instance() && strip_active) {
             continue;
         }
         bctx->mark_entered(millis());
@@ -422,9 +435,16 @@ void LumeMode::fan_out_light_pulse(const transport::espnow::LightPulsePayload& p
     //          does its own group filtering at the bracelet level. The
     //          relay then reads the inbound target_group from the context
     //          and uses it as the downstream group code.
+    //
+    // Epic 13: bindings that declared can_render_in_callback() == true
+    // were already dispatched inline from on_recv (in WiFi-task
+    // context). Skip them here so they're not fired twice. Only
+    // deferred-render bindings (PixMobIrBinding's blocking IRsend
+    // path) reach this point.
     for (size_t i = 0; i < active_binding_count_; ++i) {
         const auto& slot = active_bindings_[i];
         if (!slot.binding || !slot.ctx) continue;
+        if (slot.binding->can_render_in_callback()) continue;
 
         // Class filter.
         const uint8_t binding_class = static_cast<uint8_t>(slot.binding->device_class());
@@ -436,6 +456,45 @@ void LumeMode::fan_out_light_pulse(const transport::espnow::LightPulsePayload& p
         }
 
         // Thread the inbound addressing through to the binding via ctx.
+        slot.ctx->set_current_target(p.target_class, p.target_group);
+        slot.binding->on_light_pulse(*slot.ctx, ev);
+    }
+}
+
+void LumeMode::fan_out_light_pulse_inline(
+        const transport::espnow::LightPulsePayload& p) {
+    // Mirror of fan_out_light_pulse but ONLY dispatching to bindings
+    // that declared can_render_in_callback() == true. Called from
+    // on_recv (WiFi task) right after decode, so the pulse start-time
+    // each binding stamps lands within microseconds of the broadcast
+    // landing on the radio - same instant on every Lume in the fleet.
+    // Inter-Lume sync improves from "up to one loop_tick of phase
+    // variance" (~50 ms at 20 Hz) to "radio-propagation + IRQ entry"
+    // (~µs). The deferred path (fan_out_light_pulse, called from
+    // loop_tick after pending_light_ flag drain) still handles
+    // can_render_in_callback() == false bindings - notably PixMob's
+    // IRsend, which would crash the WiFi task if invoked here.
+    RgbPulseEvent ev{};
+    ev.r       = p.r;
+    ev.g       = p.g;
+    ev.b       = p.b;
+    ev.attack  = static_cast<pixmob::Time>(p.attack);
+    ev.sustain = static_cast<pixmob::Time>(p.sustain);
+    ev.release = static_cast<pixmob::Time>(p.release);
+    ev.chance  = static_cast<pixmob::Chance>(p.chance);
+
+    for (size_t i = 0; i < active_binding_count_; ++i) {
+        const auto& slot = active_bindings_[i];
+        if (!slot.binding || !slot.ctx) continue;
+        if (!slot.binding->can_render_in_callback()) continue;
+
+        const uint8_t binding_class = static_cast<uint8_t>(slot.binding->device_class());
+        if (p.target_class != 0 && p.target_class != binding_class) continue;
+
+        if (!slot.binding->is_relay()) {
+            if (p.target_group != 0 && p.target_group != lume_group_) continue;
+        }
+
         slot.ctx->set_current_target(p.target_class, p.target_group);
         slot.binding->on_light_pulse(*slot.ctx, ev);
     }
@@ -665,6 +724,20 @@ void LumeMode::on_recv(const hal::ESPNowMessage& m) {
         if (decode_light_pulse(hdr, m.data + kHeaderSize,
                                  m.len - kHeaderSize, p)
             == DecodeResult::Ok) {
+            // Epic 13 sync fix: stamp callback-safe renderers (LED
+            // strip, LCD) IMMEDIATELY in WiFi-task context. All
+            // Lumes anchor their pulse envelope to broadcast-receipt
+            // time, which is ~µs synchronised across the fleet.
+            // Inter-Lume render unison for sparkle-on-beat goes from
+            // up-to-50 ms loop-tick variance to ~µs radio-propagation
+            // variance.
+            fan_out_light_pulse_inline(p);
+
+            // Blocking renderers (PixMobIrBinding → IRsend::sendRaw,
+            // ~30 ms cli/sei GPIO bit-bang) stay on the deferred
+            // path: queue here, drain in loop_tick on the main task.
+            // fan_out_light_pulse() filters out can_render_in_callback
+            // bindings so they aren't double-fired.
             pending_light_payload_ = p;
             pending_light_ = true;
         }

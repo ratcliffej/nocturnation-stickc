@@ -158,6 +158,29 @@ public:
     // binding can hold a wash" and a wash will be silently lost.
     // See BindingCapabilities above for the vocabulary.
     virtual BindingCapabilities capabilities() const = 0;
+
+    // Epic 13: dispatch context safety flag. True means the binding's
+    // on_light_pulse / on_*_wash* / on_text_display / on_bitmap_* /
+    // on_clear_screen handlers are SAFE to call from the WiFi receive
+    // callback (the ESP-NOW recv task on ESP32). The Lume-side
+    // dispatch fast-paths capable bindings: a LIGHT_PULSE renders to
+    // an LED strip pixel envelope within microseconds of the broadcast
+    // landing instead of waiting up to one loop_tick (~50 ms) for the
+    // main task to drain a queue. Inter-Lume unison improves
+    // dramatically.
+    //
+    // Default false (safe): bindings whose handlers might block,
+    // toggle GPIOs with interrupts disabled, or touch peripherals
+    // that conflict with the WiFi task (notably IRsend::sendRaw)
+    // stay on the deferred path - LumeMode queues their work and
+    // fires it from loop_tick on the main task.
+    //
+    // Concrete: PixMobIrBinding returns false (IRsend is a ~30 ms
+    // blocking bit-bang loop with cli/sei). LumeLedStripBinding,
+    // LumeTextBinding, and LumeBitmapBinding return true (they only
+    // update in-RAM state in their on_X handler; the actual paint
+    // happens later in their tick()).
+    virtual bool can_render_in_callback() const { return false; }
 };
 
 }  // namespace output_bindings

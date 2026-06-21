@@ -200,6 +200,18 @@ private:
     // LumeLedStripBinding, etc. — each owns one render surface).
     void fan_out_light_pulse(const transport::espnow::LightPulsePayload& p);
 
+    // Epic 13: callback-context fan-out for LIGHT_PULSE. Called from
+    // on_recv (WiFi task) for bindings that declared
+    // can_render_in_callback() == true. Stamping the pulse start-time
+    // in this path (vs the deferred loop_tick path) eliminates
+    // inter-Lume render variance for the sparkle-on-beat sync the
+    // operator's eye keys on. Bindings that block (PixMobIrBinding
+    // → IRsend::sendRaw) keep their declaration as false and are
+    // handled by fan_out_light_pulse() out of the pending queue
+    // instead. The two paths skip each other by checking the flag,
+    // so a given binding is dispatched exactly once per pulse.
+    void fan_out_light_pulse_inline(const transport::espnow::LightPulsePayload& p);
+
     // Epic 13: Display-family fan-out. Filters bindings by
     // device_class() == Display + the local-binding group rule (no
     // target_class on the wire; no relay concept for Display). Each
