@@ -249,6 +249,25 @@ void save_strip_group_size(uint8_t n) {
     prefs.end();
 }
 
+void apply_strip_force_defaults() {
+    if (!kStripForceDefaults) return;
+    constexpr const char* kBuildTag = __DATE__ " " __TIME__;
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/false);
+    char stored[40] = { 0 };
+    prefs.getString("strip_btag", stored, sizeof(stored));
+    if (std::strcmp(stored, kBuildTag) == 0) {
+        prefs.end();
+        return;     // this build's defaults already applied
+    }
+    prefs.putUChar("strip_en",   kDefaultStripEnabled ? 1 : 0);
+    prefs.putUChar("strip_bri",  kDefaultStripBrightness);
+    prefs.putUChar("strip_grp",  kDefaultStripGroupSize);
+    prefs.putUShort("strip_cnt", kDefaultStripChainSize);
+    prefs.putString("strip_btag", kBuildTag);
+    prefs.end();
+}
+
 uint8_t load_director_source_id() {
     Preferences prefs;
     prefs.begin("noct", /*readOnly=*/true);
@@ -499,6 +518,13 @@ uint8_t          load_strip_group_size()                 { return s_native_strip
 void             save_strip_group_size(uint8_t n)        {
     if (n == 0) n = 1;
     s_native_strip_group_size = n;
+}
+void apply_strip_force_defaults()                        {
+    if (!kStripForceDefaults) return;
+    s_native_strip_enabled    = kDefaultStripEnabled;
+    s_native_strip_brightness = kDefaultStripBrightness;
+    s_native_strip_group_size = kDefaultStripGroupSize;
+    s_native_strip_chain_size = kDefaultStripChainSize;
 }
 
 uint8_t load_director_source_id() {

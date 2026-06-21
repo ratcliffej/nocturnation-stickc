@@ -104,7 +104,6 @@ void             save_lume_group(uint8_t g);
 // brightness regardless of device brightness.
 uint8_t          load_strip_brightness();
 void             save_strip_brightness(uint8_t pct);
-constexpr uint8_t kDefaultStripBrightness = 10;
 
 // Per-strip render gate (Config > LED Strip > Enable). When false,
 // LumeMode disables the led-strip driver so no pixel writes hit the
@@ -119,14 +118,67 @@ void             save_strip_enabled(bool e);
 // resizes at runtime). Persisted as `strip_cnt` (ushort).
 uint16_t         load_strip_chain_size();
 void             save_strip_chain_size(uint16_t n);
-constexpr uint16_t kDefaultStripChainSize = 29;     // 20 cm strip out-of-box
 
 // Visual group size (Config > LED Strip > Group Size). Pixels within
 // a group share one CHANCE roll per pulse. Default 12 matches the
 // Tildagon perimeter ring's chunkiness. Persisted as `strip_grp` (uchar).
 uint8_t          load_strip_group_size();
 void             save_strip_group_size(uint8_t n);
-constexpr uint8_t kDefaultStripGroupSize = 12;
+
+// -------------------------------------------------------------------------
+// Compile-time strip defaults (Epic 12 follow-on)
+// -------------------------------------------------------------------------
+//
+// First-boot fallback values for each strip-related NVS key. Per-env
+// overrides land via platformio.ini's build_flags, e.g. an Atom Lite
+// deployed with a 1 m strip baked in:
+//
+//   [env:m5stack-atomlite]
+//   build_flags =
+//     ${env:firmware-base.build_flags}
+//     -DNOCT_DEFAULT_STRIP_CHAIN_SIZE=144
+//
+// On hosts without a Config menu (Atom Lite) the build-time defaults
+// are the only way to configure the strip; on Sticks the operator
+// can still override at runtime via Config > LED Strip.
+//
+// To make a reflash *authoritative* - replacing whatever NVS already
+// holds with the compile-time values - add `-DNOCT_STRIP_FORCE_DEFAULTS=1`
+// to the env. apply_strip_force_defaults() (called at boot) compares
+// the build tag (__DATE__ + __TIME__) against the last-applied tag
+// in NVS and writes the defaults exactly once per fresh build.
+
+#ifndef NOCT_DEFAULT_STRIP_ENABLED
+#define NOCT_DEFAULT_STRIP_ENABLED 1
+#endif
+#ifndef NOCT_DEFAULT_STRIP_BRIGHTNESS
+#define NOCT_DEFAULT_STRIP_BRIGHTNESS 10
+#endif
+#ifndef NOCT_DEFAULT_STRIP_GROUP_SIZE
+#define NOCT_DEFAULT_STRIP_GROUP_SIZE 12
+#endif
+#ifndef NOCT_DEFAULT_STRIP_CHAIN_SIZE
+#define NOCT_DEFAULT_STRIP_CHAIN_SIZE 29
+#endif
+
+constexpr bool     kDefaultStripEnabled    = (NOCT_DEFAULT_STRIP_ENABLED != 0);
+constexpr uint8_t  kDefaultStripBrightness = NOCT_DEFAULT_STRIP_BRIGHTNESS;
+constexpr uint8_t  kDefaultStripGroupSize  = NOCT_DEFAULT_STRIP_GROUP_SIZE;
+constexpr uint16_t kDefaultStripChainSize  = NOCT_DEFAULT_STRIP_CHAIN_SIZE;
+
+#ifdef NOCT_STRIP_FORCE_DEFAULTS
+constexpr bool kStripForceDefaults = (NOCT_STRIP_FORCE_DEFAULTS != 0);
+#else
+constexpr bool kStripForceDefaults = false;
+#endif
+
+// Apply the compile-time strip defaults to NVS on the first boot of
+// each fresh build, IF NOCT_STRIP_FORCE_DEFAULTS is set. Uses
+// __DATE__ + __TIME__ as the per-build tag so every reflash triggers
+// exactly one override. No-op when the flag isn't set, or when the
+// stored tag already matches this build's tag. Called once from
+// ModeMachine::begin() before any load_strip_* consumer reads NVS.
+void apply_strip_force_defaults();
 
 // Director source_id for channel 1 (community range, 0x00-0x3F) per
 // protocol manual §3.4. Stable per device: chosen randomly within the

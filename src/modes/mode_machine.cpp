@@ -161,6 +161,13 @@ void ModeMachine::begin() {
     // populated from the legacy slv_ir_grp key.
     persistence::migrate_legacy_nvs_keys();
 
+    // Apply compile-time strip defaults to NVS on the first boot of
+    // each fresh build, IF NOCT_STRIP_FORCE_DEFAULTS is set in
+    // platformio.ini. No-op when the flag isn't set (Sticks default)
+    // or when this build's tag is already in NVS. See persistence.h
+    // for the override semantics and platformio.ini for per-env values.
+    persistence::apply_strip_force_defaults();
+
     s_active_mode  = nullptr;          // force enter() in enter_mode()
     enter_mode(ModeId::Boot);
 }
