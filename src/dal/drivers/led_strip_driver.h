@@ -148,11 +148,14 @@ public:
     // -------------------------------------------------------------------------
     //
     // CHANCE rolls run per group of N pixels instead of per pixel.
-    // group_size = 1 (default constructor value)  -> every pixel
-    // rolls its own die (the original Phase 1 behaviour). group_size
-    // = 12 -> 12 pixels share a roll and flash together (matches the
-    // Tildagon perimeter ring's behaviour, applied to a strip). A
-    // partial group at the strip's tail rolls together too.
+    // group_size = 1  -> every pixel rolls its own die (matches the
+    //                    Tildagon perimeter ring's per-LED sparkle).
+    // group_size = 12 -> 12 pixels share a roll and flash together
+    //                    (Tildagon-ring-sized block on a long strip).
+    // group_size = pixel_count -> whole strip rolls once (matches the
+    //                    PixMob bracelet's whole-device response to
+    //                    a single CHANCE roll).
+    // A partial group at the strip's tail rolls together too.
     //
     // Only affects LIGHT_PULSE / LIGHT_WASH_PULSE rolls; wash baseline
     // is uniform across all pixels regardless of group size.

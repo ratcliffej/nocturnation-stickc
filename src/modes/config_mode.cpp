@@ -1216,12 +1216,17 @@ uint8_t cycle_strip_brightness(uint8_t current_pct) {
     return kStripBrightnessLevels[0];
 }
 
-// Group sizes the operator can pick from. 6 / 12 (Tildagon-ring) / 24.
-// The Phase 1 "every pixel rolls its own die" mode (group_size = 1)
-// is omitted from the cycle - the operator can still get it by
-// writing 1 directly to NVS, but the menu offers the three useful
-// chunkiness levels.
-constexpr uint8_t kStripGroupSizes[] = { 6, 12, 24 };
+// Group sizes the operator can pick from. 1 / 6 / 12 / 24.
+//   1   - every pixel rolls its own CHANCE die (Tildagon ring-style
+//         fine-grain sparkle: each LED independent, matches the way
+//         a 12-LED perimeter ring responds to a wash_with_sparkle cue)
+//   6   - small chunky groups
+//   12  - Tildagon-ring-sized blocks
+//   24  - large coarse groups (whole-strip-feel at chain >= 144)
+// PixMob bracelets are effectively group_size = pixel_count (the
+// whole bracelet responds as one), but we don't offer that as a
+// preset - chain-size = group-size has the same effect.
+constexpr uint8_t kStripGroupSizes[] = { 1, 6, 12, 24 };
 constexpr size_t  kStripGroupSizeCount =
     sizeof(kStripGroupSizes) / sizeof(kStripGroupSizes[0]);
 
