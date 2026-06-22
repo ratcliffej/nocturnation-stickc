@@ -95,6 +95,39 @@ DmxChannelMapper* DmxBridgeMode::mapper_at(size_t i) {
     }
 }
 
+void DmxBridgeMode::on_parsed_frame(const dal::DmxInputParser& parser) {
+    // Universe frames are deferred to post-poll (last-wins is correct
+    // for "current visible universe state"); only the discrete event
+    // labels need inline dispatch.
+    if (parser.last_was_dmx_packet()) return;
+
+    if (parser.last_label() == dal::enttec_pro::kLabelEspNowBroadcast) {
+        const uint8_t* p = parser.last_payload();
+        const uint16_t n = parser.last_payload_len();
+        if (auto* radio = hal::HAL::esp_now()) {
+            // 3x retransmit per spec §4.3 - ESP-NOW broadcasts are
+            // unacknowledged; cube the single-packet RF-loss rate
+            // and rely on Lume-side dedup (source_id, sequence_number)
+            // to make duplicates a no-op.
+            constexpr int kPassthroughRetx = 3;
+            bool any_ok = false;
+            for (int i = 0; i < kPassthroughRetx; ++i) {
+                if (radio->send_broadcast(p, n)) any_ok = true;
+            }
+#ifdef ARDUINO
+            // Byte 6 of the inner ESP-NOW frame is the MessageType
+            // (0x09=TextDisplay, 0x0A=BitmapHeader, 0x0B=BitmapPlane,
+            // 0x0C=ClearScreen).
+            Serial.printf("[espnow TX PASS %s msg=%02X len=%u x%d]\n",
+                          any_ok ? "OK" : "FAIL",
+                          (unsigned)(n >= 7 ? p[6] : 0xFF),
+                          (unsigned)n,
+                          (int)kPassthroughRetx);
+#endif
+        }
+    }
+}
+
 void DmxBridgeMode::run_mappers(const uint8_t* universe_buf,
                                 uint16_t copied,
                                 uint32_t now) {
@@ -154,76 +187,37 @@ void DmxBridgeMode::exit() {
 void DmxBridgeMode::loop_tick() {
     const uint32_t now = millis();
 
-    // Drain whatever bytes QLC+ has written since the last tick. Each
-    // returned FrameComplete is a fully-parsed Enttec Pro frame.
+    // Drain whatever bytes the orchestrator has written since the last
+    // tick. Two distinct frame types share the wire:
+    //   - label 0x06 DMX universes: every-tick repaint; "last value
+    //     wins" semantically, so it's safe to inspect parser state
+    //     AFTER poll() returns and act on the latest universe only.
+    //   - label 0x10 ESP-NOW passthrough: each frame is a discrete
+    //     event (one display cue per frame); EVERY frame matters.
+    //     Bench bug: when poll() drained a universe + a passthrough +
+    //     another universe in one cycle, the parser's `last_label`
+    //     ended on the trailing universe and the passthrough was
+    //     silently dropped. Deterministic miss for any lyric whose
+    //     emission landed sandwiched between universes (was the root
+    //     cause of "And we are legends every day" always failing -
+    //     scheduler + 50 fps universe cadence produced the same
+    //     interleave on every play). Fix: dispatch passthrough INSIDE
+    //     the byte-drain loop via the new poll() callback, so every
+    //     FrameComplete is acted on individually.
     DmxUsbCdcAdapter* adapter = dmx_adapter_or_null();
     if (adapter != nullptr) {
-        const size_t fresh = adapter->poll();
+        const size_t fresh = adapter->poll(&DmxBridgeMode::on_parsed_frame_thunk, this);
         const bool   have_data =
             (fresh > 0) || (last_frame_seen_ms_ != 0);
         if (fresh > 0) {
             last_frame_seen_ms_ = now;
         }
         if (have_data) {
-            // Pull the latest channel slice from the parser into our
-            // own buffer. parser.last_payload survives across ticks,
-            // so strobe cadence keeps firing on schedule even when no
-            // new frame arrived.
             const DmxInputParser& parser = adapter->parser();
             if (parser.last_was_dmx_packet()) {
                 const uint16_t copied =
                     parser.copy_dmx_channels(universe_, kUniverseBufferSize);
                 run_mappers(universe_, copied, now);
-            }
-
-            // Epic 13: ESP-NOW passthrough label. When a freshly-
-            // completed Enttec frame's label is kLabelEspNowBroadcast,
-            // the payload is a fully-formed NocturNation ESP-NOW frame
-            // (the laptop orchestrator built it client-side with the
-            // same encoders as frame.cpp); forward it verbatim to the
-            // radio so display-content frames can flow through the
-            // bridge alongside DMX traffic. Gated on frame_count() to
-            // fire exactly once per FrameComplete (parser state is
-            // sticky across ticks).
-            //
-            // Retransmit: each passthrough frame is broadcast 3x in
-            // rapid succession. ESP-NOW broadcasts are unacknowledged;
-            // single-packet RF loss is the dominant failure mode for
-            // display frames. The wash family uses the broadcast
-            // driver's per-message-type retransmit (spec §4.3); the
-            // passthrough has no such driver, so we inline the same
-            // strategy here. Lumes dedup on (source_id, sequence_number)
-            // so duplicate frames are processed-once on receipt - no
-            // double-render risk. Three sends = single-packet loss
-            // probability cubed, well below the human-perceptible
-            // threshold for missed display events.
-            const uint32_t new_count = parser.frame_count();
-            if (new_count > last_frame_count_) {
-                if (parser.last_label() == dal::enttec_pro::kLabelEspNowBroadcast) {
-                    const uint8_t* p = parser.last_payload();
-                    const uint16_t n = parser.last_payload_len();
-                    if (auto* radio = hal::HAL::esp_now()) {
-                        constexpr int kPassthroughRetx = 3;
-                        bool any_ok = false;
-                        for (int i = 0; i < kPassthroughRetx; ++i) {
-                            if (radio->send_broadcast(p, n)) any_ok = true;
-                        }
-#ifdef ARDUINO
-                        // Log the passthrough so bench monitor can
-                        // confirm display frames reached the radio.
-                        // Byte 6 of the inner ESP-NOW frame is the
-                        // MessageType (Epic 13: 0x09=TextDisplay,
-                        // 0x0A=BitmapHeader, 0x0B=BitmapPlane,
-                        // 0x0C=ClearScreen).
-                        Serial.printf("[espnow TX PASS %s msg=%02X len=%u x%d]\n",
-                                      any_ok ? "OK" : "FAIL",
-                                      (unsigned)(n >= 7 ? p[6] : 0xFF),
-                                      (unsigned)n,
-                                      (int)kPassthroughRetx);
-#endif
-                    }
-                }
-                last_frame_count_ = new_count;
             }
         }
     }

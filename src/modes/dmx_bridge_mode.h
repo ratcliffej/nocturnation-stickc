@@ -22,6 +22,7 @@
 
 #include "modes/mode_machine.h"
 #include "dal/drivers/dmx_channel_mapper.h"
+#include "dal/drivers/dmx_input_parser.h"
 
 namespace nocturnation {
 namespace modes {
@@ -105,6 +106,17 @@ private:
     void run_mappers(const uint8_t* universe_buf,
                      uint16_t copied,
                      uint32_t now);
+
+    // Per-FrameComplete callback. Wired into DmxUsbCdcAdapter::poll() so
+    // every parsed frame is acted on inline - the universe path stays
+    // "after poll, last-wins" (semantically correct), but label 0x10
+    // passthrough fires here so a passthrough sandwiched between two
+    // universes in one drain cycle is no longer dropped. See loop_tick
+    // for the bug rationale.
+    void on_parsed_frame(const dal::DmxInputParser& parser);
+    static void on_parsed_frame_thunk(void* user, const dal::DmxInputParser& parser) {
+        static_cast<DmxBridgeMode*>(user)->on_parsed_frame(parser);
+    }
 
     // Buffer reused across ticks. 280 bytes covers all 7 blocks
     // (last block ends at channel 280). Static-sized to avoid heap.

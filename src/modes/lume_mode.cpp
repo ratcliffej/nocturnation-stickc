@@ -681,15 +681,16 @@ void LumeMode::on_recv(const hal::ESPNowMessage& m) {
     }
 
 #ifdef ARDUINO
-    Serial.printf("[espnow RX %s%02X src=%u seq=%u] ",
-                  is_dup ? "DUP " : "",
-                  (unsigned)last_msg_type_,
-                  (unsigned)hdr.source_id,
-                  (unsigned)hdr.sequence_number);
-    for (size_t i = 0; i < m.len && i < 32; ++i) {
-        Serial.printf("%02X ", m.data[i]);
-    }
-    Serial.println();
+    // Per-frame RX log. Pared down to "command only" - source_id and
+    // sequence_number are recoverable from the orchestrator-side emit
+    // log if needed for correlation, but at peak traffic (wash +
+    // sparkles + 3x display retransmit, 150+ Hz) every byte of Serial
+    // output adds latency to the WiFi callback. The DUP marker is
+    // retained: it's the single most useful piece of diagnostic
+    // (radio retransmit correlation) and free. ~8 chars/frame is
+    // a ~4x reduction over the prior ~30-char line.
+    Serial.printf(is_dup ? "[RXD %02X]\n" : "[RX %02X]\n",
+                  (unsigned)last_msg_type_);
 #endif
 
     if (is_dup) return;
@@ -786,19 +787,20 @@ void LumeMode::on_recv(const hal::ESPNowMessage& m) {
         return;
     }
 
+    // Display family dispatch. Trimmed log: just the type-confirmation
+    // is enough at this layer - the brief "[espnow RX 09 src=N seq=N]"
+    // above already records receipt. Full hdr/body content can be up
+    // to 192 bytes -> ~22 ms of blocking Serial.printf at 115200 baud
+    // per frame -> with 3x retransmit per emission that's ~66 ms of
+    // WiFi-task block per lyric, which lets the IDF receive queue
+    // overflow and drops subsequent broadcasts. Operators wanting to
+    // verify content correlate this brief log with the orchestrator's
+    // `display: TEXT_DISPLAY sent header='...' body='...'` line.
     if (hdr.message_type == MessageType::TextDisplay
         && m.len >= kHeaderSize + kTextDisplayMinPayloadLen) {
         TextDisplayPayload p{};
         if (decode_text_display(hdr, m.data + kHeaderSize,
                                 m.len - kHeaderSize, p) == DecodeResult::Ok) {
-#ifdef ARDUINO
-            Serial.printf("[espnow RX TextDisplay group=%u rgb=%02X%02X%02X ttl=%u hdr=\"%.*s\" body=\"%.*s\"]\n",
-                          (unsigned)p.target_group,
-                          (unsigned)p.r, (unsigned)p.g, (unsigned)p.b,
-                          (unsigned)p.ttl_ms,
-                          (int)p.header_len, p.header,
-                          (int)p.body_len, p.body);
-#endif
             fan_out_text_display(p);
         }
     }
@@ -807,15 +809,6 @@ void LumeMode::on_recv(const hal::ESPNowMessage& m) {
         BitmapHeaderPayload p{};
         if (decode_bitmap_header(hdr, m.data + kHeaderSize,
                                  m.len - kHeaderSize, p) == DecodeResult::Ok) {
-#ifdef ARDUINO
-            Serial.printf("[espnow RX BitmapHeader group=%u w=%u h=%u planes=%u fit=%u zoom=%u ow=%u crc=%08X ttl=%u]\n",
-                          (unsigned)p.target_group,
-                          (unsigned)p.width, (unsigned)p.height,
-                          (unsigned)p.plane_count,
-                          (unsigned)p.fit, (unsigned)p.zoom_pct,
-                          (unsigned)p.overwrite,
-                          (unsigned)p.checksum, (unsigned)p.ttl_ms);
-#endif
             fan_out_bitmap_header(p);
         }
     }
@@ -824,12 +817,6 @@ void LumeMode::on_recv(const hal::ESPNowMessage& m) {
         BitmapPlanePayload p{};
         if (decode_bitmap_plane(hdr, m.data + kHeaderSize,
                                 m.len - kHeaderSize, p) == DecodeResult::Ok) {
-#ifdef ARDUINO
-            Serial.printf("[espnow RX BitmapPlane group=%u plane=%u offset=%u len=%u]\n",
-                          (unsigned)p.target_group,
-                          (unsigned)p.plane_index,
-                          (unsigned)p.byte_offset, (unsigned)p.data_len);
-#endif
             fan_out_bitmap_plane(p);
         }
     }
@@ -838,11 +825,6 @@ void LumeMode::on_recv(const hal::ESPNowMessage& m) {
         ClearScreenPayload p{};
         if (decode_clear_screen(hdr, m.data + kHeaderSize,
                                 m.len - kHeaderSize, p) == DecodeResult::Ok) {
-#ifdef ARDUINO
-            Serial.printf("[espnow RX ClearScreen group=%u text=%u bitmap=%u]\n",
-                          (unsigned)p.target_group,
-                          (unsigned)p.clear_text, (unsigned)p.clear_bitmap);
-#endif
             fan_out_clear_screen(p);
         }
     }

@@ -292,9 +292,14 @@ void EspNowBroadcastDriver::send_frame_bytes(const uint8_t* buf, size_t n, const
     const bool ok = radio->send_broadcast(buf, n);
     if (ok) last_tx_ms_ = now_ms();
 #ifdef ARDUINO
-    Serial.printf("[espnow TX %s%s] ", label, ok ? "" : " FAIL");
-    for (size_t i = 0; i < n; ++i) Serial.printf("%02X ", buf[i]);
-    Serial.println();
+    // Trimmed: dropped the per-frame hex dump (was ~3*n chars per TX,
+    // ~125 chars for typical 40-byte frames). Director-side Serial
+    // blocking under wash + sparkle traffic (50+ Hz) was holding the
+    // main task long enough that the DMX-bridge USB-CDC parser ran
+    // behind, dropping inbound bytes from the orchestrator -> display
+    // frames that never reached the broadcast stage. Brief line keeps
+    // diagnostic visibility on TX cadence + per-label failures.
+    Serial.printf("[espnow TX %s%s len=%u]\n", label, ok ? "" : " FAIL", (unsigned)n);
 #else
     (void)ok; (void)label;
 #endif

@@ -47,7 +47,7 @@ void DmxUsbCdcAdapter::end() {
     active_ = false;
 }
 
-size_t DmxUsbCdcAdapter::poll() {
+size_t DmxUsbCdcAdapter::poll(FrameCallback on_frame, void* user) {
     if (!active_) return 0;
 #ifdef ARDUINO
     size_t frames_this_call = 0;
@@ -62,10 +62,19 @@ size_t DmxUsbCdcAdapter::poll() {
         if (parser_.feed_byte(static_cast<uint8_t>(b))
             == DmxParseResult::FrameComplete) {
             ++frames_this_call;
+            // Fire the per-frame callback BEFORE the next byte is fed.
+            // The parser's last_label / last_payload / last_was_dmx_packet
+            // accessors all describe the just-completed frame at this
+            // instant; the next FrameComplete in the same poll() call
+            // would overwrite them. Bridge-mode passthrough relies on
+            // this to never drop a label 0x10 frame even when it lands
+            // sandwiched between two universes in a single drain cycle.
+            if (on_frame) on_frame(user, parser_);
         }
     }
     return frames_this_call;
 #else
+    (void)on_frame; (void)user;
     return 0;
 #endif
 }

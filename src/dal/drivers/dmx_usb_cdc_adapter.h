@@ -66,6 +66,14 @@ public:
     // console at 115 200 (or whatever) afterwards. Idempotent.
     void end();
 
+    // Per-frame dispatch callback. Fired exactly once per FrameComplete
+    // event during poll(), in the order frames were parsed off the wire.
+    // The parser reference is the adapter's own parser member, so the
+    // callback can read last_label() / last_payload() / last_was_dmx_packet()
+    // and they refer to the FRAME THAT JUST COMPLETED - safe even when
+    // multiple frames are eaten in a single poll() call.
+    using FrameCallback = void (*)(void* user, const DmxInputParser& parser);
+
     // Pump pending bytes from Serial through the parser. Returns the
     // number of complete frames observed this call (0 if no frame
     // crossed a boundary; >= 1 if one or more landed). Call from the
@@ -73,7 +81,16 @@ public:
     // between calls so any pump frequency works, but ~5-10 ms is a
     // good default to keep latency under the 50 ms slider-to-Lume
     // budget.
-    size_t poll();
+    //
+    // The optional on_frame callback fires per FrameComplete during the
+    // drain loop. Bridge-mode callers MUST use it for any frame type
+    // where every frame matters (e.g. ESP-NOW passthrough label 0x10):
+    // without it, only the LAST frame parsed in a given poll() call is
+    // observable via parser().last_label() / last_payload(), and earlier
+    // frames in the same drain cycle are silently lost. The pure-DMX
+    // path is fine without a callback because the universe is "last
+    // value wins" semantically anyway.
+    size_t poll(FrameCallback on_frame = nullptr, void* user = nullptr);
 
     // Adapter is active between begin() and end().
     bool active() const { return active_; }
