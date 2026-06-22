@@ -318,6 +318,16 @@ void EspNowBroadcastDriver::send_frame_bytes(const uint8_t* buf, size_t n, const
     }
 }
 
+void EspNowBroadcastDriver::send_passthrough(const uint8_t* buf, size_t n) {
+    // Epic 13: orchestrator-originated frame (TextDisplay / Bitmap*
+    // / ClearScreen) unwrapped by the DMX bridge from its Enttec
+    // label-0x10 envelope. Routes through send_frame_bytes so the
+    // initial send + spec-§4.3 retransmit queue handle it
+    // identically to wash/pulse/heartbeat. Label "PASS" lets bench
+    // logs distinguish passthrough from native sends.
+    send_frame_bytes(buf, n, "PASS");
+}
+
 void EspNowBroadcastDriver::pump_retransmits() {
     if (!active_ || retransmits_remaining_ == 0) return;
     const uint32_t now = now_ms();
