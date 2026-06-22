@@ -62,6 +62,8 @@ void LumeMode::enter() {
     last_msg_type_    = 0xFF;
     radio_active_     = false;
     no_signal_        = false;
+    fallback_active_  = false;
+    fallback_faded_   = false;
     last_pip_draw_ms_ = 0;
     lock_acquired_ms_ = 0;
 
@@ -256,6 +258,28 @@ void LumeMode::loop_tick() {
         draw_status_pip();      // pip paints last so it sits on top
         last_draw_ms_ = now;
         return;
+    }
+
+    // Fallback wash transitions (EMF prep). Two edges anchored to
+    // age_since_rx so they fire exactly once per silence episode:
+    //
+    //   age > kFallbackEnterMs (10 s)  -> start blue/purple cycle wash
+    //   age > kFallbackFadeStartMs (40 s) -> begin fade-to-black
+    //
+    // on_recv resets fallback_active_ + fallback_faded_ when a frame
+    // arrives, so a returning Director cancels both. Guarded on
+    // rx_count_ > 0 so cold-boot scanning doesn't trip the fallback
+    // before any Director has ever been seen.
+    if (rx_count_ > 0) {
+        if (!fallback_active_ && age_since_rx > kFallbackEnterMs) {
+            fallback_active_ = true;
+            emit_fallback_wash_start();
+        }
+        if (fallback_active_ && !fallback_faded_
+            && age_since_rx > kFallbackFadeStartMs) {
+            fallback_faded_ = true;
+            emit_fallback_wash_fade();
+        }
     }
 
     // Three-channel scan in auto mode. Spec §5.3: rotate 11 (show)
@@ -570,6 +594,61 @@ void LumeMode::fan_out_light_wash_pulse(const transport::espnow::LightWashPulseP
     }
 }
 
+// Signal-loss fallback wash. Synthesises a LIGHT_WASH event locally
+// and routes it through fan_out_light_wash so every wash-capable
+// binding picks it up exactly as if the Director had emitted it.
+// target_class = 0 (any), target_group = 0 (any) so the group filter
+// in fan_out_light_wash admits the synthetic event regardless of the
+// Lume's configured group. Local-only - never broadcast onto the
+// radio (no encode + radio.send_broadcast path is taken).
+void LumeMode::emit_fallback_wash_start() {
+    transport::espnow::LightWashPayload p{};
+    p.target_class   = 0;
+    p.target_group   = 0;
+    p.r1 = kFallbackColourA[0];  p.g1 = kFallbackColourA[1];  p.b1 = kFallbackColourA[2];
+    p.r2 = kFallbackColourB[0];  p.g2 = kFallbackColourB[1];  p.b2 = kFallbackColourB[2];
+    p.attack         = kFallbackAttackTicks;
+    p.release        = 50;                              // 5 s default release if cancelled without an END
+    p.intensity      = kFallbackIntensity;
+    p.cycle_ms       = kFallbackCyclePeriodMs;
+    p.ttl_seconds    = 0;                               // infinite; we'll END it explicitly
+    p.pulse_response = 0;                               // suppress pulse overlay during the calm idle
+    fan_out_light_wash(p);
+#ifdef ARDUINO
+    Serial.println("[espnow] lume FALLBACK wash start (blue/purple cycle)");
+#endif
+}
+
+// Begin the 30 s fade-to-black phase. The LIGHT_WASH_END's
+// release_time is a u8 in 100 ms units (max ~25.5 s) - we cap there;
+// the user-requested 30 s is functionally the same length to the eye,
+// and the alternative would be staging multiple END frames or a
+// custom render path.
+void LumeMode::emit_fallback_wash_fade() {
+    transport::espnow::LightWashEndPayload e{};
+    e.target_class = 0;
+    e.target_group = 0;
+    e.release_time = kFallbackFadeTicks;
+    fan_out_light_wash_end(e);
+#ifdef ARDUINO
+    Serial.println("[espnow] lume FALLBACK fade-to-black begin");
+#endif
+}
+
+// Short, sharp fade-out when the Director comes back. Half a second
+// removes the synthetic baseline before the returning Director's
+// own wash/pulse traffic starts to compete with it.
+void LumeMode::emit_fallback_wash_recovery() {
+    transport::espnow::LightWashEndPayload e{};
+    e.target_class = 0;
+    e.target_group = 0;
+    e.release_time = kFallbackRecoveryTicks;
+    fan_out_light_wash_end(e);
+#ifdef ARDUINO
+    Serial.println("[espnow] lume FALLBACK wash recovery (signal returned)");
+#endif
+}
+
 // Epic 13: display-content fan-out. The Display family doesn't carry a
 // target_class byte on the wire (the message type IS the class), so we
 // filter bindings by device_class() == Display directly. Target group
@@ -636,6 +715,18 @@ void LumeMode::on_recv(const hal::ESPNowMessage& m) {
 
     const bool was_no_signal = no_signal_;
     no_signal_ = false;
+
+    // Cancel the fallback wash if one was running. emit_fallback_wash_recovery
+    // sends a short-release LIGHT_WASH_END so the binding fades the
+    // synthetic baseline out cleanly before the Director's returning
+    // wash/pulse traffic starts populating the surface. Flags reset
+    // here so the next silence episode re-triggers from scratch.
+    if (fallback_active_) {
+        fallback_active_ = false;
+        fallback_faded_  = false;
+        emit_fallback_wash_recovery();
+    }
+
     // Stamp lock_acquired_ms_ on the first frame ever and on the
     // recovery edge out of a NO SIGNAL window. Drives the brief
     // "freshly locked" indication on the LED-strip status overlay

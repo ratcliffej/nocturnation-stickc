@@ -51,9 +51,45 @@ private:
     // gone. Lumes do NOT auto-promote to Director on this transition - the
     // Director might be momentarily out of range or paused, and a rogue
     // Lume-promoted-to-Director would compete with the real Director and
-    // ruin show coordination. Block 4 will run a subtle local idle
-    // effect through this state; for now we just display NO SIGNAL.
+    // ruin show coordination. The NO SIGNAL text surfaces at 3 s so the
+    // operator gets quick visual feedback during bench debugging.
     static constexpr uint32_t kNoSignalMs          = 3000;
+
+    // Signal-loss fallback wash. EMF artist-stage prep: when a Lume loses
+    // the Director for long enough that a transient outage isn't a
+    // plausible explanation, surface a calm idle effect so the audience
+    // sees a coherent fleet rather than a row of dead badges. Three
+    // phases, each anchored to age_since_rx (last frame -> now):
+    //
+    //   3 s  -> NO SIGNAL diagnostic text appears (operator-facing)
+    //  10 s  -> fallback wash kicks in: muted blue<->purple cycle over
+    //           kFallbackCyclePeriodMs, attack=kFallbackAttackMs (smooth
+    //           fade-in). Synthesised LOCALLY as a LIGHT_WASH event
+    //           dispatched through fan_out_light_wash - reuses every
+    //           binding's existing wash state machine, no parallel
+    //           render path. Low intensity so the badge reads as
+    //           "alive but quiet", not "live show".
+    //  40 s  -> emit LIGHT_WASH_END with release_time = kFallbackFadeMs
+    //           in 100 ms units. The wash fades to black over the next
+    //           30 s.
+    //
+    // Any inbound frame in on_recv cancels the fallback by emitting a
+    // short-release LIGHT_WASH_END so the binding fades out and the
+    // returning Director's wash/pulse traffic isn't competing with
+    // the synthetic baseline.
+    static constexpr uint32_t kFallbackEnterMs       = 10000;   // ms silence before fade-in
+    static constexpr uint32_t kFallbackFadeStartMs   = 40000;   // ms silence before fade-to-black starts
+    static constexpr uint16_t kFallbackCyclePeriodMs = 10000;   // blue<->purple ping-pong period
+    static constexpr uint8_t  kFallbackAttackTicks   = 30;      // 100 ms units = 3 s gentle fade-in
+    static constexpr uint8_t  kFallbackFadeTicks     = 255;     // 100 ms units = ~25.5 s (cap); see _emit_fallback_end
+    static constexpr uint8_t  kFallbackIntensity     = 60;      // 0..255; ~24 % brightness for "alive but quiet"
+    static constexpr uint8_t  kFallbackRecoveryTicks = 5;       // 100 ms units = 500 ms quick fade-out on signal return
+
+    // Fallback colours (cycled by the binding via cycle_ms ping-pong).
+    // Both deliberately muted - the fallback should read as a gentle
+    // breathing field, not a show effect.
+    static constexpr uint8_t  kFallbackColourA[3] = { 20,  0, 80 };   // dark violet
+    static constexpr uint8_t  kFallbackColourB[3] = {  0, 20, 80 };   // dark navy
 
     // Status pip (always-visible 38x12 px overlay anchored to the top-
     // right corner with a signal-strength dot + battery glyph). Block 13
@@ -80,6 +116,21 @@ private:
     uint8_t   last_source_id_     = 0;
     uint8_t   last_msg_type_      = 0xFF;
     bool      no_signal_          = false;   // sticky once threshold crossed
+
+    // Fallback wash state. fallback_active_ is set when we crossed the
+    // kFallbackEnterMs threshold and emitted the synthetic blue/purple
+    // LIGHT_WASH; fallback_faded_ is set when we crossed kFallbackFadeStartMs
+    // and emitted the LIGHT_WASH_END. Both clear on signal recovery
+    // (on_recv emits a short-release LIGHT_WASH_END and resets the flags).
+    bool      fallback_active_    = false;
+    bool      fallback_faded_     = false;
+
+    // Helpers that build a synthetic LightWashPayload / LightWashEndPayload
+    // and fan it out as if it had arrived from the Director. Pure local
+    // dispatch - never broadcast onto the radio.
+    void emit_fallback_wash_start();
+    void emit_fallback_wash_fade();
+    void emit_fallback_wash_recovery();
 
     // Lock-acquire timestamp. Stamped in on_recv whenever signal is
     // (re-)acquired - either the very first frame, or the recovery
