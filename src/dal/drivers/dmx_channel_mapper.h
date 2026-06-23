@@ -133,6 +133,19 @@ public:
     // the mapper won't emit faster than this.
     static constexpr uint32_t kMinWashEmitGapMs = 50;
 
+    // Raw-mode wash debounce (EMF stage-team feature). Wider than the
+    // FX-wash debounce because an LD dragging an RGB slider in QLC+
+    // generates 30+ Hz of universe writes - each one a different raw
+    // colour - and rapid wash-frame broadcasts at that rate were
+    // overloading the Lume Sticks' receive path enough to crash them
+    // (bench 2026-06-23, USER: "StickC in Lume mode keeps crashing
+    // occasionally when the sliders are moved"). 200 ms = 5 Hz max
+    // is comfortable for the cue-based show workflow (LD presses a
+    // button -> one emission) and survives a slider drag without
+    // killing Lumes. Strip rendering on the Lume still looks smooth
+    // because the wash state machine interpolates between updates.
+    static constexpr uint32_t kMinRawWashEmitGapMs = 200;
+
     // Sink that the mapper calls to deliver events. Concrete sinks at
     // B3 forward to DAL::render_fx / render_wash with the target
     // string the mapper provides ("00:00" for broadcast, "00:01" for

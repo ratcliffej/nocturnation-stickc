@@ -125,9 +125,29 @@ void DmxChannelMapper::maybe_emit_raw_wash_on_change(const uint8_t* ch,
     // Master-scale per standard DMX fixture convention - the LD's
     // Master slider dims the raw colour. Stage team's mental model
     // matches what they'd expect from a plain RGB par.
-    const uint8_t scaled_r = scale_byte(ch[kRawR], master);
-    const uint8_t scaled_g = scale_byte(ch[kRawG], master);
-    const uint8_t scaled_b = scale_byte(ch[kRawB], master);
+    //
+    // Min-1 floor (bench 2026-06-23, USER: "flickering during setting
+    // a RGB slider on some ranges"): integer math means raw_r=5 *
+    // master=50 / 255 = 0, but raw_r=5 * master=51 / 255 = 1. Right
+    // at the boundary, small slider moves toggle the scaled value
+    // between 0 and 1. If all three channels are simultaneously near-
+    // boundary, the all-zero downstream filter (PixMob driver line
+    // ~463) trips on the all-0 emissions and clears its wash, then
+    // the next emission re-establishes it. Net visible: wash
+    // appearing and disappearing rapidly = flicker. Floor at 1 when
+    // the LD's input was non-zero preserves the operator's "the
+    // colour is set" intent through the scaling math. Genuine zero
+    // (LD wrote 0) is preserved as zero - the all-zero filter only
+    // fires when all three RGBs are explicitly 0.
+    auto scale_raw = [](uint8_t channel, uint8_t master_v) -> uint8_t {
+        if (channel == 0) return 0;
+        const uint16_t scaled = static_cast<uint16_t>(channel)
+                                * static_cast<uint16_t>(master_v) / 255;
+        return scaled == 0 ? 1 : static_cast<uint8_t>(scaled);
+    };
+    const uint8_t scaled_r = scale_raw(ch[kRawR], master);
+    const uint8_t scaled_g = scale_raw(ch[kRawG], master);
+    const uint8_t scaled_b = scale_raw(ch[kRawB], master);
 
     const bool first_entry = !raw_active_;
     const bool changed     = (scaled_r != last_raw_r_)
@@ -138,10 +158,13 @@ void DmxChannelMapper::maybe_emit_raw_wash_on_change(const uint8_t* ch,
         return;  // steady state - nothing to emit
     }
 
-    // Reuse the same kMinWashEmitGapMs debounce the FX wash path uses
-    // so an LD strobing the raw channels via cue chases can't flood
-    // the wire.
-    if (!first_entry && (now_ms - last_wash_emit_ms_) < kMinWashEmitGapMs) {
+    // Raw-mode debounce (kMinRawWashEmitGapMs = 200 ms, vs the FX
+    // wash path's 50 ms). Wider window because an LD dragging a
+    // slider produces 30+ Hz of universe writes - each a different
+    // raw colour - and at 30 Hz of wash broadcasts the Lume Sticks'
+    // receive path overloads and crashes. 5 Hz max emission survives
+    // slider-drag bench testing without killing the fleet.
+    if (!first_entry && (now_ms - last_wash_emit_ms_) < kMinRawWashEmitGapMs) {
         return;
     }
 
