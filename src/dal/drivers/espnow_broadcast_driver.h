@@ -39,15 +39,20 @@ public:
     // the duplicates; the redundancy buys airtime resilience against
     // collisions and brief interference.
     //
-    // Was 3 (initial + 2 retransmits, ~20-30 ms total burst). Raised to
-    // 5 for EMF artist-stage prep - 3000-attendee RF environment with
-    // ambient phone WiFi / Bluetooth / pager traffic on 2.4 GHz is
-    // hostile, and the difference between loss^3 and loss^5 is what
-    // determines whether per-beat sparkles survive a noise spike. At
-    // 5 sends * ~1.5 ms airtime + ~10 ms inter-send jitter, total burst
-    // is ~40-70 ms - still under the 143 ms inter-beat interval at the
-    // 140 BPM sparkle_on_beat tempo we use.
-    static constexpr uint8_t  kRedundantSends     = 5;
+    // Bench finding 2026-06-23: bumping from 3 to 5 INCREASED visible
+    // pulse dropouts on the M5 fleet at the bench. Counter-intuitive
+    // but consistent with airtime saturation - each 5-send burst eats
+    // ~40-70 ms of radio time, and at the 7 Hz sparkle rate of
+    // sparkle_on_beat the bursts overlap each other plus the wash-
+    // refresh traffic. Lumes' WiFi receive queues fill before the
+    // main task can drain them, and frames get dropped at the radio
+    // IDF layer. 3 sends (~20-30 ms burst) leaves enough quiet
+    // between bursts for the receive path to keep up. The EMF noise-
+    // floor concern that motivated the bump remains valid for the
+    // venue, but 5 isn't the right knob - if RF reliability needs
+    // more, the answer is the Lume-repeat mesh setting (Spec §4.3),
+    // not louder Director retransmits.
+    static constexpr uint8_t  kRedundantSends     = 3;
     static constexpr uint8_t  kRedundantGapMinMs  = 5;
     static constexpr uint8_t  kRedundantGapMaxMs  = 15;
 
