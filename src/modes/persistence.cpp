@@ -165,11 +165,31 @@ void save_lume_repeat_enabled(bool e) {
 }
 
 // Lume NocturNation group ID. Device-wide value used by LumeMode's
-// receive filter. Range 0-255; default 0 means "respond to everything".
+// receive filter. Range 0-255; operator can set anywhere in that
+// range via Config.
+//
+// First-boot behaviour (EMF stage-team feature 2026-06-23): when the
+// NVS key doesn't exist, generate a random group in [1, 3] and
+// persist it. With a swarm of Lumes coming out of the box, this
+// gives the LD ~3 evenly-distributed addressable zones for free -
+// no need to walk the room with a phone setting each badge by hand.
+// The operator can still override via the Config menu afterwards
+// (writing any value, including 0 for "broadcast only").
+//
+// The random pick uses esp_random() so each Stick rolls
+// independently; the result is persisted to NVS on first read so
+// the group stays stable across power cycles.
 uint8_t load_lume_group() {
     Preferences prefs;
-    prefs.begin("noct", /*readOnly=*/true);
-    uint8_t g = prefs.getUChar("slv_group", 0);
+    prefs.begin("noct", /*readOnly=*/false);
+    uint8_t g;
+    if (!prefs.isKey("slv_group")) {
+        // First boot: roll [1, 3] inclusive and persist.
+        g = static_cast<uint8_t>(1 + (esp_random() % 3));
+        prefs.putUChar("slv_group", g);
+    } else {
+        g = prefs.getUChar("slv_group", 0);
+    }
     prefs.end();
     return g;
 }
