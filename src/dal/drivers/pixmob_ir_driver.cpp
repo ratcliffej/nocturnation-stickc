@@ -132,6 +132,15 @@ bool PixMobIRDriver::send(uint8_t group_id, const RgbPulseEvent& ev) {
             };
             const uint8_t threshold = kRenderThreshold[ev.chance & 0x07];
             if ((roll & 0xFF) >= threshold) {
+#ifdef ARDUINO
+                // Bench-diagnostic: tells the operator a sparkle was
+                // skipped by the chance pre-filter rather than dropped
+                // somewhere downstream. Helps tell apart "wash blocking
+                // pulse" from "chance just didn't roll high enough".
+                Serial.printf("[pixmob] PULSE skip chance=%u roll=%u thr=%u grp=%u\n",
+                              (unsigned)ev.chance, (unsigned)(roll & 0xFF),
+                              (unsigned)threshold, (unsigned)group_id);
+#endif
                 return true;   // skip this sparkle - don't fire IR
             }
         }
@@ -172,6 +181,10 @@ bool PixMobIRDriver::send(uint8_t group_id, const RgbPulseEvent& ev) {
         // land. Wash Test's "Pulse over wash" already used T_32_MS
         // sustain explicitly and worked cleanly - this brings the
         // music path into parity.
+        // Sparkle sustain minimum. T_32_MS is enough because the 50 ms
+        // delay below provides the visible-sparkle window - the
+        // bracelet renders the sparkle envelope for those 50 ms
+        // before the recovery pre-empts.
         auto effective_sustain = ev.sustain;
         if (effective_sustain == pixmob::T_0_MS) {
             effective_sustain = pixmob::T_32_MS;
@@ -194,50 +207,50 @@ bool PixMobIRDriver::send(uint8_t group_id, const RgbPulseEvent& ev) {
             group_id);
         if (n == 0) return false;
         transmit(buf, n);
+#ifdef ARDUINO
+        // Bench-diagnostic: the sparkle command landed on the IR LED.
+        Serial.printf("[pixmob] PULSE tx rgb=%02X%02X%02X grp=%u "
+                      "wash=(%02X%02X%02X)\n",
+                      (unsigned)ev.r, (unsigned)ev.g, (unsigned)ev.b,
+                      (unsigned)group_id,
+                      (unsigned)wr, (unsigned)wg, (unsigned)wb);
+#endif
 
-        // 2. The fast recovery to wash, sent TWICE for redundancy.
-        // T_192_MS attack is short enough that the wash visually
-        // re-establishes within ~250 ms of the sparkle's start. The
-        // bracelet pre-empts the sparkle envelope (mid-release if the
-        // sparkle landed) and morphs back to wash colour.
+        // Inter-frame quiet period (regression fix 2026-06-23). The
+        // bracelet's IR decoder needs a gap between commands to lock
+        // onto each one cleanly - the PixMob protocol has no explicit
+        // end-of-frame sentinel, so without a quiet window the
+        // decoder mis-decodes back-to-back frames and drops both.
+        // First verified on bench 2026-06-18 (commit 3469a7c); lost
+        // when febc7f3 swapped a 3x sparkle burst for "recovery x2"
+        // and incorrectly assumed redundancy could substitute for the
+        // gap (it can't - redundancy of malformed frames is still
+        // malformed). 50 ms is comfortably above the decoder's
+        // quiet-window threshold AND doubles as the visible-sparkle
+        // window: the bracelet renders the sparkle envelope for those
+        // 50 ms before the recovery arrives and pre-empts.
         //
-        // Bench observation 2026-06-30: with a single recovery, the
-        // PixMob wash dropped briefly (~200-400 ms of darkness)
-        // coinciding with each sparkle - cause was the recovery
-        // command itself being dropped (the bracelet's IR receiver is
-        // in its busy window for ~200 ms after processing the
-        // sparkle's T_192_MS release; the recovery arrives in that
-        // window and lands on a deaf receiver some fraction of the
-        // time). The earlier "immediate safety-net refresh via
-        // next_refresh_ms = t" hit the same busy window and dropped
-        // too - same root cause, different command. Fix: send the
-        // recovery twice in succession. Both commands target the same
-        // wash colour so duplicates produce no visible artifact (the
-        // sparkle-burst experiment of 2026-06-18 showed duplicates
-        // ARE visible when the sparkle is a different colour from
-        // wash; for the wash-coloured recovery the duplicate is
-        // visually a no-op).
+        // ifdef ARDUINO so native unit tests don't block.
+#ifdef ARDUINO
+        ::delay(50);
+#endif
+
+        // Recovery: snap back to wash with T_0 attack so the wash
+        // colour re-establishes cleanly after the 50 ms sparkle
+        // window. Single send is sufficient with the gap restored -
+        // the bracelet processes recovery cleanly because it's no
+        // longer in mid-frame decode of the sparkle.
         n = pixmob::buildSingleColor(
             buf, kPulseBufSize,
             wr, wg, wb,
-            pixmob::T_0_MS,      // instant snap to wash (was T_192_MS;
-                                 // changed 2026-06-30 to minimise the
-                                 // bracelet's envelope-render footprint
-                                 // per user-bench hypothesis about
-                                 // stress accumulation)
+            pixmob::T_0_MS,      // instant snap to wash
             pixmob::T_3840_MS,   // hold the wash colour
             pixmob::T_0_MS,      // no release - the next refresh
                                  // pre-empts well before this matters
             pixmob::CHANCE_100,
             group_id);
         if (n != 0) {
-            transmit(buf, n);    // recovery #1
-            transmit(buf, n);    // recovery #2 - same command, hedges
-                                 // against the bracelet's busy-window
-                                 // drop pattern. If #1 landed, the
-                                 // bracelet is already morphing to
-                                 // wash and #2 is a no-op snap to the
-                                 // same colour mid-attack.
+            transmit(buf, n);
         }
         (void)t;
 

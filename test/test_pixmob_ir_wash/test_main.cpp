@@ -354,23 +354,22 @@ static void test_pulse_on_active_wash_fires_sparkle_plus_recovery(void) {
                           nocturnation::hal::s_ir_tx.send_count);
     TEST_ASSERT_FALSE(drv->wash_state(0)->active);
 
-    // Phase 2: start a wash, then fire the same pulse. Expect 3 IR
-    // commands - the sparkle (SingleColor) plus the recovery sent
-    // TWICE (same-colour duplicate is a no-op visually but hedges
-    // against the bracelet's busy-window dropping the first
-    // recovery; bench fix 2026-06-30 for wash dropouts coinciding
-    // with sparkle firings).
+    // Phase 2: start a wash, then fire the same pulse. Expect 2 IR
+    // commands - the sparkle (SingleColor) plus a single recovery
+    // (SingleColor wash-colour). The 50 ms ::delay() between the two
+    // is the bracelet IR decoder's required quiet window AND the
+    // visible-sparkle render time; with the gap in place a single
+    // recovery lands cleanly (regression fix 2026-06-23). The
+    // earlier "recovery x2" approach was a workaround for the
+    // missing gap, not a fundamental need.
     drv->send_wash(0, purple_static());
     TEST_ASSERT_TRUE(drv->wash_state(0)->active);
     const int before_pulse = nocturnation::hal::s_ir_tx.send_count;
     drv->send(/*group_id=*/0, ev);
-    TEST_ASSERT_EQUAL_INT(before_pulse + 3,
+    TEST_ASSERT_EQUAL_INT(before_pulse + 2,
                           nocturnation::hal::s_ir_tx.send_count);
     // Wash state remains active - the pulse-plus-recovery didn't
-    // disturb the periodic refresh schedule. The immediate-fire
-    // safety-net (next_refresh_ms = t) of 2026-06-26 was reverted
-    // since it dropped in the same busy window as the recovery; the
-    // recovery-doubling above replaces it.
+    // disturb the periodic refresh schedule.
     TEST_ASSERT_TRUE(drv->wash_state(0)->active);
     TEST_ASSERT_EQUAL_UINT32(s_now_ms + PixMobIRDriver::kWashRefreshMs,
                              drv->wash_state(0)->next_refresh_ms);
