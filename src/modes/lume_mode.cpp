@@ -390,11 +390,22 @@ void LumeMode::on_button_event(const ButtonPressEvent& ev) {
 
         // Wide perceptual spread - LED brightness is logarithmic in
         // human perception so the steps need to be big to read as
-        // distinct. 100/10/1 gives three clearly different settings:
-        //   100 % = full power (daylight / outdoor bench)
-        //    10 % = comfortable indoor / desk level
-        //     1 % = ambient hint, near-darkness operation
-        static constexpr uint8_t kLevels[] = { 100, 10, 1 };
+        // distinct. 50/25/10/1 gives four clearly different settings,
+        // chosen so the operator can pick the right ceiling for the
+        // Stick's power source:
+        //    50 % = ~900 mA peak. Wall-powered Stick only (charger /
+        //           hub with real current). Browns out on a Plus2 S3
+        //           battery once master DMX > ~71.
+        //    25 % = ~450 mA peak. Safe on USB-CDC laptop; safe on a
+        //           healthy battery up to master ~142. Default pick
+        //           for mobile / demo work.
+        //    10 % = ~180 mA peak. Safe on every supply. First-install
+        //           default.
+        //     1 % = ~18 mA peak. Ambient hint, near-darkness.
+        // 100 % retired 2026-06-23 after brownout reboots on raw RGB
+        // sliders hitting 255 - max-white at 100% draws ~1.8 A peak,
+        // far past any reasonable USB / battery supply.
+        static constexpr uint8_t kLevels[] = { 50, 25, 10, 1 };
         static constexpr size_t kLevelCount = sizeof(kLevels) / sizeof(kLevels[0]);
 
         const uint8_t current_pct = persistence::load_strip_brightness();

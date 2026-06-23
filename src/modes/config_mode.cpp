@@ -1197,13 +1197,36 @@ void ConfigMode::draw() {
 //
 // Brightness is the only live item for now; Enable / Group size / Repeat are
 // reserved labels that future B4-live wiring promotes to interactive. The
-// brightness cycle mirrors Btn1-in-Lume - same level table (100 / 10 / 1),
+// brightness cycle mirrors Btn1-in-Lume - same level table (50 / 25 / 10 / 1),
 // same NVS key (strip_bri), so toggling here vs Lume reaches the same
 // persisted value.
+//
+// Levels chosen for the worst-case 30-pixel SK6812 strip current
+// draw (RGB at 255,255,255, master at 255):
+//    50 % -> ~900 mA peak. Wall-powered only. Brownout on a Plus2 S3
+//             battery once master DMX > ~71; brownout on laptop
+//             USB-CDC (500 mA budget). Use when the Stick is on a
+//             USB-C charger / hub with real power, e.g. the
+//             Director / DMX-bridge Stick at a wired stage rig.
+//    25 % -> ~450 mA peak. Safe on USB-CDC laptop; safe on a healthy
+//             Plus2 battery up to master ~142. The right pick for
+//             mobile / demo work and any unattended Stick on a
+//             battery you'd like to last a show.
+//    10 % -> ~180 mA peak. Safe on every supply this firmware
+//             targets, including a low-charge battery. Default for
+//             first-install devices so out-of-box behaviour can't
+//             brown out regardless of how it's powered.
+//     1 % -> ~ 18 mA peak. Ambient hint, near-darkness operation.
+//
+// 100 % was retired 2026-06-23 after bench-confirmed brownout reboots
+// on the Lume Stick when a stage-team raw RGB slider hit 255 (~1.8 A
+// peak, well past any reasonable USB / battery supply). Devices that
+// still have 100 stored in NVS land at kStripBrightnessLevels[0]
+// (50 %) on the next Config-menu cycle press.
 // =============================================================================
 
 namespace {
-constexpr uint8_t kStripBrightnessLevels[] = { 100, 10, 1 };
+constexpr uint8_t kStripBrightnessLevels[] = { 50, 25, 10, 1 };
 constexpr size_t  kStripBrightnessLevelCount =
     sizeof(kStripBrightnessLevels) / sizeof(kStripBrightnessLevels[0]);
 
