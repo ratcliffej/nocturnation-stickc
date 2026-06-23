@@ -475,6 +475,157 @@ static void test_quantize_chance_inverted_buckets(void) {
 }
 
 // ---------------------------------------------------------------------------
+// Raw-RGB path (EMF artist-stage feature 2026-06-23)
+// ---------------------------------------------------------------------------
+
+static void test_raw_disabled_does_not_emit_static_wash(void) {
+    // kRawEnable below the 128 threshold -> FX path runs as normal.
+    DmxChannelMapper m(0);
+    RecordingSink sink;
+    BlockBuf b;
+    b.set(DmxChannelMapper::kRawR, 255)
+     .set(DmxChannelMapper::kRawG, 128)
+     .set(DmxChannelMapper::kRawB, 64)
+     .set(DmxChannelMapper::kRawEnable, 127);   // just under threshold
+    m.process(b.data(), kBlockChannels, /*now_ms=*/0, sink);
+    // We expect at most the normal wash-seeding emit; that emit comes
+    // from the FX wash channels which are all zero - the contents are
+    // not what this test cares about. Critically the emitted wash must
+    // NOT be the raw RGB triplet (which would be 255/128/64 on r1/r2).
+    for (const auto& rw : sink.washes) { const auto& w = rw.ev;
+        TEST_ASSERT_NOT_EQUAL(255, w.r1);
+        TEST_ASSERT_NOT_EQUAL(255, w.r2);
+    }
+}
+
+static void test_raw_enabled_emits_static_wash(void) {
+    DmxChannelMapper m(0);
+    RecordingSink sink;
+    BlockBuf b;
+    b.set(DmxChannelMapper::kMasterIntensity, 255)
+     .set(DmxChannelMapper::kRawR, 200)
+     .set(DmxChannelMapper::kRawG, 100)
+     .set(DmxChannelMapper::kRawB, 50)
+     .set(DmxChannelMapper::kRawEnable, 200);
+    m.process(b.data(), kBlockChannels, /*now_ms=*/0, sink);
+    // Exactly one wash event, static (r1 == r2 etc.), with the raw
+    // RGB triplet at full master, cycle_ms == 0, infinite TTL.
+    TEST_ASSERT_EQUAL_INT(1, sink.washes.size());
+    const auto& w = sink.washes[0].ev;
+    TEST_ASSERT_EQUAL_UINT8(200, w.r1);  TEST_ASSERT_EQUAL_UINT8(200, w.r2);
+    TEST_ASSERT_EQUAL_UINT8(100, w.g1);  TEST_ASSERT_EQUAL_UINT8(100, w.g2);
+    TEST_ASSERT_EQUAL_UINT8(50,  w.b1);  TEST_ASSERT_EQUAL_UINT8(50,  w.b2);
+    TEST_ASSERT_EQUAL_UINT16(0, w.cycle_ms);
+    TEST_ASSERT_EQUAL_UINT16(0, w.ttl_seconds);
+    TEST_ASSERT_EQUAL_UINT8(255, w.intensity);
+}
+
+static void test_raw_scales_by_master(void) {
+    // EMF stage team's LD-fixture convention: Master is the dimmer.
+    // Raw RGB at 200 with master at 128 emits ~100 on the wire.
+    DmxChannelMapper m(0);
+    RecordingSink sink;
+    BlockBuf b;
+    b.set(DmxChannelMapper::kMasterIntensity, 128)
+     .set(DmxChannelMapper::kRawR, 200)
+     .set(DmxChannelMapper::kRawG, 200)
+     .set(DmxChannelMapper::kRawB, 200)
+     .set(DmxChannelMapper::kRawEnable, 200);
+    m.process(b.data(), kBlockChannels, /*now_ms=*/0, sink);
+    TEST_ASSERT_EQUAL_INT(1, sink.washes.size());
+    // 200 * 128 / 255 = 100.39 -> rounds to 100. Allow +/- 1 for
+    // integer-division choice.
+    const uint8_t scaled = sink.washes[0].ev.r1;
+    TEST_ASSERT_TRUE(scaled >= 99 && scaled <= 101);
+}
+
+static void test_raw_unchanged_does_not_reemit(void) {
+    // After the initial emit, identical raw values across ticks must
+    // not produce duplicate washes - same idempotency contract as the
+    // FX wash path.
+    DmxChannelMapper m(0);
+    RecordingSink sink;
+    BlockBuf b;
+    b.set(DmxChannelMapper::kMasterIntensity, 255)
+     .set(DmxChannelMapper::kRawR, 100)
+     .set(DmxChannelMapper::kRawG, 100)
+     .set(DmxChannelMapper::kRawB, 100)
+     .set(DmxChannelMapper::kRawEnable, 200);
+    m.process(b.data(), kBlockChannels, /*now_ms=*/0, sink);
+    m.process(b.data(), kBlockChannels, /*now_ms=*/1000, sink);
+    m.process(b.data(), kBlockChannels, /*now_ms=*/2000, sink);
+    TEST_ASSERT_EQUAL_INT(1, sink.washes.size());
+}
+
+static void test_raw_change_reemits(void) {
+    DmxChannelMapper m(0);
+    RecordingSink sink;
+    BlockBuf b;
+    b.set(DmxChannelMapper::kMasterIntensity, 255)
+     .set(DmxChannelMapper::kRawR, 100)
+     .set(DmxChannelMapper::kRawEnable, 200);
+    m.process(b.data(), kBlockChannels, /*now_ms=*/0,    sink);
+    // Past the kMinWashEmitGapMs debounce so the new colour can emit.
+    b.set(DmxChannelMapper::kRawR, 200);
+    m.process(b.data(), kBlockChannels, /*now_ms=*/1000, sink);
+    TEST_ASSERT_EQUAL_INT(2, sink.washes.size());
+    TEST_ASSERT_EQUAL_UINT8(100, sink.washes[0].ev.r1);
+    TEST_ASSERT_EQUAL_UINT8(200, sink.washes[1].ev.r1);
+}
+
+static void test_raw_suppresses_fx_pulse(void) {
+    // Pulse-trigger rising edge that would normally fire a LIGHT_PULSE
+    // must be SUPPRESSED while raw mode is active - the stage team
+    // wants dumb-fixture behaviour, no surprise flashes.
+    DmxChannelMapper m(0);
+    RecordingSink sink;
+    BlockBuf b;
+    b.set(DmxChannelMapper::kMasterIntensity, 255)
+     .set(DmxChannelMapper::kPulseR, 255)
+     .set(DmxChannelMapper::kPulseTrigger, 255)   // rising edge
+     .set(DmxChannelMapper::kRawR, 50)
+     .set(DmxChannelMapper::kRawEnable, 200);
+    m.process(b.data(), kBlockChannels, /*now_ms=*/0, sink);
+    TEST_ASSERT_EQUAL_INT(0, sink.pulses.size());
+    // Only the raw wash fired.
+    TEST_ASSERT_EQUAL_INT(1, sink.washes.size());
+}
+
+static void test_raw_disengage_reseeds_fx_wash(void) {
+    // Engage raw mode -> raw wash emitted. Disengage raw -> FX wash
+    // path must re-emit on the next tick (even if FX channels are
+    // unchanged from before raw mode engaged) so receivers don't keep
+    // showing the stale raw colour.
+    DmxChannelMapper m(0);
+    RecordingSink sink;
+    BlockBuf b;
+    b.set(DmxChannelMapper::kMasterIntensity, 255)
+     .set(DmxChannelMapper::kWashAR, 50)
+     .set(DmxChannelMapper::kWashAG, 50)
+     .set(DmxChannelMapper::kWashAB, 50)
+     .set(DmxChannelMapper::kWashIntensity, 200);
+    // Tick 1: no raw -> FX wash emits (seeded).
+    m.process(b.data(), kBlockChannels, /*now_ms=*/0, sink);
+    TEST_ASSERT_EQUAL_INT(1, sink.washes.size());
+    // Tick 2: engage raw with a different colour.
+    b.set(DmxChannelMapper::kRawR, 200)
+     .set(DmxChannelMapper::kRawG, 0)
+     .set(DmxChannelMapper::kRawB, 0)
+     .set(DmxChannelMapper::kRawEnable, 200);
+    m.process(b.data(), kBlockChannels, /*now_ms=*/1000, sink);
+    TEST_ASSERT_EQUAL_INT(2, sink.washes.size());
+    TEST_ASSERT_EQUAL_UINT8(200, sink.washes[1].ev.r1);
+    // Tick 3: disengage raw.
+    b.set(DmxChannelMapper::kRawEnable, 0);
+    m.process(b.data(), kBlockChannels, /*now_ms=*/2000, sink);
+    // FX wash re-emitted with the original FX channel values, even
+    // though the FX channels themselves haven't changed since tick 1.
+    TEST_ASSERT_EQUAL_INT(3, sink.washes.size());
+    TEST_ASSERT_EQUAL_UINT8(50, sink.washes[2].ev.r1);
+}
+
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
@@ -504,5 +655,12 @@ int main(int, char**) {
     RUN_TEST(test_two_mappers_independent_state);
     RUN_TEST(test_quantize_time_buckets);
     RUN_TEST(test_quantize_chance_inverted_buckets);
+    RUN_TEST(test_raw_disabled_does_not_emit_static_wash);
+    RUN_TEST(test_raw_enabled_emits_static_wash);
+    RUN_TEST(test_raw_scales_by_master);
+    RUN_TEST(test_raw_unchanged_does_not_reemit);
+    RUN_TEST(test_raw_change_reemits);
+    RUN_TEST(test_raw_suppresses_fx_pulse);
+    RUN_TEST(test_raw_disengage_reseeds_fx_wash);
     return UNITY_END();
 }

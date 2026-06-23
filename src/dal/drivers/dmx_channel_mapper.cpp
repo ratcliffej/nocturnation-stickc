@@ -67,6 +67,10 @@ void DmxChannelMapper::reset() {
     last_wash_emit_ms_         = 0;
     last_strobe_rate_          = 0;
     next_strobe_fire_ms_       = 0;
+    raw_active_                = false;
+    last_raw_r_                = 0;
+    last_raw_g_                = 0;
+    last_raw_b_                = 0;
 }
 
 // ---------------------------------------------------------------------
@@ -82,11 +86,83 @@ void DmxChannelMapper::process(const uint8_t* block,
         // no-op than read past the buffer.
         return;
     }
-    const uint8_t master = block[kMasterIntensity];
+    const uint8_t master  = block[kMasterIntensity];
+    const uint8_t enable  = block[kRawEnable];
+    const bool raw_request = (enable >= kRawEnableThreshold);
+
+    if (raw_request) {
+        // EMF stage-team raw-RGB path. The LD is treating this block
+        // as a dumb 3-channel RGB fixture; FX engine output is
+        // suppressed entirely for this tick. Pulse, FX wash, and
+        // strobe all skipped. pulse_armed_ is held disarmed so a
+        // pulse trigger sitting high from a previous FX scene doesn't
+        // fire the moment raw mode disengages.
+        maybe_emit_raw_wash_on_change(block, master, now_ms, sink);
+        pulse_armed_ = false;
+        return;
+    }
+
+    if (raw_active_) {
+        // Transition out of raw mode. Reseed the FX wash detector so
+        // the next emit fires fresh from FX channel state, even if
+        // those channels haven't changed since before raw mode
+        // engaged - otherwise the receivers would keep showing the
+        // last raw colour until something in the FX block actually
+        // moved. Set once per high->low edge.
+        raw_active_  = false;
+        wash_seeded_ = false;
+    }
 
     maybe_emit_wash_on_change(block, master, now_ms, sink);
     maybe_emit_pulse_on_trigger(block, master, sink);
     maybe_emit_strobe(block, master, now_ms, sink);
+}
+
+void DmxChannelMapper::maybe_emit_raw_wash_on_change(const uint8_t* ch,
+                                                     uint8_t master,
+                                                     uint32_t now_ms,
+                                                     Sink& sink) {
+    // Master-scale per standard DMX fixture convention - the LD's
+    // Master slider dims the raw colour. Stage team's mental model
+    // matches what they'd expect from a plain RGB par.
+    const uint8_t scaled_r = scale_byte(ch[kRawR], master);
+    const uint8_t scaled_g = scale_byte(ch[kRawG], master);
+    const uint8_t scaled_b = scale_byte(ch[kRawB], master);
+
+    const bool first_entry = !raw_active_;
+    const bool changed     = (scaled_r != last_raw_r_)
+                          || (scaled_g != last_raw_g_)
+                          || (scaled_b != last_raw_b_);
+
+    if (!first_entry && !changed) {
+        return;  // steady state - nothing to emit
+    }
+
+    // Reuse the same kMinWashEmitGapMs debounce the FX wash path uses
+    // so an LD strobing the raw channels via cue chases can't flood
+    // the wire.
+    if (!first_entry && (now_ms - last_wash_emit_ms_) < kMinWashEmitGapMs) {
+        return;
+    }
+
+    LightWashEvent ev{};
+    ev.r1 = scaled_r;  ev.g1 = scaled_g;  ev.b1 = scaled_b;
+    ev.r2 = scaled_r;  ev.g2 = scaled_g;  ev.b2 = scaled_b;
+    ev.attack         = 0;     // 0 ms - instant snap to colour
+    ev.release        = 0;     // 0 ms - clean end if cancelled
+    ev.intensity      = 255;   // raw R/G/B already master-scaled
+    ev.cycle_ms       = 0;     // static; A == B so no drift either way
+    ev.ttl_seconds    = 0;     // infinite (held until next change)
+    ev.pulse_response = 1;     // allow pulse overlay (irrelevant in raw
+                               // mode since FX pulses are suppressed,
+                               // but harmless for a future ad-hoc cue)
+    sink.on_wash(target_, ev);
+
+    raw_active_        = true;
+    last_raw_r_        = scaled_r;
+    last_raw_g_        = scaled_g;
+    last_raw_b_        = scaled_b;
+    last_wash_emit_ms_ = now_ms;
 }
 
 // ---------------------------------------------------------------------

@@ -70,7 +70,12 @@ public:
     // group block is 50 channels (addresses 50-99, 100-149, ...). The
     // mapper reads up to kActiveChannelsPerBlock; channels past that
     // are reserved for future expansion and silently ignored.
-    static constexpr uint16_t kActiveChannelsPerBlock = 23;
+    //
+    // Channel 23 (kRawR..kRawEnable, slot 23-26 zero-indexed) is the
+    // raw-RGB path added at the EMF stage team's request - it lets an
+    // LD treat each block as a dumb 3-channel RGB fixture, bypassing
+    // the FX engine entirely. Active when kRawEnable >= kRawEnableHi.
+    static constexpr uint16_t kActiveChannelsPerBlock = 27;
 
     enum BlockChannel : uint8_t {
         kMasterIntensity   = 0,
@@ -96,7 +101,23 @@ public:
         kWashTtlLo         = 20,
         kWashTtlHi         = 21,
         kWashPulseResponse = 22,
+        // Raw RGB + enable (EMF artist-stage request 2026-06-23). When
+        // kRawEnable is high, the mapper emits a static LIGHT_WASH from
+        // kRawR/G/B (scaled by kMasterIntensity, standard DMX fixture
+        // convention) and suppresses the FX engine's pulse/wash output
+        // for this block. When kRawEnable is low, the FX engine path
+        // is active and raw channels are ignored.
+        kRawR              = 23,
+        kRawG              = 24,
+        kRawB              = 25,
+        kRawEnable         = 26,
     };
+
+    // Raw-mode gate. Matches the convention used by kTriggerHi/Lo and
+    // kWashPulseResponse: 0..127 = off, 128..255 = on. Single threshold
+    // (no separate Hi/Lo because there's no rising-edge detection -
+    // raw mode is a continuous state, not an event).
+    static constexpr uint8_t kRawEnableThreshold = 128;
 
     // Pulse-trigger threshold. Rising edge into [kTriggerHi, 255] fires
     // one pulse; channel must drop below kTriggerLo before re-arming.
@@ -176,7 +197,21 @@ private:
     uint8_t  last_strobe_rate_     = 0;
     uint32_t next_strobe_fire_ms_  = 0;
 
+    // Raw RGB tracking (EMF stage team path). Holds the last-emitted
+    // raw colour + the last-seen enable state so we can detect both
+    // colour changes (re-emit static wash) and enable edges (emit
+    // wash_end when raw mode turns off so the bracelet / strip / LCD
+    // drops the static colour cleanly instead of holding stale).
+    bool    raw_active_     = false;
+    uint8_t last_raw_r_     = 0;
+    uint8_t last_raw_g_     = 0;
+    uint8_t last_raw_b_     = 0;
+
     // Helpers.
+    void maybe_emit_raw_wash_on_change(const uint8_t* ch,
+                                       uint8_t master,
+                                       uint32_t now_ms,
+                                       Sink& sink);
     void maybe_emit_pulse_on_trigger(const uint8_t* ch,
                                      uint8_t master,
                                      Sink& sink);
