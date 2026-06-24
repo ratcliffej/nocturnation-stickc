@@ -94,6 +94,11 @@ void DirectorMode::enter() {
     // lifecycle; this mode just toggles it on enter / off on exit.
     esp_now_broadcast_driver_instance()->start_broadcast(
         persistence::load_director_channel());
+    // Director-side shows render the wash + pulse through the local
+    // LED strip too (the Director Stick joins its own show when a
+    // strip is plugged in). Apply persisted brightness so the Config-
+    // menu cap is honoured here, not just in LumeMode.
+    DAL::apply_persisted_strip_settings();
     draw();
 }
 

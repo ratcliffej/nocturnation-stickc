@@ -149,6 +149,12 @@ void DmxBridgeMode::enter() {
     // DirectorMode uses.
     esp_now_broadcast_driver_instance()->start_broadcast(
         persistence::load_director_channel());
+    // Raw-RGB DMX scenes can drive the local strip to full white
+    // through this mode's mappers; apply persisted brightness so
+    // the operator's Config-menu cap is honoured here too. Without
+    // this, the strip ran at the default 100 % regardless of
+    // setting - the brownout symptom on raw-white slider scenes.
+    DAL::apply_persisted_strip_settings();
 
     // Switch the USB-CDC peripheral to the Enttec Pro baud + start
     // the parser pump.

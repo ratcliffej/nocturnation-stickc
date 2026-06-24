@@ -72,6 +72,11 @@ void TestMode::enter() {
     // just like during a real show.
     dal::esp_now_broadcast_driver_instance()->start_broadcast(
         persistence::load_director_channel());
+    // Pulse / Whiteout tests render through the local LED strip too.
+    // Apply persisted brightness so the Config-menu setting is
+    // honoured here, not just in LumeMode - otherwise the strip
+    // defaults to 100 % and runs the board into brownout on white.
+    DAL::apply_persisted_strip_settings();
     return_to_menu();
 }
 

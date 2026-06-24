@@ -11,6 +11,7 @@
 #include "drivers/pixmob_ir_driver.h"
 #include "drivers/espnow_broadcast_driver.h"
 #include "drivers/led_strip_driver.h"
+#include "../modes/persistence.h"
 #include "output_bindings/output_binding.h"
 #include "output_bindings/output_binding_registry.h"
 
@@ -394,6 +395,18 @@ bool DAL::set_driver_enabled(const char* transport_name, bool enabled) {
     if (!d) return false;
     d->set_enabled(enabled);
     return true;
+}
+
+void DAL::apply_persisted_strip_settings() {
+    // No-op on hosts without a strip - the singleton still stores
+    // the values harmlessly, but no pixels get pushed regardless.
+    if (hal::HAL::led_strip() == nullptr) return;
+    auto* strip_drv = led_strip_driver_instance();
+    if (!strip_drv) return;
+    strip_drv->set_brightness_percent(modes::persistence::load_strip_brightness());
+    strip_drv->set_group_size       (modes::persistence::load_strip_group_size());
+    strip_drv->set_pixel_count      (modes::persistence::load_strip_chain_size());
+    set_driver_enabled("led-strip",  modes::persistence::load_strip_enabled());
 }
 
 bool DAL::driver_enabled(const char* transport_name) {

@@ -152,7 +152,16 @@ void             save_strip_group_size(uint8_t n);
 #define NOCT_DEFAULT_STRIP_ENABLED 1
 #endif
 #ifndef NOCT_DEFAULT_STRIP_BRIGHTNESS
-#define NOCT_DEFAULT_STRIP_BRIGHTNESS 10
+// First-install default: 1 %. Picked to be brownout-safe on every
+// power source we ship - battery, USB-CDC laptop, wall charger -
+// regardless of how many pixels the strip has, what colour is
+// requested, or what mode the operator boots into. A fresh device
+// runs visibly dim until the operator opens Config > LED Strip and
+// dials it up to a level their power supply can sustain. This is
+// the deliberately-conservative end of the {50, 25, 10, 1} cycle
+// (changed 2026-06-24 after bench-confirmed brownout reports on
+// the Pulse / Whiteout / raw-RGB-white paths at higher defaults).
+#define NOCT_DEFAULT_STRIP_BRIGHTNESS 1
 #endif
 #ifndef NOCT_DEFAULT_STRIP_GROUP_SIZE
 #define NOCT_DEFAULT_STRIP_GROUP_SIZE 12

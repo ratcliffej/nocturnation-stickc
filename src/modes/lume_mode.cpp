@@ -82,13 +82,15 @@ void LumeMode::enter() {
     // on hosts without a strip (the driver still stores the values
     // even if no strip is wired). The driver's enabled() flag is
     // toggled via DAL so the rest of the dispatch path sees it.
-    if (hal::HAL::led_strip() != nullptr) {
-        auto* strip_drv = led_strip_driver_instance();
-        strip_drv->set_brightness_percent(persistence::load_strip_brightness());
-        strip_drv->set_group_size(persistence::load_strip_group_size());
-        strip_drv->set_pixel_count(persistence::load_strip_chain_size());
-        DAL::set_driver_enabled("led-strip", persistence::load_strip_enabled());
-    }
+    // Apply persisted strip settings (brightness percent, group size,
+    // pixel count, enabled flag). Centralised in DAL so TestMode /
+    // DirectorMode / DmxBridgeMode can call the same hook on enter()
+    // and the strip respects the operator's Config-menu setting in
+    // every mode, not just Lume. Pre-fix this block lived inline
+    // here and the other modes silently ran the strip at default
+    // 100 % brightness - brownout-on-white symptom for the Pulse /
+    // Whiteout tests and the DMX raw-RGB path.
+    DAL::apply_persisted_strip_settings();
 
     // Auto-scan starts on channel 11 (show priority) per spec §4.5.
     // Locked configs start on the configured channel.
