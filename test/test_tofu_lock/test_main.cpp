@@ -202,58 +202,63 @@ static void test_after_clear_next_frame_locks_fresh(void) {
 // Display-family broadcast admission (Epic 13)
 // =============================================================================
 
-static void test_text_display_broadcast_dropped_when_not_locked(void) {
-    TofuLock t;
-    const bool admitted = t.admit(MessageType::TextDisplay,
-                                  0xFF, /*channel=*/1, 0);
-    TEST_ASSERT_FALSE(admitted);
-    TEST_ASSERT_FALSE(t.is_locked());
-}
+// Post-phase-3 model: Director's bridge re-stamps display frames
+// with its own source_id before broadcasting, so display frames
+// arrive identified and go through the same source-match gate as
+// wash / pulse / heartbeat. The old "admit BROADCAST display when
+// locked" carve-out is gone.
 
-static void test_text_display_broadcast_admitted_when_locked(void) {
+static void test_any_broadcast_source_dropped_even_for_display_family(void) {
     TofuLock t;
     t.admit(MessageType::LightPulse, 0x42, /*channel=*/1, 100);
-    const bool admitted = t.admit(MessageType::TextDisplay,
-                                  0xFF, /*channel=*/1, 200);
-    TEST_ASSERT_TRUE(admitted);
-    TEST_ASSERT_EQUAL_UINT8(0x42, t.locked_id());   // lock still names the Director
+    TEST_ASSERT_FALSE(t.admit(MessageType::TextDisplay,
+                              0xFF, /*channel=*/1, 200));
+    TEST_ASSERT_FALSE(t.admit(MessageType::ClearScreen,
+                              0xFF, /*channel=*/1, 201));
+    TEST_ASSERT_FALSE(t.admit(MessageType::BitmapHeader,
+                              0xFF, /*channel=*/1, 202));
+    TEST_ASSERT_FALSE(t.admit(MessageType::BitmapPlane,
+                              0xFF, /*channel=*/1, 203));
 }
 
-static void test_clear_screen_broadcast_admitted_when_locked(void) {
+static void test_display_frame_from_locked_director_admitted(void) {
     TofuLock t;
     t.admit(MessageType::LightPulse, 0x42, /*channel=*/1, 100);
-    TEST_ASSERT_TRUE(t.admit(MessageType::ClearScreen,
-                             0xFF, /*channel=*/1, 200));
-}
-
-static void test_bitmap_broadcasts_admitted_when_locked(void) {
-    TofuLock t;
-    t.admit(MessageType::LightPulse, 0x42, /*channel=*/1, 100);
+    TEST_ASSERT_TRUE(t.admit(MessageType::TextDisplay,
+                             0x42, /*channel=*/1, 200));
     TEST_ASSERT_TRUE(t.admit(MessageType::BitmapHeader,
-                             0xFF, /*channel=*/1, 200));
+                             0x42, /*channel=*/1, 201));
     TEST_ASSERT_TRUE(t.admit(MessageType::BitmapPlane,
-                             0xFF, /*channel=*/1, 201));
+                             0x42, /*channel=*/1, 202));
+    TEST_ASSERT_TRUE(t.admit(MessageType::ClearScreen,
+                             0x42, /*channel=*/1, 203));
 }
 
-static void test_display_broadcast_does_not_reset_liveness_timer(void) {
-    // Liveness is the LOCKED Director's responsibility. A display
-    // broadcast must not extend the lock - otherwise a Director that
-    // has gone silent could appear alive because the orchestrator is
-    // still emitting display cues.
+static void test_display_frame_from_different_director_dropped(void) {
+    // Multi-show partitioning property: show A's Lume locked to
+    // Director A must NOT render show B's lyric overlays.
+    TofuLock t;
+    t.admit(MessageType::LightPulse, 0x42, /*channel=*/1, 100);
+    TEST_ASSERT_FALSE(t.admit(MessageType::TextDisplay,
+                              0x43, /*channel=*/1, 200));
+    TEST_ASSERT_FALSE(t.admit(MessageType::BitmapPlane,
+                              0x43, /*channel=*/1, 201));
+}
+
+static void test_display_frame_from_locked_director_resets_liveness(void) {
+    // Behaviour change at phase 3: display frames from the locked
+    // Director DO count toward liveness. Arrival of a bridged
+    // display frame is evidence the Director is up enough to forward.
     TofuLock t;
     t.admit(MessageType::LightPulse, 0x42, /*channel=*/1, 0);
-    // Display broadcast at t=5 s: admitted, must not bump last_frame_ms.
-    t.admit(MessageType::TextDisplay, 0xFF, /*channel=*/1, 5000);
-    // tick at t=10.5 s: 10.5 s after the original Director frame -
-    // past the 10 s timeout -> lock expires regardless of the
-    // display traffic in between.
-    TEST_ASSERT_TRUE(t.tick(10500));
-    TEST_ASSERT_FALSE(t.is_locked());
+    t.admit(MessageType::TextDisplay, 0x42, /*channel=*/1, 5000);
+    // 10.5 s after the original wash, but only 5.5 s since the
+    // display frame -> still within timeout.
+    TEST_ASSERT_FALSE(t.tick(10500));
+    TEST_ASSERT_TRUE(t.is_locked());
 }
 
 static void test_non_display_broadcast_still_rejected_when_locked(void) {
-    // LIGHT_PULSE from source_id 0xFF is misconfigured anonymous
-    // traffic - reject even when a lock is held.
     TofuLock t;
     t.admit(MessageType::LightPulse, 0x42, /*channel=*/1, 100);
     const bool admitted = t.admit(MessageType::LightPulse,
@@ -317,11 +322,10 @@ int main(int, char**) {
     RUN_TEST(test_tick_on_unlocked_state_is_noop);
     RUN_TEST(test_clear_unlocks);
     RUN_TEST(test_after_clear_next_frame_locks_fresh);
-    RUN_TEST(test_text_display_broadcast_dropped_when_not_locked);
-    RUN_TEST(test_text_display_broadcast_admitted_when_locked);
-    RUN_TEST(test_clear_screen_broadcast_admitted_when_locked);
-    RUN_TEST(test_bitmap_broadcasts_admitted_when_locked);
-    RUN_TEST(test_display_broadcast_does_not_reset_liveness_timer);
+    RUN_TEST(test_any_broadcast_source_dropped_even_for_display_family);
+    RUN_TEST(test_display_frame_from_locked_director_admitted);
+    RUN_TEST(test_display_frame_from_different_director_dropped);
+    RUN_TEST(test_display_frame_from_locked_director_resets_liveness);
     RUN_TEST(test_non_display_broadcast_still_rejected_when_locked);
     RUN_TEST(test_label_empty_when_unlocked);
     RUN_TEST(test_label_community_range_prefix);

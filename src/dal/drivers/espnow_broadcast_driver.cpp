@@ -332,7 +332,39 @@ void EspNowBroadcastDriver::send_passthrough(const uint8_t* buf, size_t n) {
     // initial send + spec-§4.3 retransmit queue handle it
     // identically to wash/pulse/heartbeat. Label "PASS" lets bench
     // logs distinguish passthrough from native sends.
-    send_frame_bytes(buf, n, "PASS");
+    //
+    // EMF multi-show source-id rewrite (2026-06-24, phase 3 of the
+    // multi-show partitioning work): the orchestrator emits these
+    // frames with source_id = 0xFF (broadcast) because it doesn't
+    // know which Director it's bridging through. The Director knows
+    // its own id; re-stamp the source_id byte (header offset 3) so
+    // the frame is attributable to this Director when it lands at a
+    // Lume's TofuLock. Lumes locked to a DIFFERENT Director then
+    // reject these display frames as "from a different source" -
+    // which is exactly the multi-show partitioning we want.
+    //
+    // Pre-flight validate the magic + version so we don't blindly
+    // mutate a frame from a misbehaving upstream sender. Drop on
+    // anomaly rather than letting bad bytes hit the air.
+    if (n < transport::espnow::kHeaderSize) return;
+    if (buf[0] != transport::espnow::kMagic0
+        || buf[1] != transport::espnow::kMagic1) return;
+    if (buf[2] != transport::espnow::kProtocolVersion) return;
+    if (!active_) return;   // not settled yet; nothing to stamp with
+
+    // Patch source_id in place if the upstream put 0xFF (broadcast)
+    // there. If the upstream already stamped a specific source_id
+    // (e.g. a future orchestrator running its own listen-before-
+    // broadcast handshake), preserve it - the rewrite is for the
+    // orchestrator-as-anonymous-bridge case, not as a blanket
+    // identity hijack.
+    uint8_t patched[transport::espnow::kMaxFrameSize];
+    if (n > sizeof(patched)) return;   // defensive; shouldn't happen for orch-sized frames
+    std::memcpy(patched, buf, n);
+    if (patched[3] == transport::espnow::kBroadcastSourceId) {
+        patched[3] = source_id_;
+    }
+    send_frame_bytes(patched, n, "PASS");
 }
 
 void EspNowBroadcastDriver::pump_retransmits() {

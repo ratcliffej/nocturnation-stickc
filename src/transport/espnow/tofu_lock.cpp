@@ -6,48 +6,26 @@ namespace nocturnation {
 namespace transport {
 namespace espnow {
 
-namespace {
-
-// Display family - frames where source_id = kBroadcastSourceId (0xFF)
-// is the orchestrator's signature rather than a Director's identity.
-// Admitted by a locked TOFU without resetting the liveness timer.
-constexpr bool is_display_family(MessageType t) {
-    switch (t) {
-        case MessageType::TextDisplay:
-        case MessageType::BitmapHeader:
-        case MessageType::BitmapPlane:
-        case MessageType::ClearScreen:
-            return true;
-        default:
-            return false;
-    }
-}
-
-}  // namespace
-
 TofuLock::TofuLock() = default;
 
 bool TofuLock::admit(MessageType msg_type,
                      uint8_t     source_id,
                      uint8_t     channel,
                      uint32_t    now_ms) {
-    // Display-family broadcasts are upstream-orchestrator content
-    // bridged through the locked Director's passthrough. Admit them
-    // when a Director session exists (lock held) without taking them
-    // as a lock candidate or resetting the liveness timer - those
-    // remain the locked Director's responsibility via heartbeat /
-    // wash / pulse.
-    if (source_id == kBroadcastSourceId
-        && is_display_family(msg_type)
-        && has_lock_) {
-        return true;
-    }
+    (void)msg_type;   // display-family no longer needs special handling
 
     // Broadcast / wildcard source_id is never a valid Director peer.
     // A Director never emits 0xFF as its own id; broadcast is for
     // senders that intentionally identify as anonymous, which a Lume
-    // MUST NOT lock to. Display-family broadcasts were already
-    // handled above.
+    // MUST NOT lock to. The Director's bridge passthrough re-stamps
+    // upstream-orchestrator display frames with the Director's own
+    // source_id before broadcasting (EMF multi-show phase 3) so
+    // display traffic now arrives identified - and only frames that
+    // match the locked Director's id get admitted via the normal
+    // post-lock filter below. This removes the previous "admit
+    // BROADCAST display family when locked" carve-out, which would
+    // have admitted display frames from ALL Directors at a multi-
+    // show venue instead of just the locked one.
     if (source_id == kBroadcastSourceId) {
         return false;
     }
