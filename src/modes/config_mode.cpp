@@ -930,6 +930,15 @@ void ConfigMode::handle_espnow(const ButtonPressEvent& ev) {
                 persistence::save_director_channel(
                     cycle_director_channel(persistence::load_director_channel()));
                 break;
+            case EspNowItem::DirectorId: {
+                // Re-roll the Director's persisted Performance-range id
+                // and persist. The new id takes effect at the next
+                // Director start_broadcast (operator returns to Menu
+                // and re-enters Director mode for it to apply).
+                const uint8_t new_id = persistence::reroll_director_perf_source_id();
+                (void)new_id;   // shown via the redraw below; no Serial here
+                break;
+            }
             case EspNowItem::SlaveChannel:
                 persistence::save_lume_channel(
                     cycle_lume_channel(persistence::load_lume_channel()));
@@ -951,15 +960,23 @@ void ConfigMode::draw_espnow() {
         10, 5, "ESP-NOW", WHITE, BLACK, 2});
 
     char m_line[28];
+    char id_line[28];
     char s_line[28];
     char r_line[28];
     std::snprintf(m_line, sizeof(m_line), "Director: %s",
                   director_channel_label(persistence::load_director_channel()));
+    // DirectorID is the persisted Performance-range id (channel 11).
+    // Selecting this row + A-click re-rolls it (handle_espnow above).
+    // Label format mirrors the Lume-side TOFU lock label "P:nn" so
+    // the value reads the same on both sides of the wire.
+    std::snprintf(id_line, sizeof(id_line), "DirID:    P:%02X",
+                  static_cast<unsigned>(persistence::load_director_perf_source_id()));
     std::snprintf(s_line, sizeof(s_line), "Lume:     %s",
                   lume_channel_label(persistence::load_lume_channel()));
     std::snprintf(r_line, sizeof(r_line), "Repeat:   %s",
                   persistence::load_lume_repeat_enabled() ? "ON" : "OFF");
-    const char* lines[kEspNowFunctionalItemCount] = { m_line, s_line, r_line };
+    const char* lines[kEspNowFunctionalItemCount] = {
+        m_line, id_line, s_line, r_line };
 
     constexpr int  kRowY0      = 30;
     const size_t   max_visible = static_cast<size_t>(

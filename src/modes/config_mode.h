@@ -285,15 +285,22 @@ private:
     void handle_led_strip(const dal::ButtonPressEvent& ev);
     void draw_led_strip();
 
-    // ESP-NOW submenu (functional: Director Channel + Lume Channel +
-    // Lume Repeat). The Lume Group setting moved to the top-level
-    // Config > Group item (direct action).
+    // ESP-NOW submenu (functional: Director Channel + Director ID +
+    // Lume Channel + Lume Repeat). The Lume Group setting moved to
+    // the top-level Config > Group item (direct action).
+    //
+    // DirectorId (added 2026-06-24, EMF prep) shows the device's
+    // persisted Performance-range source id and A-click re-rolls +
+    // saves a new random one. Operator-facing recourse when two
+    // Directors at a multi-stage venue end up with the same id (low
+    // probability, ~1 in 190, but operationally useful to surface).
     enum class EspNowItem : uint8_t {
         MasterChannel = 0,
+        DirectorId,
         SlaveChannel,
         SlaveRepeat,
     };
-    static constexpr size_t kEspNowFunctionalItemCount = 3;
+    static constexpr size_t kEspNowFunctionalItemCount = 4;
 
     static const char* director_channel_label(uint8_t c);
     static const char* lume_channel_label(uint8_t c);

@@ -310,6 +310,39 @@ void save_director_source_id(uint8_t id) {
     prefs.end();
 }
 
+uint8_t load_director_perf_source_id() {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/false);
+    uint8_t id = prefs.getUChar("mst_pid", 0);
+    // Treat absent OR out-of-range as "first install" and roll a
+    // fresh value in [0x40, 0xFE] (191 slots). Persist immediately
+    // so subsequent boots return the same id - giving a Director a
+    // stable identity that Lumes lock to consistently.
+    if (id < 0x40 || id > 0xFE) {
+        id = static_cast<uint8_t>(0x40 + (esp_random() % 191));
+        prefs.putUChar("mst_pid", id);
+    }
+    prefs.end();
+    return id;
+}
+
+void save_director_perf_source_id(uint8_t id) {
+    if (id < 0x40 || id > 0xFE) return;   // defensive; out-of-range silently dropped
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/false);
+    prefs.putUChar("mst_pid", id);
+    prefs.end();
+}
+
+uint8_t reroll_director_perf_source_id() {
+    const uint8_t id = static_cast<uint8_t>(0x40 + (esp_random() % 191));
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/false);
+    prefs.putUChar("mst_pid", id);
+    prefs.end();
+    return id;
+}
+
 // Active visualisation id (legacy, pre-Epic-4.7). Retained for back-
 // compat reads during migration; new code uses load_active_show_id.
 // Default is "beat-pulse" - the canonical pre-Block-1 vis - so a
@@ -481,6 +514,17 @@ uint8_t s_native_first_boot_rng   = 2;       // deterministic stand-in for esp_r
 uint8_t s_native_director_src_id     = 0;
 bool    s_native_director_src_id_set = false;
 uint8_t s_native_first_boot_director_src_id_rng = 0x05;  // deterministic stand-in for esp_random() & 0x3F
+// Performance-range Director id (channel 11). Stable across boots
+// once rolled; the boot-time RNG hook lets tests force a known
+// first-install value the same way s_native_first_boot_director_src_id_rng
+// does for the community-range counterpart.
+uint8_t s_native_director_perf_src_id     = 0;
+bool    s_native_director_perf_src_id_set = false;
+uint8_t s_native_first_boot_director_perf_src_id_rng = 0x4F;
+// Re-roll RNG hook - separate from the first-install hook so tests
+// can drive the "operator pressed Re-roll on the Config menu" path
+// with a known new value.
+uint8_t s_native_reroll_director_perf_src_id_rng     = 0x7A;
 bool    s_native_legacy_slv_ir_grp_present = false;
 uint8_t s_native_legacy_slv_ir_grp_value   = 0;
 constexpr size_t kActiveVisBufSize = 16;
@@ -558,6 +602,31 @@ void save_director_source_id(uint8_t id) {
     if (id > 0x3F) id = 0;
     s_native_director_src_id     = id;
     s_native_director_src_id_set = true;
+}
+
+uint8_t load_director_perf_source_id() {
+    // First-install path: if absent or out-of-range, roll via the
+    // deterministic native RNG hook, persist, return.
+    const bool present = s_native_director_perf_src_id_set
+                         && s_native_director_perf_src_id >= 0x40
+                         && s_native_director_perf_src_id <= 0xFE;
+    if (!present) {
+        s_native_director_perf_src_id     = s_native_first_boot_director_perf_src_id_rng;
+        s_native_director_perf_src_id_set = true;
+    }
+    return s_native_director_perf_src_id;
+}
+
+void save_director_perf_source_id(uint8_t id) {
+    if (id < 0x40 || id > 0xFE) return;
+    s_native_director_perf_src_id     = id;
+    s_native_director_perf_src_id_set = true;
+}
+
+uint8_t reroll_director_perf_source_id() {
+    s_native_director_perf_src_id     = s_native_reroll_director_perf_src_id_rng;
+    s_native_director_perf_src_id_set = true;
+    return s_native_director_perf_src_id;
 }
 
 const char* load_active_vis_id() {
@@ -650,6 +719,18 @@ void plant_raw_director_src_id(uint8_t id) {
     s_native_director_src_id     = id;
     s_native_director_src_id_set = true;
 }
+void set_first_boot_director_perf_src_id_rng(uint8_t id_in_perf_range) {
+    s_native_first_boot_director_perf_src_id_rng =
+        (id_in_perf_range >= 0x40 && id_in_perf_range <= 0xFE) ? id_in_perf_range : 0x40;
+}
+void set_reroll_director_perf_src_id_rng(uint8_t id_in_perf_range) {
+    s_native_reroll_director_perf_src_id_rng =
+        (id_in_perf_range >= 0x40 && id_in_perf_range <= 0xFE) ? id_in_perf_range : 0x40;
+}
+void plant_raw_director_perf_src_id(uint8_t id) {
+    s_native_director_perf_src_id     = id;
+    s_native_director_perf_src_id_set = true;
+}
 void clear_native_persistence() {
     s_native_lume_channel             = 0;
     s_native_lume_repeat_en           = false;
@@ -659,6 +740,10 @@ void clear_native_persistence() {
     s_native_director_src_id            = 0;
     s_native_director_src_id_set        = false;
     s_native_first_boot_director_src_id_rng = 0x05;
+    s_native_director_perf_src_id      = 0;
+    s_native_director_perf_src_id_set  = false;
+    s_native_first_boot_director_perf_src_id_rng = 0x4F;
+    s_native_reroll_director_perf_src_id_rng     = 0x7A;
     s_native_legacy_slv_ir_grp_present = false;
     s_native_legacy_slv_ir_grp_value   = 0;
     std::strncpy(s_native_active_vis, "beat-pulse", kActiveVisBufSize);

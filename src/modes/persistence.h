@@ -204,6 +204,35 @@ void apply_strip_force_defaults();
 uint8_t          load_director_source_id();
 void             save_director_source_id(uint8_t id);
 
+// Director Performance-range source id (channel 11). Like its
+// community-range cousin above, but in 0x40..0xFE. Random on first
+// install, persisted to NVS, sticky across boots and listen-before-
+// broadcast re-rolls. Operator can re-roll via the Config menu.
+//
+// Why sticky (changed 2026-06-24): the original Epic 5.5 B4 design
+// was random-per-boot on the theory that each show is its own
+// session. EMF multi-show partitioning needs a STABLE identity per
+// Director - so a Lume that locks to "Director A" actually stays
+// locked across A's restarts, and the orchestrator's display-family
+// frames can be tagged with the Director's id (rather than the
+// 0xFF broadcast slot) and only render on A's locked Lumes.
+//
+// load returns the persisted value if present in [0x40, 0xFE]; if
+// the key is absent OR the value falls outside the Performance
+// range (older firmware / corruption) it rolls a fresh random one,
+// persists, and returns it.
+uint8_t          load_director_perf_source_id();
+void             save_director_perf_source_id(uint8_t id);
+
+// Roll a fresh random Performance-range source id, persist it, and
+// return it. Used by the Config UI's "DirectorID > Re-roll" action
+// and by the listen-before-broadcast collision-recovery path. The
+// rolled value is in [0x40, 0xFE]; calling repeatedly produces
+// independent rolls. Native build returns a deterministic value
+// driven by a hook (see persistence.cpp's native section) so tests
+// can pin the outcome.
+uint8_t          reroll_director_perf_source_id();
+
 // Active Director-side visualisation id. Pre-Epic-4.7 selection key;
 // retained for read-side back-compat during migration. Block 1 of
 // Epic 4.7 retires this in favour of active_show; the value is
@@ -279,6 +308,19 @@ void set_first_boot_director_src_id_rng(uint8_t id_in_community_range);
 // "corrupted NVS / older firmware wrote an out-of-range value"
 // scenario so the migrate re-roll path can be exercised on native.
 void plant_raw_director_src_id(uint8_t id);
+// Set the deterministic stand-in for esp_random() % 191 + 0x40 used
+// by load_director_perf_source_id() on the first-install path
+// (key absent / out of range). Must be in [0x40, 0xFE].
+void set_first_boot_director_perf_src_id_rng(uint8_t id_in_perf_range);
+// Set the deterministic stand-in for esp_random() % 191 + 0x40 used
+// by reroll_director_perf_source_id() (Config UI re-roll, listen-
+// collision re-roll). Must be in [0x40, 0xFE].
+void set_reroll_director_perf_src_id_rng(uint8_t id_in_perf_range);
+// Plant a raw mst_pid value in the native NVS stand-in, bypassing
+// the save_director_perf_source_id clamp. Used to simulate "old
+// firmware wrote out-of-range" so the first-install re-roll path
+// can be exercised.
+void plant_raw_director_perf_src_id(uint8_t id);
 void clear_native_persistence();
 }  // namespace test_seam
 #endif

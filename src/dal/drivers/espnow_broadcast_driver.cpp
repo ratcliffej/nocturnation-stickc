@@ -193,12 +193,19 @@ bool EspNowBroadcastDriver::start_broadcast(uint8_t channel) {
     last_tx_ms_ = 0;
 
     if (channel == 11) {
-        // Channel 11 (Performance mode): pick a Performance-range id,
-        // install a listen-window recv callback, bring the radio up
-        // RX-capable, and leave active_ = false so loop_tick() holds
-        // TX off until listen_tick() settles. See spec §3.4 and the
-        // B4a design notes in the Epic working copy.
-        listen_candidate_          = pick_performance_id_random();
+        // Channel 11 (Performance mode): load the persisted
+        // Performance-range id (rolled randomly on first install,
+        // sticky thereafter - see persistence::load_director_perf_source_id
+        // docstring for the why). Install a listen-window recv
+        // callback, bring the radio up RX-capable, and leave active_
+        // = false so loop_tick() holds TX off until listen_tick()
+        // settles. See spec §3.4 and the B4a design notes.
+        //
+        // If listen_tick() detects a collision and proceeds to re-
+        // roll, the new value is persisted so subsequent boots line
+        // up with what's actually on air. Stable-by-default, drifts
+        // only when the radio environment forces it.
+        listen_candidate_          = modes::persistence::load_director_perf_source_id();
         listen_collision_heard_    = false;
         listen_attempts_remaining_ = kListenMaxAttempts;
         radio->set_recv_callback([this](const hal::ESPNowMessage& m) {
@@ -409,6 +416,12 @@ void EspNowBroadcastDriver::listen_tick() {
             listen_candidate_       = pick_performance_id_random();
             listen_collision_heard_ = false;
             listen_started_ms_      = now;
+            // Persist the re-rolled value so we boot onto the same
+            // id next time rather than re-running the collision dance.
+            // The stable-by-default contract for DirectorID applies as
+            // long as the radio environment cooperates; once it forces
+            // us off the original id, the new id IS the stable one.
+            modes::persistence::save_director_perf_source_id(listen_candidate_);
 #ifdef ARDUINO
             Serial.printf("[espnow] listen collision; re-rolling to 0x%02X "
                           "(attempts left=%u)\n",
