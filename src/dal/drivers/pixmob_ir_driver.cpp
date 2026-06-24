@@ -132,7 +132,7 @@ bool PixMobIRDriver::send(uint8_t group_id, const RgbPulseEvent& ev) {
             };
             const uint8_t threshold = kRenderThreshold[ev.chance & 0x07];
             if ((roll & 0xFF) >= threshold) {
-#ifdef ARDUINO
+#if defined(ARDUINO) && !defined(NOCT_DMX_ETHERNET)   // off on the console board
                 // Bench-diagnostic: tells the operator a sparkle was
                 // skipped by the chance pre-filter rather than dropped
                 // somewhere downstream. Helps tell apart "wash blocking
@@ -207,7 +207,7 @@ bool PixMobIRDriver::send(uint8_t group_id, const RgbPulseEvent& ev) {
             group_id);
         if (n == 0) return false;
         transmit(buf, n);
-#ifdef ARDUINO
+#if defined(ARDUINO) && !defined(NOCT_DMX_ETHERNET)   // off on the console board
         // Bench-diagnostic: the sparkle command landed on the IR LED.
         Serial.printf("[pixmob] PULSE tx rgb=%02X%02X%02X grp=%u "
                       "wash=(%02X%02X%02X)\n",

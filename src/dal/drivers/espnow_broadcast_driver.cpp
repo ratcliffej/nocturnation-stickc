@@ -298,14 +298,10 @@ void EspNowBroadcastDriver::send_frame_bytes(const uint8_t* buf, size_t n, const
     if (!radio) return;
     const bool ok = radio->send_broadcast(buf, n);
     if (ok) last_tx_ms_ = now_ms();
-#ifdef ARDUINO
-    // Trimmed: dropped the per-frame hex dump (was ~3*n chars per TX,
-    // ~125 chars for typical 40-byte frames). Director-side Serial
-    // blocking under wash + sparkle traffic (50+ Hz) was holding the
-    // main task long enough that the DMX-bridge USB-CDC parser ran
-    // behind, dropping inbound bytes from the orchestrator -> display
-    // frames that never reached the broadcast stage. Brief line keeps
-    // diagnostic visibility on TX cadence + per-label failures.
+    // Brief per-TX line for diagnostics (Epic 13 trimmed the old per-frame
+    // hex dump that was blocking the Stick's DMX-bridge parser). Suppressed
+    // on the AtomS3-PoE Director, which uses Serial as its config console.
+#if defined(ARDUINO) && !defined(NOCT_DMX_ETHERNET)
     Serial.printf("[espnow TX %s%s len=%u]\n", label, ok ? "" : " FAIL", (unsigned)n);
 #else
     (void)ok; (void)label;
@@ -417,7 +413,8 @@ bool EspNowBroadcastDriver::maybe_send_heartbeat() {
     const uint32_t now = now_ms();
     const uint32_t gap = now - last_tx_ms_;
     if (gap < kHeartbeatPeriodMs) return false;
-#ifdef ARDUINO
+    // Suppressed on the AtomS3-PoE Director (Serial is its config console).
+#if defined(ARDUINO) && !defined(NOCT_DMX_ETHERNET)
     Serial.printf("[HBEAT] firing after %lu ms gap since last TX\n",
                   static_cast<unsigned long>(gap));
 #endif
