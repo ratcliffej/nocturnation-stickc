@@ -30,6 +30,7 @@
 #include "output_bindings/output_binding.h"
 #include "output_bindings/output_binding_context.h"
 #include "transport/espnow/frame.h"
+#include "transport/espnow/tofu_lock.h"
 #include "transport/quality.h"
 
 namespace nocturnation {
@@ -197,6 +198,15 @@ private:
     // off any sequenced protocol (future BLE / IR ack channels) the same
     // way it does ESP-NOW today.
     transport::SignalQuality quality_;
+
+    // TOFU lock - partitions the Lume between potentially-multiple
+    // Directors broadcasting on the same channel. Port of the
+    // Tildagon's TofuLock for EMF 2026 (multi-show partitioning).
+    // First-eligible-frame establishes the lock; subsequent frames
+    // from any other source_id are silently dropped. Expires after
+    // 10 s of silence from the locked source (matches kRescanMs so
+    // channel-rescan and TOFU re-lock fire on the same edge).
+    transport::espnow::TofuLock tofu_;
 
     // Deferred LIGHT_PULSE queue (single slot; new arrivals replace).
     // The ESP-NOW receive callback runs on the WiFi task; calling

@@ -66,6 +66,7 @@ void LumeMode::enter() {
     fallback_faded_   = false;
     last_pip_draw_ms_ = 0;
     lock_acquired_ms_ = 0;
+    tofu_.clear();
 
     // Load operator-configured preferences from NVS. Channel preference
     // picks hobby (1) / show (11) / advanced (6) / auto-scan (0) per
@@ -307,6 +308,12 @@ void LumeMode::loop_tick() {
         idx = (idx + 1) % kScanOrderCount;
         current_listen_chan_ = kScanOrder[idx];
         last_chan_switch_ms_ = now;
+        // Channel change invalidates any TOFU lock - a Director on
+        // the new channel has its own source_id, and we don't want
+        // a stale lock from the prior channel rejecting the first
+        // frame on the new one. clear() lets the next admit() on
+        // the new channel re-establish.
+        tofu_.clear();
         if (auto* radio = hal::HAL::esp_now()) {
             radio->set_channel(current_listen_chan_);
 #ifdef ARDUINO
@@ -314,6 +321,20 @@ void LumeMode::loop_tick() {
                           (unsigned)current_listen_chan_);
 #endif
         }
+    }
+
+    // TOFU lock-expiry tick. Returns true exactly once on the
+    // expiring edge (10 s of silence from the locked Director).
+    // The next admitted frame on this channel re-establishes the
+    // lock - so at a multi-show venue, if Director A goes silent
+    // and Director B keeps broadcasting, the Lume drifts to B
+    // within ~10 s. Logs the edge so the Director-loss diagnosis
+    // surfaces in the serial monitor alongside NO SIGNAL and the
+    // signal-loss-fallback wash transitions.
+    if (tofu_.tick(now)) {
+#ifdef ARDUINO
+        Serial.println("[espnow] lume TOFU lock expired; ready to relock");
+#endif
     }
 
     // Status pip refreshes at 10 Hz. The pip overlays a full-screen
@@ -717,12 +738,52 @@ void LumeMode::fan_out_clear_screen(const transport::espnow::ClearScreenPayload&
 void LumeMode::on_recv(const hal::ESPNowMessage& m) {
     using namespace transport::espnow;
 
-    // Any frame received - including duplicates - counts as the
-    // Director being alive. Update rx_count_ and last_rx_ms_ before
-    // the dedup gate so Director-loss detection isn't fooled by
-    // redundant retransmissions.
+    // Parse the header first. A malformed frame (magic mismatch /
+    // version mismatch / etc.) is dropped before any liveness or
+    // TOFU update - it's not a NocturNation frame, so it doesn't
+    // count as our Director being alive.
+    Header hdr{};
+    if (decode_header(m.data, m.len, hdr) != DecodeResult::Ok) {
+#ifdef ARDUINO
+        Serial.printf("[espnow RX BAD HDR] len=%u: ",
+                      (unsigned)m.len);
+        for (size_t i = 0; i < m.len && i < 32; ++i) {
+            Serial.printf("%02X ", m.data[i]);
+        }
+        Serial.println();
+#endif
+        return;
+    }
+
+    // TOFU lock (EMF prep 2026-06-24): partition the Lume between
+    // potentially-multiple Directors broadcasting on the same channel.
+    // First-eligible-frame establishes the lock; subsequent frames
+    // from any other Director are silently dropped. Display-family
+    // broadcasts (orchestrator-origin, source_id = 0xFF) are admitted
+    // once a Director session exists, without resetting the
+    // liveness timer. This is the StickC port of the Tildagon's
+    // TofuLock - without it a StickC-based Lume at EMF would
+    // render BOTH shows' content simultaneously.
+    const uint32_t admit_now_ms = millis();
+    if (!tofu_.admit(hdr.message_type,
+                     hdr.source_id,
+                     current_listen_chan_,
+                     admit_now_ms)) {
+#ifdef ARDUINO
+        Serial.printf("[RXdrop %02X src=%02X]\n",
+                      static_cast<unsigned>(hdr.message_type),
+                      static_cast<unsigned>(hdr.source_id));
+#endif
+        return;
+    }
+
+    // Past the TOFU gate: this frame is from our Director (or an
+    // orchestrator-bridged display broadcast under a held lock).
+    // Count it toward Director-liveness. Includes duplicates -
+    // redundant retransmits should refresh the liveness timer the
+    // same way unique frames do.
     rx_count_++;
-    last_rx_ms_ = millis();
+    last_rx_ms_ = admit_now_ms;
 
     const bool was_no_signal = no_signal_;
     no_signal_ = false;
@@ -751,18 +812,6 @@ void LumeMode::on_recv(const hal::ESPNowMessage& m) {
 #endif
     }
 
-    Header hdr{};
-    if (decode_header(m.data, m.len, hdr) != DecodeResult::Ok) {
-#ifdef ARDUINO
-        Serial.printf("[espnow RX BAD HDR] len=%u: ",
-                      (unsigned)m.len);
-        for (size_t i = 0; i < m.len && i < 32; ++i) {
-            Serial.printf("%02X ", m.data[i]);
-        }
-        Serial.println();
-#endif
-        return;
-    }
     last_source_id_ = hdr.source_id;
     last_msg_type_  = static_cast<uint8_t>(hdr.message_type);
 
