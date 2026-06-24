@@ -118,6 +118,14 @@ void setup() {
         nocturnation::output_bindings::lume_text_instance());
 
     nocturnation::modes::ModeMachine::begin();
+
+#if defined(NOCT_HEADLESS_DMX_BRIDGE)
+    // Dedicated headless DMX Director (AtomS3-PoE): no screen or buttons to
+    // navigate the menu, so jump straight into DmxBridge. It owns the
+    // Ethernet sACN/Art-Net adapter + ESP-NOW broadcast for its whole life.
+    nocturnation::modes::ModeMachine::switch_to(
+        nocturnation::modes::ModeId::DmxBridge);
+#endif
 }
 
 void loop() {
