@@ -1101,21 +1101,27 @@ void ConfigMode::draw_dir_id_edit() {
     // operator can see which one Btn1 will increment. "P:" prefix
     // matches the Lume-side TofuLock label convention so the value
     // reads identically on Director Config and Lume screens.
-    char hex_line[20];
+    //
+    // Format = "P:" + hi_open + hi_char + hi_close + lo_open + lo_char + lo_close
+    //
+    // Examples (DirID = 0x4F):
+    //   cursor on hi:    "P:[4]F"
+    //   cursor on lo:    "P: 4[F]"
+    //   cursor on roll:  "P: 4 F"  (neither nibble bracketed)
     const bool on_hi = (dir_id_edit_cursor_ == DirIdCursor::HiNibble);
     const bool on_lo = (dir_id_edit_cursor_ == DirIdCursor::LoNibble);
-    std::snprintf(hex_line, sizeof(hex_line), "P:%s%c%s%c%s",
-                  on_hi ? "[" : " ", kHex[hi], on_hi ? "]" : " ",
-                  on_lo ? "["  : "",  kHex[lo]);
-    // Append trailing bracket separately so it doesn't appear when
-    // the cursor isn't on the low nibble - keeps the line balanced.
-    if (on_lo) {
-        const size_t n = std::strlen(hex_line);
-        if (n + 1 < sizeof(hex_line)) {
-            hex_line[n]     = ']';
-            hex_line[n + 1] = '\0';
-        }
-    }
+    const char* hi_open  = on_hi ? "[" : " ";
+    const char* hi_close = on_hi ? "]" : " ";
+    const char* lo_open  = on_lo ? "[" : "";
+    const char* lo_close = on_lo ? "]" : "";
+    char hex_line[20];
+    // %s + %c + %s + %s + %c + %s - all-matching-types this time.
+    // The previous version had %c consuming a const char* and %s
+    // consuming a char (which dereferenced an arbitrary integer as
+    // a pointer) - reliable LCD-not-rendering + reboot-on-button bug.
+    std::snprintf(hex_line, sizeof(hex_line), "P:%s%c%s%s%c%s",
+                  hi_open, kHex[hi], hi_close,
+                  lo_open, kHex[lo], lo_close);
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         10, 36, hex_line, on_hi || on_lo ? YELLOW : WHITE, BLACK, 3});
 
