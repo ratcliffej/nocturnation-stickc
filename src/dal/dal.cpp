@@ -403,6 +403,12 @@ void DAL::apply_persisted_strip_settings() {
     if (hal::HAL::led_strip() == nullptr) return;
     auto* strip_drv = led_strip_driver_instance();
     if (!strip_drv) return;
+    // Apply the host's max-brightness cap FIRST so the subsequent
+    // set_brightness_percent call clamps to it. The cap is a per-host
+    // power-budget property declared in the HAL backend; the Atom
+    // Lite caps at 10 % because its supply can't sustain anything
+    // higher without brownout (see hal_atomlite.cpp).
+    strip_drv->set_max_brightness_percent(hal::HAL::max_strip_brightness_percent());
     strip_drv->set_brightness_percent(modes::persistence::load_strip_brightness());
     strip_drv->set_group_size       (modes::persistence::load_strip_group_size());
     strip_drv->set_pixel_count      (modes::persistence::load_strip_chain_size());

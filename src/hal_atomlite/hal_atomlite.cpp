@@ -100,6 +100,18 @@ Buttons*  HAL::buttons()   { return &s_buttons; }
 IMU*      HAL::imu()       { return nullptr; }
 Battery*  HAL::battery()   { return nullptr; }
 LedStrip* HAL::led_strip() { return &s_led_strip; }
+// Atom Lite power budget: 200 mAh battery base + 500 mA USB hub
+// limit (when bench-tested off a hub). A 30-pixel SK6812 strip at
+// full white draws ~60 mA / pixel = 1.8 A at 100 % brightness. At
+// 25 % that's still ~450 mA, right at the USB-hub edge and routinely
+// brownout-rebooting the chip. 10 % (~180 mA peak) fits inside every
+// supply the Atom plausibly runs from, including the integrated
+// battery base.
+//
+// Hard ceiling, not default - the LedStripDriver clamps any
+// set_brightness_percent call above this. Operator can't push the
+// Atom into brownout by mis-cycling the Btn1 brightness levels.
+uint8_t HAL::max_strip_brightness_percent() { return 10; }
 
 }  // namespace hal
 }  // namespace nocturnation

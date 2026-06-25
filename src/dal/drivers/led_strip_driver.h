@@ -143,6 +143,18 @@ public:
     void set_brightness_percent(uint8_t pct);
     uint8_t brightness_percent() const { return brightness_pct_; }
 
+    // Per-host maximum brightness cap. set_brightness_percent above
+    // clamps to this; set via DAL::apply_persisted_strip_settings()
+    // from the HAL's max_strip_brightness_percent() at mode entry.
+    //
+    // Atom Lite caps at 10 % because its power budget (200 mAh
+    // battery base + USB-hub-typical 500 mA) cannot sustain a
+    // 30-pixel SK6812 strip at 25 %+ - brownout-reboot territory.
+    // StickC Plus2 / S3 cap at 100 % (no cap) because they have a
+    // proper battery + USB-C and operator-cycle resolution is enough.
+    void set_max_brightness_percent(uint8_t pct);
+    uint8_t max_brightness_percent() const { return max_brightness_pct_; }
+
     // -------------------------------------------------------------------------
     // Group size (Epic 12 follow-on, Config > LED Strip > Group Size)
     // -------------------------------------------------------------------------
@@ -205,7 +217,8 @@ private:
     // driver matches pre-brightness-feature behaviour. LumeMode loads
     // the persisted value via persistence::load_strip_brightness() and
     // applies it on enter().
-    uint8_t brightness_pct_ = 100;
+    uint8_t brightness_pct_     = 100;
+    uint8_t max_brightness_pct_ = 100;   // host caps to this; see set_max_brightness_percent
 
     // Group size for CHANCE rolls. 1 = per-pixel (original Phase 1).
     uint16_t group_size_ = 1;

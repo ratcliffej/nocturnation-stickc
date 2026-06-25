@@ -525,6 +525,20 @@ public:
     // Returns nullptr on backends without a Capability::LedStrip
     // declaration. See class LedStrip above for the contract.
     static LedStrip* led_strip();
+
+    // Maximum allowed strip brightness percent for this host. Per-host
+    // power-budget cap; LedStripDriver clamps set_brightness_percent
+    // to this value. Defaults to 100 (no cap) for hosts with adequate
+    // supply (StickC Plus2 / S3 - battery + USB-C). Hosts with tighter
+    // budgets override; the Atom Lite returns 10 (200 mAh battery base
+    // + 500 mA USB hub limit cannot sustain a 30-pixel SK6812 strip at
+    // higher levels without brownout-resetting the chip).
+    //
+    // Called from DAL::apply_persisted_strip_settings() at each mode
+    // entry, BEFORE the persisted-brightness write, so the persisted
+    // value is clamped against the host's cap and operator misclicks
+    // can't push the device into brownout.
+    static uint8_t   max_strip_brightness_percent();
 };
 
 }  // namespace hal

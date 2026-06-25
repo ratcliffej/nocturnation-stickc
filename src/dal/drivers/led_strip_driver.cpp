@@ -106,7 +106,16 @@ void LedStripDriver::set_overlay_pixel_0(uint8_t r, uint8_t g, uint8_t b,
 
 void LedStripDriver::set_brightness_percent(uint8_t pct) {
     if (pct > 100) pct = 100;
+    if (pct > max_brightness_pct_) pct = max_brightness_pct_;
     brightness_pct_ = pct;
+}
+
+void LedStripDriver::set_max_brightness_percent(uint8_t pct) {
+    if (pct > 100) pct = 100;
+    max_brightness_pct_ = pct;
+    // Clamp the live brightness immediately so a max-cap reduction
+    // takes effect at the next render, not "eventually".
+    if (brightness_pct_ > max_brightness_pct_) brightness_pct_ = max_brightness_pct_;
 }
 
 void LedStripDriver::set_group_size(uint16_t n) {

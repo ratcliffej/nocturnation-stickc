@@ -154,6 +154,8 @@ Buttons* HAL::buttons()  { return &s_buttons; }
 IMU*     HAL::imu()      { return &s_imu; }
 Battery* HAL::battery()  { return &s_battery; }
 LedStrip* HAL::led_strip() { return &s_led_strip; }
+// S3 has battery + USB-C supply. Same envelope as Plus2; no cap.
+uint8_t HAL::max_strip_brightness_percent() { return 100; }
 
 }  // namespace hal
 }  // namespace nocturnation

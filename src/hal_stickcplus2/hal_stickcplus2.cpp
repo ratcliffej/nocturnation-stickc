@@ -174,6 +174,9 @@ Buttons* HAL::buttons()  { return &s_buttons; }
 IMU*     HAL::imu()      { return &s_imu; }
 Battery* HAL::battery()  { return &s_battery; }
 LedStrip* HAL::led_strip() { return &s_led_strip; }
+// Plus2 has battery + USB-C supply. Operator-cycle resolution is
+// sufficient; no firmware cap.
+uint8_t HAL::max_strip_brightness_percent() { return 100; }
 
 }  // namespace hal
 }  // namespace nocturnation

@@ -83,6 +83,7 @@ Buttons* HAL::buttons()  { return nullptr; }
 IMU*     HAL::imu()      { return nullptr; }
 Battery* HAL::battery()  { return nullptr; }
 LedStrip* HAL::led_strip() { return nullptr; }
+uint8_t HAL::max_strip_brightness_percent() { return 100; }
 
 }  // namespace hal
 }  // namespace nocturnation

@@ -71,6 +71,7 @@ Buttons*  HAL::buttons()   { return nullptr; }
 IMU*      HAL::imu()       { return nullptr; }
 Battery*  HAL::battery()   { return nullptr; }
 LedStrip* HAL::led_strip() { return nullptr; }
+uint8_t HAL::max_strip_brightness_percent() { return 100; }
 
 }  // namespace hal
 }  // namespace nocturnation
@@ -439,6 +440,42 @@ static void test_brightness_does_not_scale_overlay(void) {
         "wash at 1 % should be near-zero red, overlay should be untouched");
 }
 
+static void test_max_brightness_default_is_100(void) {
+    // Fresh driver instance defaults to no cap (100 %).
+    auto* drv = led_strip_driver_instance();
+    drv->set_max_brightness_percent(100);   // explicit (other tests may have lowered it)
+    TEST_ASSERT_EQUAL_UINT8(100, drv->max_brightness_percent());
+    drv->set_brightness_percent(75);
+    TEST_ASSERT_EQUAL_UINT8(75, drv->brightness_percent());
+}
+
+static void test_max_brightness_caps_set_brightness(void) {
+    // The Atom Lite case: cap at 10 %, set to 50 %, observe clamp.
+    auto* drv = led_strip_driver_instance();
+    drv->set_max_brightness_percent(10);
+    drv->set_brightness_percent(50);
+    TEST_ASSERT_EQUAL_UINT8(10, drv->brightness_percent());
+    // Setting BELOW the cap is unchanged.
+    drv->set_brightness_percent(5);
+    TEST_ASSERT_EQUAL_UINT8(5, drv->brightness_percent());
+    // Restore default for following tests.
+    drv->set_max_brightness_percent(100);
+}
+
+static void test_max_brightness_clamps_existing_value(void) {
+    // Sequence: set brightness HIGH, then drop the max cap. The
+    // already-applied brightness should immediately clamp - the
+    // cap is hardware safety, not advisory; it can't wait for the
+    // next set_brightness_percent call.
+    auto* drv = led_strip_driver_instance();
+    drv->set_max_brightness_percent(100);
+    drv->set_brightness_percent(75);
+    TEST_ASSERT_EQUAL_UINT8(75, drv->brightness_percent());
+    drv->set_max_brightness_percent(10);
+    TEST_ASSERT_EQUAL_UINT8(10, drv->brightness_percent());
+    drv->set_max_brightness_percent(100);   // restore for following tests
+}
+
 static void test_overlay_disabled_yields_pixel_0_to_wash(void) {
     auto* drv = led_strip_driver_instance();
     drv->send_wash(0, make_wash(200, 0, 0));
@@ -472,6 +509,9 @@ int main(int, char**) {
     RUN_TEST(test_overlay_writes_pixel_0_over_wash);
     RUN_TEST(test_brightness_scales_wash);
     RUN_TEST(test_brightness_does_not_scale_overlay);
+    RUN_TEST(test_max_brightness_caps_set_brightness);
+    RUN_TEST(test_max_brightness_clamps_existing_value);
+    RUN_TEST(test_max_brightness_default_is_100);
     RUN_TEST(test_overlay_disabled_yields_pixel_0_to_wash);
     return UNITY_END();
 }
