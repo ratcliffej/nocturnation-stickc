@@ -87,6 +87,8 @@ void ConfigMode::enter() {
     confirm_until_ms_ = 0;
     last_drawn_battery_ = -2;     // force first battery redraw
     level_tuning_audio_active_ = false;
+    dir_id_edit_active_ = false;
+    dir_id_edit_cursor_ = DirIdCursor::HiNibble;
     draw();
 }
 
@@ -153,6 +155,15 @@ void ConfigMode::on_button_event(const ButtonPressEvent& ev) {
                 && pixmob_state_ != PixMobState::Menu) {
             pixmob_state_     = PixMobState::Menu;
             confirm_until_ms_ = 0;
+            draw();
+        } else if (level_ == Level::Sub
+                && active_sub_ == SubMenu::EspNow
+                && dir_id_edit_active_) {
+            // Hex-edit drill-down exits back to the EspNow menu.
+            // Value is already persisted (saved on every edit), so
+            // no save action is needed here.
+            dir_id_edit_active_ = false;
+            dir_id_edit_cursor_ = DirIdCursor::HiNibble;
             draw();
         } else if (level_ == Level::Sub && active_picker_ != SubMenu::None) {
             // Came in via a picker - return to the picker, not Top.
@@ -919,6 +930,15 @@ uint8_t ConfigMode::cycle_lume_channel(uint8_t c) {
 }
 
 void ConfigMode::handle_espnow(const ButtonPressEvent& ev) {
+    // While the DirectorId hex-edit screen is open, route everything
+    // through its dedicated handler. The drill-down is entered when
+    // the operator A-clicks the DirID row below; B-hold inside the
+    // editor exits back to this menu (handled in handle_root_b_hold).
+    if (dir_id_edit_active_) {
+        handle_dir_id_edit(ev);
+        return;
+    }
+
     if (ev.id == ButtonId::Btn2) {
         sub_selected_ = (sub_selected_ + 1) % kEspNowFunctionalItemCount;
         draw();
@@ -931,12 +951,12 @@ void ConfigMode::handle_espnow(const ButtonPressEvent& ev) {
                     cycle_director_channel(persistence::load_director_channel()));
                 break;
             case EspNowItem::DirectorId: {
-                // Re-roll the Director's persisted Performance-range id
-                // and persist. The new id takes effect at the next
-                // Director start_broadcast (operator returns to Menu
-                // and re-enters Director mode for it to apply).
-                const uint8_t new_id = persistence::reroll_director_perf_source_id();
-                (void)new_id;   // shown via the redraw below; no Serial here
+                // Drill into the hex-edit screen. Three cursor
+                // positions (high nibble / low nibble / re-roll) -
+                // see handle_dir_id_edit. The value the operator
+                // sees here was the persisted value at draw time.
+                dir_id_edit_active_ = true;
+                dir_id_edit_cursor_ = DirIdCursor::HiNibble;
                 break;
             }
             case EspNowItem::SlaveChannel:
@@ -954,7 +974,73 @@ void ConfigMode::handle_espnow(const ButtonPressEvent& ev) {
     }
 }
 
+// -------------------------------------------------------------------------
+// Director ID hex editor (drill-down from EspNow > DirectorId)
+// -------------------------------------------------------------------------
+
+uint8_t ConfigMode::cycle_dir_id_high_nibble(uint8_t current) {
+    // Performance range is 0x40..0xFE, so the high nibble cycles
+    // through {4, 5, ..., F}. Increment-only with wrap; the low
+    // nibble carries; if the result would be 0xFF (reserved for
+    // broadcast) we snap to 0xFE.
+    uint8_t hi = (current >> 4) & 0x0F;
+    hi = (hi >= 0x0F) ? 0x04 : static_cast<uint8_t>(hi + 1);
+    if (hi < 0x04) hi = 0x04;
+    const uint8_t lo = current & 0x0F;
+    uint8_t v = static_cast<uint8_t>((hi << 4) | lo);
+    if (v == 0xFF) v = 0xFE;
+    return v;
+}
+
+uint8_t ConfigMode::cycle_dir_id_low_nibble(uint8_t current) {
+    // Low nibble cycles {0..F}. If the high nibble is F and the low
+    // would wrap to F (giving 0xFF), snap to 0 - the operator
+    // chooses 0xFE by stepping through {F0..FE}, and the wrap from
+    // FE goes to F0 (matching the "skipped" 0xFF).
+    uint8_t lo = current & 0x0F;
+    const uint8_t hi = (current >> 4) & 0x0F;
+    lo = (lo >= 0x0F) ? 0x00 : static_cast<uint8_t>(lo + 1);
+    uint8_t v = static_cast<uint8_t>((hi << 4) | lo);
+    if (v == 0xFF) v = 0xF0;   // skip broadcast slot
+    return v;
+}
+
+void ConfigMode::handle_dir_id_edit(const ButtonPressEvent& ev) {
+    if (ev.id == ButtonId::Btn2) {
+        // Cycle cursor: hi -> lo -> re-roll -> hi.
+        const uint8_t next = (static_cast<uint8_t>(dir_id_edit_cursor_) + 1)
+                             % kDirIdCursorCount;
+        dir_id_edit_cursor_ = static_cast<DirIdCursor>(next);
+        draw();
+        return;
+    }
+    if (ev.id == ButtonId::Btn1) {
+        switch (dir_id_edit_cursor_) {
+            case DirIdCursor::HiNibble: {
+                const uint8_t v = cycle_dir_id_high_nibble(
+                    persistence::load_director_perf_source_id());
+                persistence::save_director_perf_source_id(v);
+                break;
+            }
+            case DirIdCursor::LoNibble: {
+                const uint8_t v = cycle_dir_id_low_nibble(
+                    persistence::load_director_perf_source_id());
+                persistence::save_director_perf_source_id(v);
+                break;
+            }
+            case DirIdCursor::Reroll:
+                (void)persistence::reroll_director_perf_source_id();
+                break;
+        }
+        draw();
+    }
+}
+
 void ConfigMode::draw_espnow() {
+    if (dir_id_edit_active_) {
+        draw_dir_id_edit();
+        return;
+    }
     DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         10, 5, "ESP-NOW", WHITE, BLACK, 2});
@@ -998,6 +1084,52 @@ void ConfigMode::draw_espnow() {
     }
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         10, 122, "B: cycle  A: select  B-hold: back",
+        WHITE, BLACK, 1});
+}
+
+void ConfigMode::draw_dir_id_edit() {
+    DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 5, "Set DirID", WHITE, BLACK, 2});
+
+    const uint8_t v  = persistence::load_director_perf_source_id();
+    const uint8_t hi = (v >> 4) & 0x0F;
+    const uint8_t lo = v & 0x0F;
+    static constexpr const char* kHex = "0123456789ABCDEF";
+
+    // Cursor-aware hex display - bracket the active nibble so the
+    // operator can see which one Btn1 will increment. "P:" prefix
+    // matches the Lume-side TofuLock label convention so the value
+    // reads identically on Director Config and Lume screens.
+    char hex_line[20];
+    const bool on_hi = (dir_id_edit_cursor_ == DirIdCursor::HiNibble);
+    const bool on_lo = (dir_id_edit_cursor_ == DirIdCursor::LoNibble);
+    std::snprintf(hex_line, sizeof(hex_line), "P:%s%c%s%c%s",
+                  on_hi ? "[" : " ", kHex[hi], on_hi ? "]" : " ",
+                  on_lo ? "["  : "",  kHex[lo]);
+    // Append trailing bracket separately so it doesn't appear when
+    // the cursor isn't on the low nibble - keeps the line balanced.
+    if (on_lo) {
+        const size_t n = std::strlen(hex_line);
+        if (n + 1 < sizeof(hex_line)) {
+            hex_line[n]     = ']';
+            hex_line[n + 1] = '\0';
+        }
+    }
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 36, hex_line, on_hi || on_lo ? YELLOW : WHITE, BLACK, 3});
+
+    // Re-roll cursor position - a one-liner action labelled like a
+    // menu item. Highlighted when the cursor is on it.
+    const bool on_roll = (dir_id_edit_cursor_ == DirIdCursor::Reroll);
+    char roll_line[24];
+    std::snprintf(roll_line, sizeof(roll_line), "%s Re-roll",
+                  on_roll ? ">" : " ");
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 86, roll_line, on_roll ? YELLOW : WHITE, BLACK, 2});
+
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 122, "A: change  B: next  B-hold: back",
         WHITE, BLACK, 1});
 }
 

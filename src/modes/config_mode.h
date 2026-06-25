@@ -290,10 +290,13 @@ private:
     // the top-level Config > Group item (direct action).
     //
     // DirectorId (added 2026-06-24, EMF prep) shows the device's
-    // persisted Performance-range source id and A-click re-rolls +
-    // saves a new random one. Operator-facing recourse when two
-    // Directors at a multi-stage venue end up with the same id (low
-    // probability, ~1 in 190, but operationally useful to surface).
+    // persisted Performance-range source id. A-click on the row
+    // drills into a hex-edit screen with three cursor positions:
+    // high nibble / low nibble / re-roll. Knowable IDs matter for
+    // upstream tagging - e.g. a Tildagon show can choose a logo /
+    // QR overlay based on which Director it's locked to (stage D
+    // -> 0xD0, etc.), which only works if the operator can pin
+    // the value rather than relying on a random roll.
     enum class EspNowItem : uint8_t {
         MasterChannel = 0,
         DirectorId,
@@ -302,10 +305,30 @@ private:
     };
     static constexpr size_t kEspNowFunctionalItemCount = 4;
 
+    // DirectorId hex-edit sub-state (entered from EspNow menu by
+    // A-click on the DirectorId row). Three cursor positions cycled
+    // by Btn2: 0 = high nibble, 1 = low nibble, 2 = re-roll. Btn1
+    // acts on the active cursor (increment nibble OR roll). The
+    // edited value is saved to NVS on every change so B-hold simply
+    // exits - no explicit Save action needed.
+    enum class DirIdCursor : uint8_t { HiNibble = 0, LoNibble, Reroll };
+    static constexpr size_t kDirIdCursorCount = 3;
+
     static const char* director_channel_label(uint8_t c);
     static const char* lume_channel_label(uint8_t c);
     static uint8_t cycle_director_channel(uint8_t c);
     static uint8_t cycle_lume_channel(uint8_t c);
+
+    bool        dir_id_edit_active_ = false;
+    DirIdCursor dir_id_edit_cursor_ = DirIdCursor::HiNibble;
+
+    void handle_dir_id_edit(const dal::ButtonPressEvent& ev);
+    void draw_dir_id_edit();
+    // Mutate the persisted value (cycling within the Performance
+    // range 0x40..0xFE), then return what was saved. Pure logic in
+    // the header for testability without instantiating ConfigMode.
+    static uint8_t cycle_dir_id_high_nibble(uint8_t current);
+    static uint8_t cycle_dir_id_low_nibble (uint8_t current);
 
     void handle_espnow(const dal::ButtonPressEvent& ev);
     void draw_espnow();
