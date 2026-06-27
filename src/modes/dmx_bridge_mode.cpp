@@ -3,8 +3,13 @@
 #include "dmx_bridge_mode.h"
 
 #include "dal/dal.h"
+#if defined(NOCT_DMX_ETHERNET)
+#include "dal/drivers/ethernet_dmx_adapter.h"
+#include "dal/drivers/net_config.h"
+#else
 #include "dal/drivers/dmx_usb_cdc_adapter.h"
-#include "dal/drivers/dmx_input_parser.h"   // kLabelEspNowBroadcast
+#include "dal/drivers/dmx_input_parser.h"   // kLabelEspNowBroadcast (passthrough)
+#endif
 #include "../dal/drivers/espnow_broadcast_driver.h"
 #include "hal/hal.h"                         // HAL::esp_now() for passthrough
 #include "persistence.h"
@@ -23,6 +28,16 @@ namespace modes {
 using namespace nocturnation::dal;
 using nocturnation::dal::DmxChannelMapper;
 
+// The DMX source differs by board: the Sticks pump Enttec Pro over USB-CDC;
+// the AtomS3-PoE Director receives sACN/Art-Net over Ethernet. Both adapters
+// expose the same begin/end/poll/parser/bytes_read surface, so the rest of
+// the mode is source-agnostic.
+#if defined(NOCT_DMX_ETHERNET)
+using DmxAdapter = EthernetDmxAdapter;
+#else
+using DmxAdapter = DmxUsbCdcAdapter;
+#endif
+
 namespace {
 
 // Adapter accessor. Local-static so the global Serial isn't touched
@@ -31,13 +46,19 @@ namespace {
 // dmx_adapter_or_null() so the .cpp compiles on the host test envs
 // (e.g. native_modes which pulls all of src/modes/ in).
 #ifdef ARDUINO
-DmxUsbCdcAdapter& dmx_adapter() {
-    static DmxUsbCdcAdapter inst;
-    return inst;
-}
-DmxUsbCdcAdapter* dmx_adapter_or_null() { return &dmx_adapter(); }
+DmxAdapter& dmx_adapter() {
+#if defined(NOCT_DMX_ETHERNET)
+    // Shared singleton so the serial console can read the same adapter's
+    // live state (frame counts, channel values).
+    return ethernet_dmx_adapter_instance();
 #else
-DmxUsbCdcAdapter* dmx_adapter_or_null() { return nullptr; }
+    static DmxAdapter inst;
+    return inst;
+#endif
+}
+DmxAdapter* dmx_adapter_or_null() { return &dmx_adapter(); }
+#else
+DmxAdapter* dmx_adapter_or_null() { return nullptr; }
 #endif
 
 // Sink that forwards mapper events to DAL::render_fx / render_wash.
@@ -56,13 +77,15 @@ DalRenderSink s_sink;
 // Restoring the console baud is a separate concern from any one mode;
 // declare it here so the on_button_event back-gesture and exit() can
 // both call it.
-#ifdef ARDUINO
+#if defined(ARDUINO) && !defined(NOCT_DMX_ETHERNET)
 constexpr uint32_t kConsoleBaud = 115200;
 void restore_console_serial() {
     Serial.end();
     Serial.begin(kConsoleBaud);
 }
 #else
+// The Ethernet DMX source never touches Serial, so there's no console baud
+// to restore (and the native build has no Serial).
 void restore_console_serial() {}
 #endif
 
@@ -147,6 +170,12 @@ void DmxBridgeMode::enter() {
     // Bring up the radio so mapper-emitted LIGHT_PULSE / LIGHT_WASH
     // events reach the fleet. Reuses the same broadcast driver
     // DirectorMode uses.
+#if defined(NOCT_DMX_ETHERNET)
+    // Atom: the ESP-NOW fleet channel comes from the network config (set on
+    // the serial console), not the Stick's button-set director channel.
+    esp_now_broadcast_driver_instance()->start_broadcast(
+        net_config_load().wifi_channel);
+#else
     esp_now_broadcast_driver_instance()->start_broadcast(
         persistence::load_director_channel());
     // Raw-RGB DMX scenes can drive the local strip to full white
@@ -154,11 +183,13 @@ void DmxBridgeMode::enter() {
     // the operator's Config-menu cap is honoured here too. Without
     // this, the strip ran at the default 100 % regardless of
     // setting - the brownout symptom on raw-white slider scenes.
+    // (Sticks only - the AtomS3-PoE Director has no LED strip.)
     DAL::apply_persisted_strip_settings();
+#endif
 
     // Switch the USB-CDC peripheral to the Enttec Pro baud + start
     // the parser pump.
-    if (DmxUsbCdcAdapter* adapter = dmx_adapter_or_null()) {
+    if (DmxAdapter* adapter = dmx_adapter_or_null()) {
         adapter->begin();
     }
 
@@ -173,7 +204,7 @@ void DmxBridgeMode::exit() {
     // of which group they're configured for.
     DAL::render_wash_end(kExitClearTarget, /*release_time=*/10);
 
-    if (DmxUsbCdcAdapter* adapter = dmx_adapter_or_null()) {
+    if (DmxAdapter* adapter = dmx_adapter_or_null()) {
         adapter->end();
     }
     restore_console_serial();
@@ -185,29 +216,28 @@ void DmxBridgeMode::exit() {
 void DmxBridgeMode::loop_tick() {
     const uint32_t now = millis();
 
-    // Drain whatever bytes the orchestrator has written since the last
-    // tick. Two distinct frame types share the wire:
-    //   - label 0x06 DMX universes: every-tick repaint; "last value
-    //     wins" semantically, so it's safe to inspect parser state
-    //     AFTER poll() returns and act on the latest universe only.
-    //   - label 0x10 ESP-NOW passthrough: each frame is a discrete
-    //     event (one display cue per frame); EVERY frame matters.
-    //     Bench bug: when poll() drained a universe + a passthrough +
-    //     another universe in one cycle, the parser's `last_label`
-    //     ended on the trailing universe and the passthrough was
-    //     silently dropped. Deterministic miss for any lyric whose
-    //     emission landed sandwiched between universes (was the root
-    //     cause of "And we are legends every day" always failing -
-    //     scheduler + 50 fps universe cadence produced the same
-    //     interleave on every play). Fix: dispatch passthrough INSIDE
-    //     the byte-drain loop via the new poll() callback, so every
-    //     FrameComplete is acted on individually.
-    DmxUsbCdcAdapter* adapter = dmx_adapter_or_null();
+    // Drain whatever bytes arrived since the last tick. On the USB wire two
+    // frame types share it: label 0x06 DMX universes (last-wins, acted on
+    // after poll) and label 0x10 ESP-NOW passthrough (each frame is a
+    // discrete display cue - EVERY frame matters, so it's dispatched inline
+    // via the poll() callback rather than risk a passthrough being dropped
+    // when it lands sandwiched between two universes in one drain). The
+    // Ethernet source delivers only DMX universes, so it needs no callback.
+    DmxAdapter* adapter = dmx_adapter_or_null();
     if (adapter != nullptr) {
+        const uint32_t bytes_before = adapter->bytes_read();
+#if defined(NOCT_DMX_ETHERNET)
+        const size_t fresh = adapter->poll();
+#else
         const size_t fresh = adapter->poll(&DmxBridgeMode::on_parsed_frame_thunk, this);
-        const bool   have_data =
-            (fresh > 0) || (last_frame_seen_ms_ != 0);
-        if (fresh > 0) {
+#endif
+        // Activity = a complete frame OR any bytes/packets read this poll.
+        // Tracking byte flow (not only completed frames) keeps the active
+        // indicator steady when frames complete choppily under a busy loop.
+        const bool   activity =
+            (fresh > 0) || (adapter->bytes_read() != bytes_before);
+        const bool   have_data = activity || (last_frame_seen_ms_ != 0);
+        if (activity) {
             last_frame_seen_ms_ = now;
         }
         if (have_data) {
@@ -236,13 +266,21 @@ void DmxBridgeMode::on_button_event(const dal::ButtonPressEvent& ev) {
 }
 
 void DmxBridgeMode::draw_status() {
+#if defined(NOCT_DMX_ETHERNET)
+    // Headless AtomS3-PoE Director: no LCD - drive the onboard RGB status
+    // LED (red/purple/amber/green diagnostic scheme; health queried inside).
+    const uint32_t now    = millis();
+    const bool     active = (last_frame_seen_ms_ != 0) &&
+        ((now - last_frame_seen_ms_) < kIdleAfterMs);
+    update_status_led(active);
+#else
     DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
 
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         10, 0, "DMX Bridge", YELLOW, BLACK, 1});
 
     const uint32_t now = millis();
-    const DmxUsbCdcAdapter* adapter = dmx_adapter_or_null();
+    const DmxAdapter* adapter = dmx_adapter_or_null();
     const uint32_t frames =
         (adapter != nullptr) ? adapter->parser().frame_count() : 0;
     const uint32_t bytes  =
@@ -284,6 +322,38 @@ void DmxBridgeMode::draw_status() {
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         4, 128, "B-hold: exit  Target 00:00",
         WHITE, BLACK, 1});
+#endif  // NOCT_DMX_ETHERNET
+}
+
+void DmxBridgeMode::update_status_led(bool active) {
+#if defined(NOCT_DMX_ETHERNET)
+    // AtomS3 Lite onboard WS2812 (GPIO 35). neopixelWrite() is the
+    // arduino-esp32 built-in single-pixel driver; low brightness since the
+    // LED is bright and this runs continuously. Diagnostic scheme:
+    //   red    = completely broken: W5500 not detected, or the ESP-NOW
+    //            radio never came up (the fleet can't be driven at all)
+    //   purple = networking fault: W5500 OK but no Ethernet link (cable out)
+    //   amber  = link + radio up, but no DMX flowing (console stopped,
+    //            wrong universe, or nothing patched)
+    //   green  = link up and DMX streaming - all good
+    constexpr int kStatusLedPin = 35;   // AtomS3 Lite onboard WS2812 (38 was dark; trying 35)
+
+    auto*      a        = dmx_adapter_or_null();
+    const bool hw_ok    = (a != nullptr) && a->hardware_present();
+    const bool fleet_ok = esp_now_broadcast_driver_instance()->active();
+
+    if (!hw_ok || !fleet_ok) {
+        neopixelWrite(kStatusLedPin, 40,  0,  0);   // red
+    } else if (!a->link_up()) {
+        neopixelWrite(kStatusLedPin, 28,  0, 40);   // purple
+    } else if (!active) {
+        neopixelWrite(kStatusLedPin, 40, 16,  0);   // amber
+    } else {
+        neopixelWrite(kStatusLedPin,  0, 40,  0);   // green
+    }
+#else
+    (void)active;
+#endif
 }
 
 }  // namespace modes

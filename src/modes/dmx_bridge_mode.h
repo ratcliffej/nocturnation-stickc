@@ -42,10 +42,13 @@ public:
     // LCD redraw cadence; matches other modes.
     static constexpr uint32_t kDrawIntervalMs = 100;
 
-    // "DMX Idle" threshold: if no frame has arrived for this many ms
-    // the header switches from "DMX Active" to "DMX Idle". 750 ms is
-    // ~30 missed QLC+ frames at the default 35-44 Hz rate.
-    static constexpr uint32_t kIdleAfterMs = 750;
+    // "DMX Idle" threshold: how long since the last DMX activity before
+    // the status flips to idle. Set generously - the loop can stall the
+    // serial/UDP poll for a few hundred ms while it fans a frame out over
+    // ESP-NOW, so a tight window briefly reads "idle" even when the console
+    // is streaming continuously (the flap reported on the bench). 1500 ms
+    // absorbs that worst-case poll gap while still flagging a real stop.
+    static constexpr uint32_t kIdleAfterMs = 1500;
 
     // B7: per-group block layout. The DMX universe is sliced into
     // seven uniform 40-channel blocks (broadcast + 6 groups). Each
@@ -142,6 +145,12 @@ private:
     uint8_t   universe_[kUniverseBufferSize] = {0};
 
     void draw_status();
+
+    // Drive a headless board's onboard RGB status LED (AtomS3-PoE) with a
+    // red/purple/amber/green diagnostic scheme. Compiles to a no-op where
+    // there's no such LED. `active` = DMX is flowing right now; the rest of
+    // the health (W5500, link, ESP-NOW) is queried inside.
+    void update_status_led(bool active);
 };
 
 }  // namespace modes
