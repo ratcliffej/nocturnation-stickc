@@ -6,6 +6,8 @@
 
 #include "transport/espnow/frame.h"
 
+#include <cstring>
+
 namespace nocturnation {
 namespace transport {
 namespace espnow {
@@ -67,9 +69,9 @@ void write_header(uint8_t* buf, const Header& hdr,
 }
 
 bool is_known_message_type(uint8_t raw) {
-    // Spec v0.29 §4.3 + Epic 6C Phase D additions. Heartbeat + Light family
-    // (Pulse / Wash / WashEnd / WashPulse) plus the EXTENSION slot. IDs
-    // 0x01, 0x02, 0x04, 0x05 remain reserved; spec forward-compatibility
+    // Spec v0.29 §4.3 + Epic 6C Phase D + Epic 13 additions. Heartbeat
+    // + Light family + Display family + EXTENSION slot. IDs 0x01,
+    // 0x02, 0x04, 0x05 remain reserved; spec forward-compatibility
     // note says inbound frames with unknown types should be silently
     // discarded.
     switch (raw) {
@@ -78,6 +80,10 @@ bool is_known_message_type(uint8_t raw) {
         case static_cast<uint8_t>(MessageType::LightWash):
         case static_cast<uint8_t>(MessageType::LightWashEnd):
         case static_cast<uint8_t>(MessageType::LightWashPulse):
+        case static_cast<uint8_t>(MessageType::TextDisplay):
+        case static_cast<uint8_t>(MessageType::BitmapHeader):
+        case static_cast<uint8_t>(MessageType::BitmapPlane):
+        case static_cast<uint8_t>(MessageType::ClearScreen):
         case static_cast<uint8_t>(MessageType::Extension):
             return true;
         default:
@@ -166,6 +172,92 @@ size_t encode_light_wash_pulse(uint8_t* buf, size_t buf_len, const Header& hdr,
     buf[kHeaderSize + 6] = p.sustain;
     buf[kHeaderSize + 7] = p.release;
     buf[kHeaderSize + 8] = p.chance;
+    return total;
+}
+
+// Epic 13 encoders. The variable-length encoders (TEXT_DISPLAY,
+// BITMAP_PLANE) compute their payload_len from the in-struct length
+// fields and write only the valid byte ranges.
+
+size_t encode_text_display(uint8_t* buf, size_t buf_len, const Header& hdr,
+                           const TextDisplayPayload& p) {
+    if (p.header_len > kTextDisplayMaxHeaderLen) return 0;
+    if (p.body_len   > kTextDisplayMaxBodyLen)   return 0;
+    const size_t payload_len = kTextDisplayMinPayloadLen
+                              + p.header_len + p.body_len;
+    if (payload_len > kMaxPayloadSize) return 0;
+    const size_t total = kHeaderSize + payload_len;
+    if (buf_len < total) return 0;
+    write_header(buf, hdr, MessageType::TextDisplay,
+                 static_cast<uint8_t>(payload_len));
+    size_t o = kHeaderSize;
+    buf[o++] = p.target_group;
+    buf[o++] = p.r;
+    buf[o++] = p.g;
+    buf[o++] = p.b;
+    write_u16_le(buf + o, p.ttl_ms); o += 2;
+    buf[o++] = p.header_len;
+    if (p.header_len) std::memcpy(buf + o, p.header, p.header_len);
+    o += p.header_len;
+    buf[o++] = p.body_len;
+    if (p.body_len) std::memcpy(buf + o, p.body, p.body_len);
+    o += p.body_len;
+    return total;
+}
+
+size_t encode_bitmap_header(uint8_t* buf, size_t buf_len, const Header& hdr,
+                            const BitmapHeaderPayload& p) {
+    if (p.plane_count == 0 || p.plane_count > kBitmapMaxPlanes) return 0;
+    if (p.width  == 0 || p.width  > kBitmapMaxDimension) return 0;
+    if (p.height == 0 || p.height > kBitmapMaxDimension) return 0;
+    constexpr size_t total = kHeaderSize + kBitmapHeaderPayloadLen;
+    if (buf_len < total) return 0;
+    write_header(buf, hdr, MessageType::BitmapHeader, kBitmapHeaderPayloadLen);
+    size_t o = kHeaderSize;
+    buf[o++] = p.target_group;
+    buf[o++] = p.width;
+    buf[o++] = p.height;
+    buf[o++] = p.plane_count;
+    for (size_t i = 0; i < kBitmapMaxPlanes; ++i) {
+        buf[o++] = p.colours[i][0];
+        buf[o++] = p.colours[i][1];
+        buf[o++] = p.colours[i][2];
+    }
+    buf[o++] = p.fit;
+    buf[o++] = p.zoom_pct;
+    buf[o++] = p.overwrite;
+    write_u32_le(buf + o, p.checksum); o += 4;
+    write_u16_le(buf + o, p.ttl_ms);   o += 2;
+    return total;
+}
+
+size_t encode_bitmap_plane(uint8_t* buf, size_t buf_len, const Header& hdr,
+                           const BitmapPlanePayload& p) {
+    if (p.data_len > kBitmapPlaneMaxDataLen) return 0;
+    const size_t payload_len = kBitmapPlaneFixedPrefixLen + p.data_len;
+    if (payload_len > kMaxPayloadSize) return 0;
+    const size_t total = kHeaderSize + payload_len;
+    if (buf_len < total) return 0;
+    write_header(buf, hdr, MessageType::BitmapPlane,
+                 static_cast<uint8_t>(payload_len));
+    size_t o = kHeaderSize;
+    buf[o++] = p.target_group;
+    buf[o++] = p.plane_index;
+    write_u16_le(buf + o, p.byte_offset); o += 2;
+    buf[o++] = p.data_len;
+    if (p.data_len) std::memcpy(buf + o, p.data, p.data_len);
+    o += p.data_len;
+    return total;
+}
+
+size_t encode_clear_screen(uint8_t* buf, size_t buf_len, const Header& hdr,
+                           const ClearScreenPayload& p) {
+    constexpr size_t total = kHeaderSize + kClearScreenPayloadLen;
+    if (buf_len < total) return 0;
+    write_header(buf, hdr, MessageType::ClearScreen, kClearScreenPayloadLen);
+    buf[kHeaderSize + 0] = p.target_group;
+    buf[kHeaderSize + 1] = p.clear_text ? 1 : 0;
+    buf[kHeaderSize + 2] = p.clear_bitmap ? 1 : 0;
     return total;
 }
 
@@ -302,6 +394,133 @@ DecodeResult decode_light_wash_pulse(const Header& hdr,
     out.sustain      = payload[6];
     out.release      = payload[7];
     out.chance       = payload[8];
+    return DecodeResult::Ok;
+}
+
+// Epic 13 decoders. Variable-length decoders validate the wire's
+// length fields against payload_len step by step, populate the
+// struct's *_len fields with the decoded values, and copy the valid
+// bytes (without padding) into the in-struct buffers.
+
+DecodeResult decode_text_display(const Header& hdr,
+                                 const uint8_t* payload, size_t payload_len,
+                                 TextDisplayPayload& out) {
+    if (hdr.message_type != MessageType::TextDisplay) {
+        return DecodeResult::InvalidMessageType;
+    }
+    if (hdr.payload_len != payload_len) {
+        return DecodeResult::PayloadLenMismatch;
+    }
+    // Minimum is "both strings empty" (kTextDisplayMinPayloadLen = 8).
+    if (payload_len < kTextDisplayMinPayloadLen) {
+        return DecodeResult::PayloadLenMismatch;
+    }
+    out.target_group = payload[0];
+    out.r            = payload[1];
+    out.g            = payload[2];
+    out.b            = payload[3];
+    out.ttl_ms       = read_u16_le(payload + 4);
+
+    const uint8_t header_len = payload[6];
+    if (header_len > kTextDisplayMaxHeaderLen) {
+        return DecodeResult::PayloadLenMismatch;
+    }
+    // After header_len we need room for header_bytes + body_len byte.
+    const size_t body_len_offset = 7 + header_len;
+    if (payload_len < body_len_offset + 1) {
+        return DecodeResult::PayloadLenMismatch;
+    }
+    out.header_len = header_len;
+    if (header_len) std::memcpy(out.header, payload + 7, header_len);
+
+    const uint8_t body_len = payload[body_len_offset];
+    if (body_len > kTextDisplayMaxBodyLen) {
+        return DecodeResult::PayloadLenMismatch;
+    }
+    const size_t body_start = body_len_offset + 1;
+    if (payload_len != body_start + body_len) {
+        return DecodeResult::PayloadLenMismatch;
+    }
+    out.body_len = body_len;
+    if (body_len) std::memcpy(out.body, payload + body_start, body_len);
+    return DecodeResult::Ok;
+}
+
+DecodeResult decode_bitmap_header(const Header& hdr,
+                                  const uint8_t* payload, size_t payload_len,
+                                  BitmapHeaderPayload& out) {
+    if (hdr.message_type != MessageType::BitmapHeader) {
+        return DecodeResult::InvalidMessageType;
+    }
+    if (hdr.payload_len != kBitmapHeaderPayloadLen ||
+        payload_len    != kBitmapHeaderPayloadLen) {
+        return DecodeResult::PayloadLenMismatch;
+    }
+    size_t o = 0;
+    out.target_group = payload[o++];
+    out.width        = payload[o++];
+    out.height       = payload[o++];
+    out.plane_count  = payload[o++];
+    if (out.plane_count == 0 || out.plane_count > kBitmapMaxPlanes) {
+        return DecodeResult::PayloadLenMismatch;
+    }
+    if (out.width == 0 || out.width > kBitmapMaxDimension ||
+        out.height == 0 || out.height > kBitmapMaxDimension) {
+        return DecodeResult::PayloadLenMismatch;
+    }
+    for (size_t i = 0; i < kBitmapMaxPlanes; ++i) {
+        out.colours[i][0] = payload[o++];
+        out.colours[i][1] = payload[o++];
+        out.colours[i][2] = payload[o++];
+    }
+    out.fit       = payload[o++];
+    out.zoom_pct  = payload[o++];
+    out.overwrite = payload[o++];
+    out.checksum  = read_u32_le(payload + o); o += 4;
+    out.ttl_ms    = read_u16_le(payload + o); o += 2;
+    return DecodeResult::Ok;
+}
+
+DecodeResult decode_bitmap_plane(const Header& hdr,
+                                 const uint8_t* payload, size_t payload_len,
+                                 BitmapPlanePayload& out) {
+    if (hdr.message_type != MessageType::BitmapPlane) {
+        return DecodeResult::InvalidMessageType;
+    }
+    if (hdr.payload_len != payload_len) {
+        return DecodeResult::PayloadLenMismatch;
+    }
+    if (payload_len < kBitmapPlaneMinPayloadLen) {
+        return DecodeResult::PayloadLenMismatch;
+    }
+    out.target_group = payload[0];
+    out.plane_index  = payload[1];
+    out.byte_offset  = read_u16_le(payload + 2);
+    const uint8_t data_len = payload[4];
+    if (data_len > kBitmapPlaneMaxDataLen) {
+        return DecodeResult::PayloadLenMismatch;
+    }
+    if (payload_len != static_cast<size_t>(kBitmapPlaneFixedPrefixLen) + data_len) {
+        return DecodeResult::PayloadLenMismatch;
+    }
+    out.data_len = data_len;
+    if (data_len) std::memcpy(out.data, payload + 5, data_len);
+    return DecodeResult::Ok;
+}
+
+DecodeResult decode_clear_screen(const Header& hdr,
+                                 const uint8_t* payload, size_t payload_len,
+                                 ClearScreenPayload& out) {
+    if (hdr.message_type != MessageType::ClearScreen) {
+        return DecodeResult::InvalidMessageType;
+    }
+    if (hdr.payload_len != kClearScreenPayloadLen ||
+        payload_len    != kClearScreenPayloadLen) {
+        return DecodeResult::PayloadLenMismatch;
+    }
+    out.target_group = payload[0];
+    out.clear_text   = payload[1];
+    out.clear_bitmap = payload[2];
     return DecodeResult::Ok;
 }
 

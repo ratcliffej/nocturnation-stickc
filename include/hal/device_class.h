@@ -23,10 +23,11 @@ namespace hal {
 
 enum class DeviceClass : uint8_t {
     All            = 0x00,  // addressing wildcard - never returned by a binding
-    Light          = 0x01,  // light-only devices (PixMob X4 bracelets, future LED wristbands)
-    Screen         = 0x02,  // screen-only devices (StickC LCD)
+    Light          = 0x01,  // light-only devices (PixMob X4 bracelets, LED strips)
+    Screen         = 0x02,  // RESERVED - legacy LocalDisplayBinding class, retired in Epic 13
     MultiLedScreen = 0x03,  // multi-LED + screen devices (Tildagon, Epic 5)
-    // 0x04..0xFF reserved.
+    Display        = 0x04,  // Epic 13: text + bitmap rendering surfaces (Stick LCD, Tildagon badge)
+    // 0x05..0xFF reserved.
 };
 
 }  // namespace hal

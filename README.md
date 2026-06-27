@@ -15,6 +15,9 @@ Full documentation lives in the [**nocturnation-docs**](https://github.com/ratcl
 | Document | Audience |
 |---|---|
 | [User manual](https://github.com/ratcliffej/nocturnation-docs/blob/main/manuals/user-manual.md) | Operators setting up a venue. Theory of operation, hardware, firmware install, configuration walk-through, modes and shows, troubleshooting, glossary. |
+| [QLC+ beginner's guide](https://github.com/ratcliffej/nocturnation-docs/blob/main/qlc-plus-beginners-guide.md) | Operators driving NocturNation live from a DMX console. From-zero walkthrough: install QLC+, plug a StickC in, programme scenes and chasers. |
+| [Music orchestrator guide](https://github.com/ratcliffej/nocturnation-docs/blob/main/orchestrator-guide.md) | Operators running a programmed show synchronised to music. Watches the OS now-playing source, walks per-track `.cues` files, drives the same StickC over USB or Art-Net. |
+| [FX library](https://github.com/ratcliffej/nocturnation-docs/blob/main/fx-library.md) | Reference for every FX the orchestrator can fire: parameters, units, defaults. Generated from the FX classes. |
 | [Protocol manual](https://github.com/ratcliffej/nocturnation-docs/blob/main/manuals/protocol-manual.md) | Implementers building a third-party transmitter or receiver. Wireless layer, frame formats, class-and-group addressing, PixMob IR annex, conformance, test vectors. |
 | [Developer guide](https://github.com/ratcliffej/nocturnation-docs/blob/main/developing-shows.md) | Contributors writing new `Show` plug-ins. The `Show` base class, analyser hooks, `render_fx` API, widget composition, persistence, testing. |
 | [Architecture spec](https://github.com/ratcliffej/nocturnation-docs/blob/main/architecture.md) | The full system design that the manuals distil. |

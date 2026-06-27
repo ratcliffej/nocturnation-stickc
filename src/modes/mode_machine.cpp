@@ -19,6 +19,7 @@
 #include "lume_mode.h"
 #include "config_mode.h"
 #include "test_mode.h"
+#include "dmx_bridge_mode.h"
 #include "../dal/drivers/local_driver.h"   // for set_pulse_enabled gating
 #include "../dal/drivers/pixmob_ir_driver.h"   // for internal/external IR gating
 
@@ -64,6 +65,7 @@ DirectorMode s_director;
 LumeMode            s_lume;
 ConfigMode           s_config;
 TestMode             s_test;
+DmxBridgeMode        s_dmx_bridge;
 
 Mode* mode_instance(ModeId id) {
     switch (id) {
@@ -73,6 +75,7 @@ Mode* mode_instance(ModeId id) {
         case ModeId::Lume:            return &s_lume;
         case ModeId::Config:           return &s_config;
         case ModeId::Test:             return &s_test;
+        case ModeId::DmxBridge:        return &s_dmx_bridge;
     }
     return nullptr;
 }
@@ -157,6 +160,13 @@ void ModeMachine::begin() {
     // into LumeMode finds PixMobIrBinding's "group" property already
     // populated from the legacy slv_ir_grp key.
     persistence::migrate_legacy_nvs_keys();
+
+    // Apply compile-time strip defaults to NVS on the first boot of
+    // each fresh build, IF NOCT_STRIP_FORCE_DEFAULTS is set in
+    // platformio.ini. No-op when the flag isn't set (Sticks default)
+    // or when this build's tag is already in NVS. See persistence.h
+    // for the override semantics and platformio.ini for per-env values.
+    persistence::apply_strip_force_defaults();
 
     s_active_mode  = nullptr;          // force enter() in enter_mode()
     enter_mode(ModeId::Boot);

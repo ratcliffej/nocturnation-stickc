@@ -25,6 +25,16 @@
 //                         a light surface - that's only true in Lume mode);
 //                         verify visually on a second Stick in Lume mode or
 //                         on a Tildagon Lume.
+//   9. PixMob Bench     - Epic 11 B-0.5: structured experiments to settle
+//                         the EEPROM-vs-RAM storage question for PixMob
+//                         bracelets, plus the cancel-while-illuminated
+//                         path. Three sequential sub-tests; Btn2 advances
+//                         tests, Btn1 fires the current step. Records
+//                         no state - the operator reads results from the
+//                         bracelet and logs them into the epic by hand.
+//                         The IR commands here bypass DAL render_fx and
+//                         drive the IR driver directly with buildSetColor
+//                         / buildSingleColor pulse trains. Bench-only.
 
 #pragma once
 
@@ -58,18 +68,20 @@ private:
         AudioLive,
         Calibrate,
         WashTest,
+        PixMobBench,
     };
 
     struct MenuItem { SubTest test; const char* label; };
-    static constexpr MenuItem kSubTests[8] = {
-        { SubTest::PulseTest,   "Pulse"        },
-        { SubTest::FadeTest,    "Fade"         },
-        { SubTest::RainbowTest, "Rainbow"      },
-        { SubTest::SparkleTest, "Sparkle"      },
-        { SubTest::WhiteOut,    "White Out"    },
-        { SubTest::AudioLive,   "Audio Live"   },
-        { SubTest::Calibrate,   "Calibrate"    },
-        { SubTest::WashTest,    "Wash Test"    },
+    static constexpr MenuItem kSubTests[9] = {
+        { SubTest::PulseTest,    "Pulse"        },
+        { SubTest::FadeTest,     "Fade"         },
+        { SubTest::RainbowTest,  "Rainbow"      },
+        { SubTest::SparkleTest,  "Sparkle"      },
+        { SubTest::WhiteOut,     "White Out"    },
+        { SubTest::AudioLive,    "Audio Live"   },
+        { SubTest::Calibrate,    "Calibrate"    },
+        { SubTest::WashTest,     "Wash Test"    },
+        { SubTest::PixMobBench,  "PMob Bench"   },
     };
     static constexpr size_t kSubTestCount = sizeof(kSubTests) / sizeof(kSubTests[0]);
 
@@ -180,16 +192,80 @@ private:
     void handle_button_calibrate(const dal::ButtonPressEvent& ev);
     void draw_calibrate();
 
-    // Wash Test (Epic 6C). Two-item sub-screen (Fire / Cancel) that
-    // broadcasts render_wash / render_wash_end. step_index_ doubles as
-    // the Fire/Cancel cursor (0 = Fire, 1 = Cancel); last_step_ms_ stamps
-    // the most recent transmit so the "Sent!" confirmation lingers ~800
-    // ms after Btn1.
-    static constexpr size_t   kWashTestItemCount = 2;
+    // Wash Test (Epic 6C; extended by Epic 11). Three-item sub-screen
+    // (Fire wash / Cancel wash / Fire pulse over wash) that broadcasts
+    // render_wash / render_wash_end / render_fx respectively. step_index_
+    // doubles as the cursor (0 = Fire, 1 = Cancel, 2 = Pulse over wash);
+    // last_step_ms_ stamps the most recent transmit so the "Sent!"
+    // confirmation lingers ~800 ms after Btn1. The pulse-over-wash row
+    // is a bench convenience: Director side fires render_fx(LIGHT_PULSE)
+    // which the PixMob IR driver composes as a SingleColor sparkle
+    // followed by a fast SingleColor wash recovery (TwoColors as a
+    // protocol-level command renders nothing visible on this bracelet
+    // generation - bench-confirmed in PMob Bench T6, 2026-06-18).
+    static constexpr size_t   kWashTestItemCount = 3;
     static constexpr uint32_t kWashConfirmFlashMs = 800;
     void enter_wash_test();
     void handle_button_wash_test(const dal::ButtonPressEvent& ev);
     void draw_wash_test();
+
+    // PixMob Bench (Epic 11 B-0.5). Three sequential bench tests for the
+    // EEPROM-vs-RAM storage question, the auto-sleep behaviour, and the
+    // cancel-while-illuminated path. Drives the IR HAL directly with
+    // pixmob::buildSetColor / pixmob::buildSingleColor pulse trains so
+    // we exercise the actual wire encoding Epic 11 B2 will use, without
+    // pre-committing to any DAL surface.
+    enum class PMobTest : uint8_t {
+        Test1Persistence = 0,   // Set background, observer pulls + replaces batteries.
+        Test2Sleep,             // Set background, wait for auto-sleep, wake.
+        Test3Cancel,            // Set red, then set black; observe transition.
+        Test4EnvelopeSweep,     // Fire SingleColor with each T_xxx_MS sustain.
+                                // pmob_step_ doubles as the sweep index 0..7;
+                                // Btn1 fires the current bucket then advances.
+        Test5AutoRefresh,       // Continuous-wash validator. Btn1 cycles
+                                // through OFF + several refresh intervals
+                                // (3000 / 2500 / 2000 / 1500 / 1000 ms);
+                                // while ON, firmware auto-fires
+                                // SingleColor(255,255,255, T_0, T_3840, T_480)
+                                // at the selected cadence so the operator
+                                // can find the interval at which the gap
+                                // disappears, in one bench session, no
+                                // re-flashing.
+        Test6TwoColors,         // TwoColors isolation test. Btn1 fires
+                                // buildTwoColors(red, blue) directly via
+                                // the IR driver, bypassing any wash
+                                // state. Operator observes whether they
+                                // see the brief red flash + held blue
+                                // tail at all. Diagnoses whether the
+                                // bracelet honours TwoColors in
+                                // isolation (a precondition for sparkle-
+                                // on-wash to be visible during shows).
+    };
+    static constexpr uint32_t kPMobConfirmFlashMs   = 800;
+
+    // T5 interval cycle: 0 = OFF, others = ms between refreshes. Btn1
+    // walks through these in order; 6 entries -> 6 states.
+    static constexpr uint16_t kPMobT5Intervals[6] = {
+        0, 3000, 2500, 2000, 1500, 1000,
+    };
+    static constexpr uint8_t kPMobT5IntervalCount = 6;
+
+    PMobTest pmob_test_              = PMobTest::Test1Persistence;
+    uint8_t  pmob_step_              = 0;   // step within the current test
+    uint32_t pmob_last_fire_ms_      = 0;   // for "Sent!" confirmation flash
+    uint8_t  pmob_t5_index_          = 0;   // 0 = off; >0 -> kPMobT5Intervals[idx]
+    uint32_t pmob_t5_last_refresh_ms_ = 0;
+
+    void enter_pixmob_bench();
+    void tick_pixmob_bench(uint32_t now);
+    void handle_button_pixmob_bench(const dal::ButtonPressEvent& ev);
+    void draw_pixmob_bench();
+
+    // Direct IR transmit helpers - bypass DAL render_fx so the test
+    // exercises buildSetColor / buildSingleColor verbatim.
+    void pmob_fire_set_background(uint8_t r, uint8_t g, uint8_t b);
+    void pmob_fire_single_color(uint8_t r, uint8_t g, uint8_t b,
+                                 uint8_t attack, uint8_t sustain, uint8_t release);
 };
 
 }  // namespace modes

@@ -382,6 +382,18 @@ public:
     static bool     driver_enabled     (const char* transport_name);
     static uint32_t driver_send_count  (const char* transport_name);
 
+    // Apply the LED-strip persistence settings (brightness percent,
+    // group size, pixel count, enabled flag) to the live strip
+    // driver. Originally each mode that touched the strip had to
+    // know to do this; LumeMode did, but TestMode / DirectorMode /
+    // DmxBridgeMode did not - which meant the Pulse / Whiteout
+    // tests and the DMX raw-RGB path ran the strip at the default
+    // 100 % brightness regardless of the operator's Config-menu
+    // setting, with predictable brownout consequences on battery.
+    // Centralising the load here lets every mode call one function
+    // on enter(). No-op on hosts without a strip wired.
+    static void     apply_persisted_strip_settings();
+
     // -------------------------------------------------------------------------
     // Output dispatch. Returns false on unknown target, unsupported
     // capability for that target's profile, or no driver registered for

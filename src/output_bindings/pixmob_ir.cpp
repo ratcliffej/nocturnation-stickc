@@ -18,6 +18,8 @@
 #include "output_bindings/output_binding_context.h"
 
 #include "dal/dal.h"
+#include "dal/drivers/pixmob_ir_driver.h"
+#include "transport/espnow/frame.h"
 
 #include <cstdio>
 
@@ -59,6 +61,59 @@ void PixMobIrBinding::on_light_pulse(OutputBindingContext& ctx,
     // maps to PixMob group 0 ("broadcast to all bracelets in range").
     const uint8_t g = ctx.current_target_group();
     DAL::render_fx(ir_target_name(g), ev);
+}
+
+void PixMobIrBinding::on_light_wash(
+    OutputBindingContext& ctx,
+    const transport::espnow::LightWashPayload& p) {
+    // Relay wash to bracelets near this Lume. The IR driver singleton
+    // holds the per-group wash state (started_ms, anchors, cycle_ms,
+    // refresh_interval_ms) and fires the periodic SingleColor refresh
+    // from its own loop_tick - the binding just hands off the cue and
+    // walks away, matching the Director-side loopback path in
+    // DAL::render_wash. IR-only (no ESP-NOW re-broadcast) so a Lume
+    // relaying its inbound wash doesn't echo back to the Director.
+    auto* drv = pixmob_ir_driver_instance();
+    if (!drv || !drv->enabled()) return;
+    const uint8_t g = ctx.current_target_group();
+    if (g >= PixMobIRDriver::kWashSlots) return;
+
+    LightWashEvent ev{};
+    ev.r1 = p.r1; ev.g1 = p.g1; ev.b1 = p.b1;
+    ev.r2 = p.r2; ev.g2 = p.g2; ev.b2 = p.b2;
+    ev.attack         = p.attack;
+    ev.release        = p.release;
+    ev.intensity      = p.intensity;
+    ev.cycle_ms       = p.cycle_ms;
+    ev.ttl_seconds    = p.ttl_seconds;
+    ev.pulse_response = p.pulse_response;
+    drv->send_wash(g, ev);
+    drv->increment_send_count();
+}
+
+void PixMobIrBinding::on_light_wash_end(OutputBindingContext& ctx,
+                                           uint8_t release_time) {
+    auto* drv = pixmob_ir_driver_instance();
+    if (!drv || !drv->enabled()) return;
+    const uint8_t g = ctx.current_target_group();
+    if (g >= PixMobIRDriver::kWashSlots) return;
+    drv->send_wash_end(g, release_time);
+    drv->increment_send_count();
+}
+
+void PixMobIrBinding::on_light_wash_pulse(OutputBindingContext& ctx,
+                                             const RgbPulseEvent& ev) {
+    // LIGHT_WASH_PULSE routes to the IR driver's send_wash_pulse,
+    // which composes the sparkle as TwoColors(sparkle, current_wash)
+    // when a wash is active on this group, or falls back to a plain
+    // SingleColor pulse when there isn't (matches the spec: a
+    // wash-pulse on a non-washing target degrades gracefully to a
+    // normal pulse).
+    auto* drv = pixmob_ir_driver_instance();
+    if (!drv || !drv->enabled()) return;
+    const uint8_t g = ctx.current_target_group();
+    drv->send_wash_pulse(g, ev);
+    drv->increment_send_count();
 }
 
 // =============================================================================

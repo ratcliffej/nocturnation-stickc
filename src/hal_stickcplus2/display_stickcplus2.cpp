@@ -76,6 +76,18 @@ void DisplayStickCplus2::draw_text(int x, int y, const char* text) {
     }
 }
 
+void DisplayStickCplus2::set_text_wrap(bool wrap_x, bool wrap_y) {
+    // M5GFX defaults to (true, false). The marquee path in
+    // LumeTextBinding sets (false, false) so over-width header text
+    // clips rather than wrapping onto subsequent lines. Buffered
+    // sprite needs the same setting because Print routes through it
+    // during a buffered paint.
+    M5.Display.setTextWrap(wrap_x, wrap_y);
+    if (buffered_) {
+        buffer_sprite_.setTextWrap(wrap_x, wrap_y);
+    }
+}
+
 void DisplayStickCplus2::flush() {
     // No-op: direct backend, no buffering. Buffered paint sessions push
     // explicitly via end_buffered_paint().

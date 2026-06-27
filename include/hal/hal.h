@@ -94,6 +94,51 @@ enum class Capability : uint8_t {
     // declares them via its own HAL.
     ImuTap,                   // produces TapDetectedEvent (high-pass-filtered Z onset)
     ImuMotion,                // produces MotionEvent (3-axis magnitude / per-axis)
+
+    // -------------------------------------------------------------------------
+    // DMX input (Epic 7)
+    // -------------------------------------------------------------------------
+    //
+    // The host has a wire over which a DMX console can deliver Enttec
+    // DMX USB Pro framing. v1 (StickC Plus2 + S3) means USB-CDC at
+    // 921 600 baud. A future Tildagon backend (sACN over WiFi) declares
+    // the same capability once the radio-coexistence work lands.
+    //
+    // Modes / Shows that require DMX input declare this capability and
+    // ModeMachine refuses to enter them on a host that doesn't have it.
+    DmxInput,                 // host can receive Enttec Pro DMX over its primary serial wire
+
+    // -------------------------------------------------------------------------
+    // Addressable LED strip (Epic 12)
+    // -------------------------------------------------------------------------
+    //
+    // Host can drive a one-wire addressable LED strip (SK6812 / WS2812
+    // family). One logical strip per host - if the backend has both an
+    // onboard LED and an external Grove strip, they are exposed as one
+    // contiguous pixel array (onboard pixel first, then external pixels)
+    // so the driver doesn't need to know the physical topology.
+    //
+    // Host examples: M5Atom Lite (1 onboard + Grove), StickC Plus2/S3
+    // (Grove only, when enabled in Config). Tildagon is not a LedStrip
+    // host - its perimeter ring is driven by the MicroPython renderer.
+    LedStrip,
+
+    // -------------------------------------------------------------------------
+    // Display content (Epic 13)
+    // -------------------------------------------------------------------------
+    //
+    // Two sub-capabilities layered onto an existing Capability::Display.
+    // A host that can render strings declares DisplayText; a host that
+    // can render bitmaps declares DisplayBitmap. Both bind to the same
+    // HAL::display() instance - the flags differentiate WHAT can be
+    // rendered onto the existing surface, not what hardware is there.
+    //
+    // Host examples: StickC Plus2 + S3 (both true, drive M5Unified LCD).
+    // Atom Lite has no Display, so neither true. Tildagon declares both
+    // through its capability table (MicroPython renderer handles the
+    // circular badge display).
+    DisplayText,
+    DisplayBitmap,
 };
 
 // =============================================================================
@@ -283,6 +328,17 @@ public:
     virtual void set_text_size(uint8_t size) = 0;
     virtual void draw_text(int x, int y, const char* text) = 0;
 
+    // M5GFX backing defaults to setTextWrap(true, false) - text printed
+    // past the right edge wraps onto subsequent lines. That's the right
+    // default for the menu / config UI (their strings fit), but the
+    // wrong default for a horizontal marquee (we want clipping, not
+    // wrapping). Bindings that need explicit control toggle this on
+    // entry; backends without a wrap concept (a future hypothetical
+    // ANSI-text backend, the test stub) no-op. Default impl in HAL
+    // header is no-op so existing backends compile without change;
+    // M5GFX-backed implementations override.
+    virtual void set_text_wrap(bool /*wrap_x*/, bool /*wrap_y*/) {}
+
     // No-op on direct backends; meaningful on double-buffered ones.
     virtual void flush() = 0;
 
@@ -390,6 +446,54 @@ public:
 };
 
 // =============================================================================
+// LedStrip - addressable one-wire LED strip (Epic 12)
+// =============================================================================
+//
+// A flat, fixed-size pixel buffer the host's backend pushes to its
+// physical LEDs on `show()`. The driver layer treats the strip as
+// opaque: pixel 0 is wherever the backend says pixel 0 is. On a host
+// with both an onboard LED and an external Grove strip, the backend
+// exposes them as one contiguous array (onboard at index 0, external
+// pixels following) so policy stays out of the driver. Brightness
+// scaling is the caller's responsibility - the strip writes whatever
+// RGB it's given.
+class LedStrip {
+public:
+    virtual ~LedStrip() = default;
+
+    // Initialise the underlying hardware (RMT channel allocation,
+    // pin claim, DMA setup as needed). Idempotent. Safe to call from
+    // any thread before show() is first invoked.
+    virtual void begin() = 0;
+
+    // How many addressable pixels this strip exposes. Fixed for the
+    // lifetime of the process; the driver caches it at init.
+    virtual size_t pixel_count() const = 0;
+
+    // Write one pixel. Indices >= pixel_count() are silently ignored
+    // so the caller doesn't need to bounds-check every call.
+    virtual void set_pixel(size_t index,
+                            uint8_t r, uint8_t g, uint8_t b) = 0;
+
+    // Convenience: zero every pixel. Doesn't push to hardware until
+    // show() is called.
+    virtual void clear() = 0;
+
+    // Push the in-memory buffer to the physical LEDs. Typically blocks
+    // for ~30 us per pixel on SK6812/WS2812 (RMT-driven). Callers
+    // should batch set_pixel writes and call show() once per frame.
+    virtual void show() = 0;
+
+    // Resize the underlying pixel buffer at runtime (Epic 12 follow-on
+    // for chained strips). Default no-op for backends that don't
+    // support dynamic length. Backends that wrap Adafruit_NeoPixel
+    // forward to NeoPixel::updateLength() so show() time scales with
+    // the actual configured length, not the max. Clamps to whatever
+    // ceiling the backend was constructed with.
+    virtual void set_pixel_count(size_t /*n*/) {}
+};
+
+// =============================================================================
 // HAL - global accessor and lifecycle
 // =============================================================================
 
@@ -418,6 +522,23 @@ public:
     static Buttons*  buttons();
     static IMU*      imu();
     static Battery*  battery();
+    // Returns nullptr on backends without a Capability::LedStrip
+    // declaration. See class LedStrip above for the contract.
+    static LedStrip* led_strip();
+
+    // Maximum allowed strip brightness percent for this host. Per-host
+    // power-budget cap; LedStripDriver clamps set_brightness_percent
+    // to this value. Defaults to 100 (no cap) for hosts with adequate
+    // supply (StickC Plus2 / S3 - battery + USB-C). Hosts with tighter
+    // budgets override; the Atom Lite returns 10 (200 mAh battery base
+    // + 500 mA USB hub limit cannot sustain a 30-pixel SK6812 strip at
+    // higher levels without brownout-resetting the chip).
+    //
+    // Called from DAL::apply_persisted_strip_settings() at each mode
+    // entry, BEFORE the persisted-brightness write, so the persisted
+    // value is clamped against the host's cap and operator misclicks
+    // can't push the device into brownout.
+    static uint8_t   max_strip_brightness_percent();
 };
 
 }  // namespace hal

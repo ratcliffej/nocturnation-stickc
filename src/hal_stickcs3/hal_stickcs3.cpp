@@ -34,6 +34,7 @@
 #include "ir_tx_stickcs3.h"
 #include "ir_rx_stickcs3.h"
 #include "esp_now_stickcs3.h"
+#include "led_strip_stickcs3.h"
 
 namespace nocturnation {
 namespace hal {
@@ -62,6 +63,24 @@ static constexpr Capability kCapabilities[] = {
     Capability::AnalyserDropDetection,
     Capability::AnalyserSpectrumFrame,
     Capability::AnalyserBandSummary,
+
+    // Epic 7: the native USB-CDC peripheral (ARDUINO_USB_CDC_ON_BOOT)
+    // can carry an Enttec Pro DMX stream at 921 600 baud while
+    // DmxBridge mode is active. Mode-entry switches Serial off the
+    // 115 200 console rate; mode-exit restores it.
+    Capability::DmxInput,
+
+    // Epic 12 live B4: Grove-connected SK6812 flex strip on GPIO 10.
+    // Always declared - the LedStripDriver writes bits regardless of
+    // whether a strip is plugged in.
+    Capability::LedStrip,
+
+    // Epic 13: the Stick's LCD can render orchestrator-pushed text
+    // and bitmap content. Both surfaces share the same M5Unified
+    // framebuffer; the LumeTextBinding + LumeBitmapBinding compose
+    // text on top of bitmap as their layering policy.
+    Capability::DisplayText,
+    Capability::DisplayBitmap,
 };
 static constexpr size_t kCapabilityCount =
     sizeof(kCapabilities) / sizeof(kCapabilities[0]);
@@ -81,14 +100,15 @@ bool HAL::has(Capability c) {
 // -----------------------------------------------------------------------------
 
 namespace {
-DisplayStickCS3 s_display;
-ButtonsStickCS3 s_buttons;
-IMUStickCS3     s_imu;
-BatteryStickCS3 s_battery;
-MicStickCS3     s_mic;
-IRTxStickCS3    s_ir_tx;
-IRRxStickCS3    s_ir_rx;
-ESPNowStickCS3  s_esp_now;
+DisplayStickCS3  s_display;
+ButtonsStickCS3  s_buttons;
+IMUStickCS3      s_imu;
+BatteryStickCS3  s_battery;
+MicStickCS3      s_mic;
+IRTxStickCS3     s_ir_tx;
+IRRxStickCS3     s_ir_rx;
+ESPNowStickCS3   s_esp_now;
+LedStripStickCS3 s_led_strip;
 }  // namespace
 
 // -----------------------------------------------------------------------------
@@ -133,6 +153,9 @@ Display* HAL::display()  { return &s_display; }
 Buttons* HAL::buttons()  { return &s_buttons; }
 IMU*     HAL::imu()      { return &s_imu; }
 Battery* HAL::battery()  { return &s_battery; }
+LedStrip* HAL::led_strip() { return &s_led_strip; }
+// S3 has battery + USB-C supply. Same envelope as Plus2; no cap.
+uint8_t HAL::max_strip_brightness_percent() { return 100; }
 
 }  // namespace hal
 }  // namespace nocturnation

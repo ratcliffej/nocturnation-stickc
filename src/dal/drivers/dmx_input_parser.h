@@ -46,6 +46,14 @@ constexpr uint8_t kEndByte   = 0xE7;
 constexpr uint8_t kLabelOutputOnlySendDmx     = 0x06;   // QLC+'s send-DMX
 constexpr uint8_t kLabelGetWidgetSerialReq    = 0x0A;   // handshake request
 constexpr uint8_t kLabelGetWidgetSerialReply  = 0x0A;   // (same label is reused for reply)
+// Epic 13: NocturNation custom label - the payload is a fully-formed
+// ESP-NOW NocturNation frame (header + payload, up to 250 bytes), and
+// the Director-side DMX bridge broadcasts it verbatim. Used by the
+// laptop orchestrator to send TEXT_DISPLAY / BITMAP_* / CLEAR_SCREEN
+// frames while the Stick is in DMX-bridge mode (no need to switch the
+// Stick out of bridge mode to enable display content). 0x10 is well
+// clear of any standard Enttec API label (1..11 + 100..101).
+constexpr uint8_t kLabelEspNowBroadcast       = 0x10;
 
 // Standard DMX-512 universe channel count.
 constexpr uint16_t kDmxUniverseChannels = 512;

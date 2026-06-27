@@ -50,7 +50,10 @@ void BootMode::loop_tick() {
     const uint32_t now     = millis();
     const uint32_t elapsed = now - start_ms_;
     if (elapsed >= kBootCountdownMs) {
-        ModeMachine::switch_to(persistence::current_last_runtime());
+        // Always boot into Lume regardless of the persisted last-used
+        // mode (Epic 12). The persisted value still drives the Menu
+        // cursor preset so Director/Test/Config remain one button away.
+        ModeMachine::switch_to(ModeId::Lume);
         return;
     }
     const uint8_t remaining = (uint8_t)((kBootCountdownMs - elapsed) / 1000) + 1;
@@ -114,11 +117,10 @@ void BootMode::draw_static() {
         WHITE, BLACK, 1});
 
     // Target-mode label sits just above the centred countdown digit.
-    char target[24];
-    std::snprintf(target, sizeof(target), "Entering %s",
-                  mode_label(persistence::current_last_runtime()));
+    // Boot always lands in Lume; the menu (any button during splash) is
+    // the route to Director / Test / Config.
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
-        kTitleX, 60, target, WHITE, BLACK, 1});
+        kTitleX, 60, "Entering Lume", WHITE, BLACK, 1});
 
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         kTitleX, 115, "press any btn for menu", WHITE, BLACK, 1});

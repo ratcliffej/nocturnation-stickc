@@ -45,21 +45,32 @@ public:
 
     hal::CapabilityMask required_capabilities() const override;
 
-    // PixMob bracelets are fire-and-forget ASR pulses; they cannot hold
-    // a colour between commands and have no state for a wash baseline
-    // to sit on. Pulse-only per Epic 6C Phase B / design doc. The
-    // dispatch layer uses this to silently drop WASH-family frames
-    // before they reach this binding.
+    // PixMob bracelets gained wash support in Epic 11 (2026-06-18) via
+    // Director-side periodic refresh: the binding holds per-group wash
+    // state in the PixMobIRDriver singleton and fires a SingleColor
+    // every refresh_interval_ms with the live drift colour. From the
+    // wire's perspective the bracelet now honours the full WASH family;
+    // can_overlay=true so LIGHT_WASH_PULSE routes here too (the
+    // overlay encodes as sparkle+recovery composition - see
+    // pixmob_ir_driver.cpp). See lume-capabilities-design.md §10 for
+    // the full encoding decisions.
     BindingCapabilities capabilities() const override {
         return BindingCapabilities{
             /*can_pulse=*/   true,
-            /*can_wash=*/    false,
-            /*can_overlay=*/ false,
+            /*can_wash=*/    true,
+            /*can_overlay=*/ true,
         };
     }
 
     void on_light_pulse(OutputBindingContext&,
                            const dal::RgbPulseEvent&) override;
+
+    void on_light_wash(OutputBindingContext&,
+                          const transport::espnow::LightWashPayload&) override;
+    void on_light_wash_end(OutputBindingContext&,
+                              uint8_t release_time) override;
+    void on_light_wash_pulse(OutputBindingContext&,
+                                const dal::RgbPulseEvent&) override;
 };
 
 // Singletons. main.cpp registers via:
