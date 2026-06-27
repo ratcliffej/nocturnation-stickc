@@ -42,6 +42,17 @@ bool ESPNowStickCplus2::begin(uint8_t wifi_channel) {
     WiFi.mode(WIFI_STA);
     WiFi.disconnect();    // clear any stored credentials' auto-connect
 
+    // 1a. Epic 15: switch the PHY to ESP-NOW Long Range mode. LR halves
+    //     the bitrate (500 kbps vs 1 Mbps) in exchange for 2.5-7x open-
+    //     air range. Fleet-wide commitment: LR-mode peers can ONLY decode
+    //     other LR-mode peers, so every Director and Lume must enable
+    //     this. WIFI_PROTOCOL_LR (= 1<<3 = 8) sets LR-only; standard
+    //     802.11b/g/n is disabled, which doesn't matter because ESP-NOW
+    //     is the only thing using the radio after WiFi.disconnect().
+    if (esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_LR) != ESP_OK) {
+        return false;
+    }
+
     // 2. Pin the radio to the requested channel. WIFI_SECOND_CHAN_NONE
     //    forces 20 MHz operation (no HT40 secondary), matching what the
     //    upstream ESP-NOW examples assume.
