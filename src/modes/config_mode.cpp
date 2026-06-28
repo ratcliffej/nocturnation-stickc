@@ -71,7 +71,7 @@ size_t scroll_offset(size_t selected, size_t total, size_t max_visible) {
 }  // namespace
 
 // Out-of-class definitions for the ODR-used static constexpr members.
-constexpr ConfigMode::TopEntry    ConfigMode::kTop[6];
+constexpr ConfigMode::TopEntry    ConfigMode::kTop[5];
 constexpr ConfigMode::PickerEntry ConfigMode::kConnectivity[4];
 constexpr ConfigMode::PickerEntry ConfigMode::kUtilities[2];
 constexpr const char* ConfigMode::kWifiItems[];
