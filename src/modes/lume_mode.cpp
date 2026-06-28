@@ -217,6 +217,22 @@ void LumeMode::loop_tick() {
     // Drain any pending repeater rebroadcast. Same deferred pattern -
     // ESP-NOW send from the WiFi callback context is unsafe in our
     // arduino-esp32 v2.x setup.
+    // Epic 15: drain the signal-recovered repaint flag set by on_recv
+    // when the Director comes back after a NO SIGNAL window. We do
+    // this BEFORE the relay drain (and BEFORE draw_repeat_count below)
+    // so the R counter gets painted on the cleared screen rather than
+    // wiped by the recovery clear.
+    if (signal_recovered_needs_repaint_) {
+        signal_recovered_needs_repaint_ = false;
+        DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
+        // Force draw_repeat_count to paint on its next call by
+        // resetting the cache; otherwise the cleared screen leaves
+        // the counter invisible because the cached value matches.
+        last_drawn_repeats_ = 0xFFFFFFFFu;
+        draw_status_pip();
+        last_draw_ms_ = now;
+    }
+
     if (pending_repeat_) {
         pending_repeat_ = false;
         if (auto* radio = hal::HAL::esp_now()) {
@@ -818,6 +834,14 @@ void LumeMode::on_recv(const hal::ESPNowMessage& m) {
 #ifdef ARDUINO
         Serial.println("[espnow] lume SIGNAL RECOVERED");
 #endif
+        // Epic 15 bench-test bug fix. Pre-fix, the screen stayed stuck
+        // on NO SIGNAL even after frames resumed - which looked like a
+        // contradiction during the corner test ("R counter incrementing
+        // but NO SIGNAL displayed"). The receiver was fine; the LCD was
+        // just stale. Defer the repaint to loop_tick via this flag
+        // because SPI paints from the WiFi task are crash-prone on the
+        // S3 (same reasoning as pending_repeat_).
+        signal_recovered_needs_repaint_ = true;
     }
 
     last_source_id_ = hdr.source_id;

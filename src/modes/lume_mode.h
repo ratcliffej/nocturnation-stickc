@@ -246,6 +246,13 @@ private:
     uint32_t      repeats_emitted_      = 0;
     uint32_t      last_drawn_repeats_   = 0xFFFFFFFFu;   // forces first paint
 
+    // Epic 15 bench-test bug fix. Set in on_recv (WiFi task) when the
+    // signal-recovered edge fires; drained in loop_tick (main task)
+    // by clearing the stale NO SIGNAL paint and repainting the pip.
+    // SPI from on_recv would crash the S3 (same reasoning as
+    // pending_repeat_); defer through this flag.
+    volatile bool signal_recovered_needs_repaint_ = false;
+
     // Deduplication ring (architecture spec §4.3): receivers track the
     // last 16 (source_id, sequence_number) tuples and drop repeats. The
     // Director sends each frame 2-3 times for airtime resilience (Block 5
