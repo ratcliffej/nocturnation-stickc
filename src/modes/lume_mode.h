@@ -236,6 +236,16 @@ private:
     static constexpr uint8_t kMaxHopCount   = 3;
     uint8_t       pending_repeat_buf_[kRepeatBufSize] = {};
 
+    // Epic 15 bench follow-up: visible repeater diagnostic so the
+    // operator can confirm at a glance that the relay path is firing
+    // (i.e. read the Stick standing in front of it, instead of
+    // needing to USB-monitor its serial). repeats_emitted_ counts
+    // successful send_broadcast calls from the rebroadcast drain;
+    // last_drawn_repeats_ tracks what the LCD currently shows so we
+    // only repaint on change (every relay would hammer the SPI bus).
+    uint32_t      repeats_emitted_      = 0;
+    uint32_t      last_drawn_repeats_   = 0xFFFFFFFFu;   // forces first paint
+
     // Deduplication ring (architecture spec §4.3): receivers track the
     // last 16 (source_id, sequence_number) tuples and drop repeats. The
     // Director sends each frame 2-3 times for airtime resilience (Block 5
@@ -297,6 +307,11 @@ private:
     int signal_bars() const;
 
     void draw_status_pip();
+    // Epic 15 bench follow-up. Renders "R:NNNN" in the bottom-left of
+    // the LCD when lume_repeat_en_ is true. Repaints lazily on counter
+    // change. No-op when repeat mode is off (operator sees a clean
+    // LCD).
+    void draw_repeat_count();
     void draw_no_signal_body();
 };
 

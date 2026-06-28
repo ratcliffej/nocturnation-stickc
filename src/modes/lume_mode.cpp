@@ -221,6 +221,12 @@ void LumeMode::loop_tick() {
         pending_repeat_ = false;
         if (auto* radio = hal::HAL::esp_now()) {
             radio->send_broadcast(pending_repeat_buf_, pending_repeat_len_);
+            // Epic 15 bench follow-up: bump the visible repeater
+            // counter + repaint immediately so the operator can
+            // confirm the relay path fired without needing a
+            // USB-attached serial monitor.
+            ++repeats_emitted_;
+            draw_repeat_count();
 #ifdef ARDUINO
             Serial.printf("[espnow REPEAT hop=%u] ",
                           (unsigned)pending_repeat_buf_[3]);
@@ -1097,6 +1103,44 @@ void LumeMode::draw_status_pip() {
     if (buffered) {
         ld->end_buffered_paint();
     }
+
+    // Epic 15 bench follow-up: paint the relay counter beneath the
+    // pip (or skip if repeat mode is off). Paint sits outside the pip
+    // buffer because it's a separate screen region; lazy repaint on
+    // count change keeps SPI traffic low even when frames stream in.
+    draw_repeat_count();
+}
+
+void LumeMode::draw_repeat_count() {
+    // No-op when the operator hasn't enabled repeater mode - keeps
+    // a non-repeater Lume's LCD clean.
+    if (!lume_repeat_en_) {
+        // First-time entry when the operator just toggled OFF: paint
+        // a wipe so any leftover "R:NNN" from a previous session is
+        // erased. We only do this once via last_drawn_repeats_ ==
+        // sentinel; subsequent draws are no-op.
+        if (last_drawn_repeats_ != 0xFFFFFFFEu) {
+            DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
+                0, 120, 80, 12, BLACK});
+            last_drawn_repeats_ = 0xFFFFFFFEu;
+        }
+        return;
+    }
+    if (repeats_emitted_ == last_drawn_repeats_) return;
+    last_drawn_repeats_ = repeats_emitted_;
+
+    // Wipe just the digit area (avoids paint compositing against a
+    // previous longer count) then write the new value.
+    DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
+        0, 120, 80, 12, BLACK});
+
+    char line[16];
+    std::snprintf(line, sizeof(line), "R:%lu",
+                  (unsigned long)repeats_emitted_);
+    // Size 1 text at the bottom-left. ~8 px tall, ~6 px wide per char,
+    // so "R:99999" fits in 42 px - well inside the 80 px wipe.
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        2, 122, line, GREEN, BLACK, 1});
 }
 
 // Diagnostic body shown only while NO SIGNAL is active. No incoming
