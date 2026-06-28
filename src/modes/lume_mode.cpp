@@ -244,8 +244,11 @@ void LumeMode::loop_tick() {
             ++repeats_emitted_;
             draw_repeat_count();
 #ifdef ARDUINO
+            // hop_count is at byte offset 5 (2-byte magic + version +
+            // source_id + sequence_number, then hop_count). Same fix
+            // as the increment-site bug at lume_mode.cpp:~903.
             Serial.printf("[espnow REPEAT hop=%u] ",
-                          (unsigned)pending_repeat_buf_[3]);
+                          (unsigned)pending_repeat_buf_[5]);
             for (size_t i = 0; i < pending_repeat_len_ && i < 32; ++i) {
                 Serial.printf("%02X ", pending_repeat_buf_[i]);
             }
@@ -887,8 +890,20 @@ void LumeMode::on_recv(const hal::ESPNowMessage& m) {
         && hdr.hop_count < kMaxHopCount
         && m.len <= kRepeatBufSize) {
         std::memcpy(pending_repeat_buf_, m.data, m.len);
-        // hop_count is the 4th byte of the header per spec §4.3.
-        pending_repeat_buf_[3] = hdr.hop_count + 1;
+        // Bench-found bug fix 2026-06-28: hop_count is at byte
+        // OFFSET 5 of the on-wire header, not 3. The wire format
+        // is 2-byte magic ("NN") + 1-byte protocol_version +
+        // source_id + sequence_number + hop_count + ... (see
+        // transport/espnow/frame.cpp::write_header). Pre-fix the
+        // relay was overwriting byte 3 (source_id) with
+        // hop_count+1, corrupting the source_id of every relayed
+        // frame. Receivers' TOFU lock then rejected the relay
+        // because the source_id (= 1) didn't match the original
+        // Director's id - which is exactly the "Hop: 0 ()" symptom
+        // seen at 2m bench LoS in Epic 15. Original comment
+        // referenced "4th byte" from a long-since-replaced 1-byte-
+        // magic version of the wire format.
+        pending_repeat_buf_[5] = hdr.hop_count + 1;
         pending_repeat_len_    = m.len;
         pending_repeat_        = true;
     }

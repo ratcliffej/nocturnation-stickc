@@ -785,11 +785,55 @@ static void test_message_type_required_capability_map(void) {
 }
 
 // ---------------------------------------------------------------------------
+// Epic 15 bench-found bug: relay hop_count byte offset
+// ---------------------------------------------------------------------------
+//
+// 2026-06-28: lume_mode.cpp relay path was writing the incremented
+// hop_count to byte offset 3 (the source_id position) instead of
+// byte 5 (the actual hop_count position). The relay went out on the
+// wire with a corrupted source_id, and receivers' TOFU lock rejected
+// every relayed frame. Symptom at the bench: Tildagon's debug
+// overlay showed Hop: 0 () despite the repeater's R counter
+// climbing - i.e. relay TX was firing but never accepted.
+//
+// This test pins the byte offset by simulating exactly the relay's
+// rewrite (memcpy + buf[5] = hop+1) and asserting the decoded frame
+// retains the original source_id + has the incremented hop_count.
+
+static void test_relay_hop_increment_preserves_source_id(void) {
+    uint8_t buf[kHeaderSize + kLightPulsePayloadLen] = {};
+    const Header in = make_header(/*source_id=*/0x42,
+                                  /*seq=*/42,
+                                  /*hops=*/0);
+    const LightPulsePayload payload{};
+    const size_t n = encode_light_pulse(buf, sizeof(buf), in, payload);
+    TEST_ASSERT_EQUAL_size_t(kHeaderSize + kLightPulsePayloadLen, n);
+
+    // Mimic the relay's in-place byte rewrite (lume_mode.cpp ~903).
+    buf[5] = in.hop_count + 1;
+
+    Header decoded{};
+    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
+                      static_cast<int>(decode_header(buf, n, decoded)));
+    // source_id MUST be preserved - the receiver's TOFU lock keys
+    // off this byte. Pre-fix the relay overwrote this with
+    // hop_count+1, corrupting the value.
+    TEST_ASSERT_EQUAL_UINT8(in.source_id, decoded.source_id);
+    // hop_count MUST be incremented so receivers can track relay
+    // depth + the kMaxHopCount loop-prevention works.
+    TEST_ASSERT_EQUAL_UINT8(in.hop_count + 1, decoded.hop_count);
+    // Sequence number unchanged - dedup works mesh-wide on
+    // (source_id, sequence_number).
+    TEST_ASSERT_EQUAL_UINT8(in.sequence_number, decoded.sequence_number);
+}
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
 int main(int, char**) {
     UNITY_BEGIN();
+    RUN_TEST(test_relay_hop_increment_preserves_source_id);
     RUN_TEST(test_heartbeat_round_trip);
     RUN_TEST(test_light_pulse_round_trip);
     RUN_TEST(test_light_wash_round_trip_with_drift);
