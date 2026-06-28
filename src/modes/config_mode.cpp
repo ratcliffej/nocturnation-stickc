@@ -72,7 +72,7 @@ size_t scroll_offset(size_t selected, size_t total, size_t max_visible) {
 
 // Out-of-class definitions for the ODR-used static constexpr members.
 constexpr ConfigMode::TopEntry    ConfigMode::kTop[6];
-constexpr ConfigMode::PickerEntry ConfigMode::kConnectivity[5];
+constexpr ConfigMode::PickerEntry ConfigMode::kConnectivity[4];
 constexpr ConfigMode::PickerEntry ConfigMode::kUtilities[2];
 constexpr const char* ConfigMode::kWifiItems[];
 constexpr const char* ConfigMode::kDmxItems[];
@@ -462,12 +462,25 @@ void ConfigMode::draw_stub(const char* title,
 void ConfigMode::handle_show(const ButtonPressEvent& ev) {
     const size_t count = shows::show_registry().count();
     if (count == 0) return;
+    // Epic 15 bench follow-up: list "DMX Bridge" as a synthetic row
+    // at the end. It's not a Show, so picking it doesn't save an
+    // active_show_id - it switches the device to DmxBridge mode
+    // immediately (mirroring the Director-mode picker's behaviour
+    // for the same entry). DmxBridge is intentionally NOT boot-
+    // persisted per persistence::is_persisted_runtime_mode (Q4
+    // 2026-06-05 decision); Config-menu pick is one-time.
+    const size_t total_rows = count + 1;
+    const size_t dmx_bridge_row = count;
     if (ev.id == ButtonId::Btn2) {
-        sub_selected_ = (sub_selected_ + 1) % count;
+        sub_selected_ = (sub_selected_ + 1) % total_rows;
         draw();
         return;
     }
     if (ev.id == ButtonId::Btn1) {
+        if (sub_selected_ == dmx_bridge_row) {
+            ModeMachine::switch_to(ModeId::DmxBridge);
+            return;
+        }
         shows::Show* picked = shows::show_registry().at(sub_selected_);
         if (picked) {
             persistence::save_active_show_id(picked->id());
@@ -496,17 +509,28 @@ void ConfigMode::draw_show() {
     constexpr int kRowY0 = 22;
     const size_t  max_visible = static_cast<size_t>(
         (kBodyBottomLimit - kRowY0) / kRowStride);
-    const size_t  first       = scroll_offset(sub_selected_, count, max_visible);
-    const size_t  last_excl   = (first + max_visible > count)
-                                ? count
+    // Epic 15: + 1 synthetic "DMX Bridge" row at the end.
+    const size_t  total_rows  = count + 1;
+    const size_t  dmx_row     = count;
+    const size_t  first       = scroll_offset(sub_selected_, total_rows, max_visible);
+    const size_t  last_excl   = (first + max_visible > total_rows)
+                                ? total_rows
                                 : first + max_visible;
 
     for (size_t i = first; i < last_excl; ++i) {
-        const bool   sel = (i == sub_selected_);
-        shows::Show* s   = shows::show_registry().at(i);
+        const bool sel = (i == sub_selected_);
+        char buf[40];
+        if (i == dmx_row) {
+            std::snprintf(buf, sizeof(buf), "%s DMX Bridge",
+                          sel ? ">" : " ");
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, kRowY0 + static_cast<int>(i - first) * kRowStride, buf,
+                sel ? YELLOW : WHITE, BLACK, 2});
+            continue;
+        }
+        shows::Show* s = shows::show_registry().at(i);
         const bool   active = s && active_id
                               && std::strcmp(s->id(), active_id) == 0;
-        char buf[40];
         std::snprintf(buf, sizeof(buf), "%s %s%s",
                       sel ? ">" : " ",
                       s ? s->display_name() : "(null)",

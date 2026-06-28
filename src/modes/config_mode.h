@@ -111,10 +111,15 @@ private:
         SubMenu     target;
         const char* label;
     };
-    static constexpr PickerEntry kConnectivity[5] = {
+    // WiFi was listed pre-Epic-15 ("reserved for future Epic"); removed
+    // because Epic 15 commits the fleet to ESP-NOW Long Range mode -
+    // standard 802.11b/g/n is disabled at the radio layer and there's
+    // no path that would surface a WiFi config screen now or in the
+    // foreseeable future. A future PoE-Director config entry will
+    // likely replace this slot.
+    static constexpr PickerEntry kConnectivity[4] = {
         { SubMenu::IR,       "IR"        },
         { SubMenu::EspNow,   "ESP-NOW"   },
-        { SubMenu::WiFi,     "WiFi"      },
         { SubMenu::Dmx,      "DMX"       },
         { SubMenu::LedStrip, "LED Strip" },   // Epic 12 B4 (stub)
     };
