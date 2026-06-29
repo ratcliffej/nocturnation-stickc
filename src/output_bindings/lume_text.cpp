@@ -78,15 +78,38 @@ size_t word_wrap_body(const char* text, size_t text_len,
     size_t current_line_len = 0;   // chars in the building line (exclusive of NUL)
 
     // Tokenise by whitespace. Words longer than the line width get
-    // chopped at the line boundary.
+    // chopped at the line boundary. '\n' is a forced line break:
+    // any pending current_line is flushed and the next word starts
+    // a fresh line. Authors trigger this via the `\n` escape in the
+    // cue file - see orchestrator's BodyText: parser.
     size_t i = 0;
     while (i < text_len) {
-        // Skip whitespace runs between words.
+        // Skip whitespace runs between words. Newlines are handled
+        // separately below because they force a line flush.
         while (i < text_len && (text[i] == ' ' || text[i] == '\t')) ++i;
         if (i >= text_len) break;
-        // Find word end.
+        // Forced line break on '\n': flush whatever's on the current
+        // line, start a new one. Consecutive '\n' produces a blank
+        // line (matches the Tildagon renderer's behaviour).
+        if (text[i] == '\n') {
+            if (buf_pos < line_buf_size) {
+                line_buf[buf_pos++] = '\0';
+                lines_out[line_count++] = current_line_start;
+            }
+            if (line_count >= max_lines) return line_count;
+            if (buf_pos >= line_buf_size) return line_count;
+            current_line_start = line_buf + buf_pos;
+            current_line_len = 0;
+            ++i;
+            continue;
+        }
+        // Find word end. Stop at space, tab, OR newline so the
+        // newline gets handled on the next loop iteration.
         size_t w_start = i;
-        while (i < text_len && text[i] != ' ' && text[i] != '\t') ++i;
+        while (i < text_len
+               && text[i] != ' '
+               && text[i] != '\t'
+               && text[i] != '\n') ++i;
         size_t w_len = i - w_start;
 
         // Place the word. If it doesn't fit on the current line, flush.
