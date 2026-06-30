@@ -28,6 +28,7 @@
 
 #include "ethernet_dmx_adapter.h"
 #include "espnow_broadcast_driver.h"
+#include "modes/persistence.h"   // Director source_id (DirectorID) get/set
 
 namespace nocturnation {
 namespace dal {
@@ -134,6 +135,7 @@ void print_help() {
     pln("  show              one-shot status + channel values");
     pln("  mon               live status (press a key to stop)");
     pln("  channel <1|6|11>  ESP-NOW fleet channel (applies + saves now)");
+    pln("  dirid [<hex>]     show/set Director ID (ch1 00-3F, ch11 40-FE; applies + saves now)");
     pln("  dhcp              use DHCP            (save + reboot to apply)");
     pln("  static <ip> <mask> <gw>              static IP (save + reboot)");
     pln("  sacn <n>          sACN universe      (save + reboot)");
@@ -156,6 +158,11 @@ void print_status() {
     std::snprintf(buf, sizeof(buf), "  ip      : %u.%u.%u.%u  (%s)",
                   ip[0], ip[1], ip[2], ip[3], s_cfg.use_dhcp ? "dhcp" : "static"); pln(buf);
     std::snprintf(buf, sizeof(buf), "  espnow  : channel %u", s_cfg.wifi_channel); pln(buf);
+    std::snprintf(buf, sizeof(buf), "  dir id  : 0x%02X (%s)",
+                  (unsigned)esp_now_broadcast_driver_instance()->source_id(),
+                  s_cfg.wifi_channel == 1  ? "community"
+                : s_cfg.wifi_channel == 11 ? "performance"
+                :                            "mac-derived"); pln(buf);
     std::snprintf(buf, sizeof(buf), "  sacn    : universe %u   artnet: universe %u",
                   s_cfg.sacn_universe, s_cfg.artnet_universe); pln(buf);
     std::snprintf(buf, sizeof(buf), "  frames  : %lu   bytes: %lu",
@@ -209,6 +216,45 @@ void handle(Session& s, char* line) {
             char b[48]; std::snprintf(b, sizeof(b), "channel -> %d (saved + live)", n); pln(b);
         } else {
             pln("channel must be 1, 6 or 11");
+        }
+    } else if (!std::strcmp(cmd, "dirid")) {
+        // Director ID == the ESP-NOW source_id this Director stamps on every
+        // frame; Lumes TOFU-lock to it. On ch1 it's the community-range id
+        // (persistence "mst_src_id"), on ch11 the performance-range id
+        // ("mst_pid"); ch6 is MAC-derived and not settable. Input is hex
+        // (matching the C:nn / P:nn lock labels). Saved to NVS and applied
+        // live by re-deriving through start_broadcast - same path the
+        // channel command uses. Changing it makes currently-locked Lumes
+        // drop and re-lock to the new id.
+        char* t = std::strtok(nullptr, " \t");
+        const uint8_t chn = s_cfg.wifi_channel;
+        if (!t) {
+            char b[80];
+            std::snprintf(b, sizeof(b), "dir id = 0x%02X  (ch%u: %s)",
+                          (unsigned)esp_now_broadcast_driver_instance()->source_id(),
+                          chn,
+                          chn == 1  ? "community 00-3F"
+                        : chn == 11 ? "performance 40-FE"
+                        :             "mac-derived, not settable");
+            pln(b);
+        } else if (chn == 6) {
+            pln("ch6 Director ID is MAC-derived and not settable");
+        } else {
+            long v = std::strtol(t, nullptr, 16);
+            const bool ok = (chn == 1)  ? (v >= 0x00 && v <= 0x3F)
+                                        : (v >= 0x40 && v <= 0xFE);
+            if (!ok) {
+                pln(chn == 1 ? "ch1 Director ID must be hex 00-3F (community)"
+                             : "ch11 Director ID must be hex 40-FE (performance)");
+            } else {
+                if (chn == 1) modes::persistence::save_director_source_id((uint8_t)v);
+                else          modes::persistence::save_director_perf_source_id((uint8_t)v);
+                esp_now_broadcast_driver_instance()->stop_broadcast();
+                esp_now_broadcast_driver_instance()->start_broadcast(chn);
+                char b[56];
+                std::snprintf(b, sizeof(b), "dir id -> 0x%02X (saved + live)", (unsigned)(uint8_t)v);
+                pln(b);
+            }
         }
     } else if (!std::strcmp(cmd, "dhcp")) {
         s_cfg.use_dhcp = true;

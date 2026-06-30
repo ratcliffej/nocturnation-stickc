@@ -96,10 +96,17 @@ private:
         TopAction   action;
         const char* label;
     };
-    static constexpr TopEntry kTop[6] = {
+    // Display submenu retired post-Epic-15: its only functional item
+    // was Pulse Enable, which gated a code path retired in Epic 13 B0
+    // (LCD became a text-content surface for lyrics, not a light
+    // surface). The submenu's handle_display / draw_display code stays
+    // in the .cpp as dead branches (matches the SubMenu::WiFi
+    // precedent); only the top-level entry is removed so operators
+    // stop seeing a phantom control. Re-add the entry here if a
+    // future Epic restores LCD-as-light-surface.
+    static constexpr TopEntry kTop[5] = {
         { SubMenu::None,         TopAction::GroupId, "Group"        },
         { SubMenu::Show,         TopAction::Drill,   "Show"         },
-        { SubMenu::Display,      TopAction::Drill,   "Display"      },
         { SubMenu::Connectivity, TopAction::Drill,   "Connectivity" },
         { SubMenu::Utilities,    TopAction::Drill,   "Utilities"    },
         { SubMenu::System,       TopAction::Drill,   "System"       },
@@ -111,10 +118,15 @@ private:
         SubMenu     target;
         const char* label;
     };
-    static constexpr PickerEntry kConnectivity[5] = {
+    // WiFi was listed pre-Epic-15 ("reserved for future Epic"); removed
+    // because Epic 15 commits the fleet to ESP-NOW Long Range mode -
+    // standard 802.11b/g/n is disabled at the radio layer and there's
+    // no path that would surface a WiFi config screen now or in the
+    // foreseeable future. A future PoE-Director config entry will
+    // likely replace this slot.
+    static constexpr PickerEntry kConnectivity[4] = {
         { SubMenu::IR,       "IR"        },
         { SubMenu::EspNow,   "ESP-NOW"   },
-        { SubMenu::WiFi,     "WiFi"      },
         { SubMenu::Dmx,      "DMX"       },
         { SubMenu::LedStrip, "LED Strip" },   // Epic 12 B4 (stub)
     };

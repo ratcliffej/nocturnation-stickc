@@ -217,13 +217,38 @@ void LumeMode::loop_tick() {
     // Drain any pending repeater rebroadcast. Same deferred pattern -
     // ESP-NOW send from the WiFi callback context is unsafe in our
     // arduino-esp32 v2.x setup.
+    // Epic 15: drain the signal-recovered repaint flag set by on_recv
+    // when the Director comes back after a NO SIGNAL window. We do
+    // this BEFORE the relay drain (and BEFORE draw_repeat_count below)
+    // so the R counter gets painted on the cleared screen rather than
+    // wiped by the recovery clear.
+    if (signal_recovered_needs_repaint_) {
+        signal_recovered_needs_repaint_ = false;
+        DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
+        // Force draw_repeat_count to paint on its next call by
+        // resetting the cache; otherwise the cleared screen leaves
+        // the counter invisible because the cached value matches.
+        last_drawn_repeats_ = 0xFFFFFFFFu;
+        draw_status_pip();
+        last_draw_ms_ = now;
+    }
+
     if (pending_repeat_) {
         pending_repeat_ = false;
         if (auto* radio = hal::HAL::esp_now()) {
             radio->send_broadcast(pending_repeat_buf_, pending_repeat_len_);
+            // Epic 15 bench follow-up: bump the visible repeater
+            // counter + repaint immediately so the operator can
+            // confirm the relay path fired without needing a
+            // USB-attached serial monitor.
+            ++repeats_emitted_;
+            draw_repeat_count();
 #ifdef ARDUINO
+            // hop_count is at byte offset 5 (2-byte magic + version +
+            // source_id + sequence_number, then hop_count). Same fix
+            // as the increment-site bug at lume_mode.cpp:~903.
             Serial.printf("[espnow REPEAT hop=%u] ",
-                          (unsigned)pending_repeat_buf_[3]);
+                          (unsigned)pending_repeat_buf_[5]);
             for (size_t i = 0; i < pending_repeat_len_ && i < 32; ++i) {
                 Serial.printf("%02X ", pending_repeat_buf_[i]);
             }
@@ -812,6 +837,14 @@ void LumeMode::on_recv(const hal::ESPNowMessage& m) {
 #ifdef ARDUINO
         Serial.println("[espnow] lume SIGNAL RECOVERED");
 #endif
+        // Epic 15 bench-test bug fix. Pre-fix, the screen stayed stuck
+        // on NO SIGNAL even after frames resumed - which looked like a
+        // contradiction during the corner test ("R counter incrementing
+        // but NO SIGNAL displayed"). The receiver was fine; the LCD was
+        // just stale. Defer the repaint to loop_tick via this flag
+        // because SPI paints from the WiFi task are crash-prone on the
+        // S3 (same reasoning as pending_repeat_).
+        signal_recovered_needs_repaint_ = true;
     }
 
     last_source_id_ = hdr.source_id;
@@ -857,8 +890,20 @@ void LumeMode::on_recv(const hal::ESPNowMessage& m) {
         && hdr.hop_count < kMaxHopCount
         && m.len <= kRepeatBufSize) {
         std::memcpy(pending_repeat_buf_, m.data, m.len);
-        // hop_count is the 4th byte of the header per spec §4.3.
-        pending_repeat_buf_[3] = hdr.hop_count + 1;
+        // Bench-found bug fix 2026-06-28: hop_count is at byte
+        // OFFSET 5 of the on-wire header, not 3. The wire format
+        // is 2-byte magic ("NN") + 1-byte protocol_version +
+        // source_id + sequence_number + hop_count + ... (see
+        // transport/espnow/frame.cpp::write_header). Pre-fix the
+        // relay was overwriting byte 3 (source_id) with
+        // hop_count+1, corrupting the source_id of every relayed
+        // frame. Receivers' TOFU lock then rejected the relay
+        // because the source_id (= 1) didn't match the original
+        // Director's id - which is exactly the "Hop: 0 ()" symptom
+        // seen at 2m bench LoS in Epic 15. Original comment
+        // referenced "4th byte" from a long-since-replaced 1-byte-
+        // magic version of the wire format.
+        pending_repeat_buf_[5] = hdr.hop_count + 1;
         pending_repeat_len_    = m.len;
         pending_repeat_        = true;
     }
@@ -1097,6 +1142,44 @@ void LumeMode::draw_status_pip() {
     if (buffered) {
         ld->end_buffered_paint();
     }
+
+    // Epic 15 bench follow-up: paint the relay counter beneath the
+    // pip (or skip if repeat mode is off). Paint sits outside the pip
+    // buffer because it's a separate screen region; lazy repaint on
+    // count change keeps SPI traffic low even when frames stream in.
+    draw_repeat_count();
+}
+
+void LumeMode::draw_repeat_count() {
+    // No-op when the operator hasn't enabled repeater mode - keeps
+    // a non-repeater Lume's LCD clean.
+    if (!lume_repeat_en_) {
+        // First-time entry when the operator just toggled OFF: paint
+        // a wipe so any leftover "R:NNN" from a previous session is
+        // erased. We only do this once via last_drawn_repeats_ ==
+        // sentinel; subsequent draws are no-op.
+        if (last_drawn_repeats_ != 0xFFFFFFFEu) {
+            DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
+                0, 120, 80, 12, BLACK});
+            last_drawn_repeats_ = 0xFFFFFFFEu;
+        }
+        return;
+    }
+    if (repeats_emitted_ == last_drawn_repeats_) return;
+    last_drawn_repeats_ = repeats_emitted_;
+
+    // Wipe just the digit area (avoids paint compositing against a
+    // previous longer count) then write the new value.
+    DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
+        0, 120, 80, 12, BLACK});
+
+    char line[16];
+    std::snprintf(line, sizeof(line), "R:%lu",
+                  (unsigned long)repeats_emitted_);
+    // Size 1 text at the bottom-left. ~8 px tall, ~6 px wide per char,
+    // so "R:99999" fits in 42 px - well inside the 80 px wipe.
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        2, 122, line, GREEN, BLACK, 1});
 }
 
 // Diagnostic body shown only while NO SIGNAL is active. No incoming

@@ -105,5 +105,13 @@ IMU*     HAL::imu()       { return nullptr; }
 Battery* HAL::battery()   { return nullptr; }
 LedStrip* HAL::led_strip() { return nullptr; }   // no LED strip on this board
 
+// Pre-existing rollup miss from 34950ae (Atom-Lite 10% strip-brightness
+// HARD-CEILING): every HAL backend gained this symbol except this one,
+// because AtomS3-PoE is headless and has no LED strip. dal.cpp:411 calls
+// it unconditionally before checking led_strip()==nullptr, so the symbol
+// must exist or the firmware won't link. Return 100 (no cap) since the
+// value is never consumed in practice on this board.
+uint8_t HAL::max_strip_brightness_percent() { return 100; }
+
 }  // namespace hal
 }  // namespace nocturnation

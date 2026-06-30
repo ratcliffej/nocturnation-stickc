@@ -52,7 +52,16 @@ public:
     // venue, but 5 isn't the right knob - if RF reliability needs
     // more, the answer is the Lume-repeat mesh setting (Spec §4.3),
     // not louder Director retransmits.
-    static constexpr uint8_t  kRedundantSends     = 3;
+    //
+    // Epic 15 2026-06-27: dropped 3 -> 2 alongside the move to
+    // ESP-NOW Long Range mode. LR doubles per-frame airtime (500
+    // kbps vs 1 Mbps), so 3 retransmits would eat ~80-140 ms per
+    // burst at the 7 Hz sparkle rate, deeper into the saturation
+    // territory the 5-send bench finding identified. 2 retransmits
+    // gives us 1 initial + 1 redundant copy with comfortable margin.
+    // If the EMF lighting engineer's park test shows dropouts, the
+    // answer is Lume-repeat mesh, not increasing this back to 3.
+    static constexpr uint8_t  kRedundantSends     = 2;
     static constexpr uint8_t  kRedundantGapMinMs  = 5;
     static constexpr uint8_t  kRedundantGapMaxMs  = 15;
 
