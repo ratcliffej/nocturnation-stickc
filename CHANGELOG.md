@@ -2,6 +2,24 @@
 
 Notable changes to the NocturNation M5 firmware. Newest first.
 
+## 2026-06-30 — Fix: Lume repeater wrote hop_count to the wrong header byte
+
+- **Bug**: in repeater mode, `LumeMode` rebroadcast each unique frame with
+  `pending_repeat_buf_[3] = hop_count + 1`. Byte 3 was the hop_count slot in
+  the **v1** header, but the v2 magic-prefix change (protocol_version 0x01 →
+  0x02) shifted every field by two bytes — hop_count is now byte **5**, and
+  byte 3 is **source_id**. The repeater therefore never incremented hop_count
+  (so the 3-hop ceiling never engaged) and clobbered source_id to 1 — which
+  broke mesh-wide dedup, so Lumes in range of a repeater would double-render /
+  double-fire IR on every beat.
+- **Fix**: add `transport::espnow::kHopCountOffset` and a pure
+  `set_hop_count()` helper, defined next to the wire layout in
+  [include/transport/espnow/frame.h](include/transport/espnow/frame.h) so the
+  offset can't silently drift from the header again, and use it from
+  `LumeMode`. source_id and sequence_number are now preserved across hops.
+- **Test**: `test_espnow_frame` gains a regression guard asserting a repeated
+  frame increments hop_count and leaves source_id/sequence_number intact.
+
 ## 2026-05-21 — Epic 6B: Tildagon Director + Show framework (M5-side + docs)
 
 Epic 6B lands the Tildagon Director + Show framework (in the

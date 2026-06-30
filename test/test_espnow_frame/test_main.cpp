@@ -522,11 +522,55 @@ static void test_is_performance_range(void) {
 }
 
 // ---------------------------------------------------------------------------
+// set_hop_count: a repeater bumps hop_count in place without disturbing the
+// rest of the frame. Regression guard for the v1->v2 magic-prefix migration
+// bug where the repeater wrote hop_count to byte 3 (source_id) instead of
+// byte 5, corrupting source_id and never incrementing the hop counter.
+// ---------------------------------------------------------------------------
+
+static void test_set_hop_count_targets_the_hop_byte_only(void) {
+    // Encode a real LIGHT_PULSE: source_id=7, seq=42, hop_count=0.
+    Header h = make_header(/*source_id=*/7, /*seq=*/42, /*hops=*/0);
+    LightPulsePayload p{};
+    p.target_class = 0; p.target_group = 0;
+    p.r = 255; p.g = 128; p.b = 0;
+    p.attack = 1; p.sustain = 2; p.release = 3; p.chance = 4;
+    uint8_t buf[kHeaderSize + kLightPulsePayloadLen];
+    const size_t n = encode_light_pulse(buf, sizeof(buf), h, p);
+    TEST_ASSERT_EQUAL_UINT(kHeaderSize + kLightPulsePayloadLen, n);
+
+    // Sanity: the constant points where the layout says it does.
+    TEST_ASSERT_EQUAL_UINT(5, kHopCountOffset);
+    TEST_ASSERT_EQUAL_UINT8(0, buf[kHopCountOffset]);
+    TEST_ASSERT_EQUAL_UINT8(7, buf[3]);   // source_id lives at byte 3
+
+    // A repeater rebroadcasting at hop 1.
+    set_hop_count(buf, n, 1);
+
+    Header out{};
+    TEST_ASSERT_EQUAL(DecodeResult::Ok, decode_header(buf, n, out));
+    TEST_ASSERT_EQUAL_UINT8(1, out.hop_count);        // incremented
+    TEST_ASSERT_EQUAL_UINT8(7, out.source_id);        // NOT corrupted
+    TEST_ASSERT_EQUAL_UINT8(42, out.sequence_number); // preserved
+}
+
+static void test_set_hop_count_short_buffer_is_noop(void) {
+    uint8_t tiny[kHeaderSize - 1] = {0};
+    // Must not write out of bounds; returns the requested value unchanged.
+    TEST_ASSERT_EQUAL_UINT8(2, set_hop_count(tiny, sizeof(tiny), 2));
+    for (size_t i = 0; i < sizeof(tiny); ++i) {
+        TEST_ASSERT_EQUAL_UINT8(0, tiny[i]);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
 int main(int, char**) {
     UNITY_BEGIN();
+    RUN_TEST(test_set_hop_count_targets_the_hop_byte_only);
+    RUN_TEST(test_set_hop_count_short_buffer_is_noop);
     RUN_TEST(test_heartbeat_round_trip);
     RUN_TEST(test_light_pulse_round_trip);
     RUN_TEST(test_light_wash_round_trip_with_drift);

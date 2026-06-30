@@ -59,6 +59,15 @@ constexpr bool is_performance_range(uint8_t source_id) {
 constexpr uint8_t kHeaderSize        = 8;     // 2 magic + 1 version + 5 metadata
 constexpr uint8_t kMaxHopCount       = 3;
 
+// Wire byte offset of the hop_count field within the v2 header (see the
+// layout table at the top of this file). Exposed so a repeater can bump
+// hop_count in place without re-encoding the whole frame, and so the
+// offset is defined next to the layout it depends on: the v1 -> v2
+// magic-prefix change shifted every header field by 2 bytes, and a
+// hard-coded "hop_count is byte 3" in the repeater was missed in that
+// migration. Keep this in lock-step with write_header()/decode_header().
+constexpr size_t kHopCountOffset = 5;
+
 // ESP-NOW supports up to 250-byte payloads. We cap NocturNation frames much
 // smaller; the largest active v2 payload is LIGHT_PULSE at 9 bytes, so a
 // 32-byte working ceiling leaves room for future message types.
@@ -226,6 +235,14 @@ size_t encode_light_wash_pulse(uint8_t* buf, size_t buf_len, const Header& hdr,
 // =============================================================================
 
 DecodeResult decode_header(const uint8_t* buf, size_t buf_len, Header& out_hdr);
+
+// Rewrite the hop_count byte of an already-encoded frame in place. Used by
+// a repeater that rebroadcasts a frame unchanged except for incrementing
+// the hop counter (source_id and sequence_number are preserved so mesh-
+// wide dedup still recognises the original and its repeats as one frame).
+// No-op if buf_len < kHeaderSize. Returns the value written (or, on the
+// short-buffer no-op, returns new_hops without touching the buffer).
+uint8_t set_hop_count(uint8_t* buf, size_t buf_len, uint8_t new_hops);
 
 DecodeResult decode_heartbeat       (const Header& hdr,
                                      const uint8_t* payload, size_t payload_len,

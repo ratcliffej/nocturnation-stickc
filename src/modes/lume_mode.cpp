@@ -183,7 +183,7 @@ void LumeMode::loop_tick() {
             radio->send_broadcast(pending_repeat_buf_, pending_repeat_len_);
 #ifdef ARDUINO
             Serial.printf("[espnow REPEAT hop=%u] ",
-                          (unsigned)pending_repeat_buf_[3]);
+                          (unsigned)pending_repeat_buf_[transport::espnow::kHopCountOffset]);
             for (size_t i = 0; i < pending_repeat_len_ && i < 32; ++i) {
                 Serial.printf("%02X ", pending_repeat_buf_[i]);
             }
@@ -490,8 +490,11 @@ void LumeMode::on_recv(const hal::ESPNowMessage& m) {
         && hdr.hop_count < kMaxHopCount
         && m.len <= kRepeatBufSize) {
         std::memcpy(pending_repeat_buf_, m.data, m.len);
-        // hop_count is the 4th byte of the header per spec §4.3.
-        pending_repeat_buf_[3] = hdr.hop_count + 1;
+        // Bump hop_count in place at its v2 wire offset (frame.h
+        // kHopCountOffset). source_id + sequence_number are left intact so
+        // mesh-wide dedup still collapses the original and its repeats.
+        transport::espnow::set_hop_count(pending_repeat_buf_, m.len,
+                                          hdr.hop_count + 1);
         pending_repeat_len_    = m.len;
         pending_repeat_        = true;
     }
