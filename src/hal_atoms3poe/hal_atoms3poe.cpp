@@ -84,10 +84,15 @@ void HAL::begin() {
 
 void HAL::loop_tick() {
     M5.update();
+#if defined(NOCT_DMX_ETHERNET)
     // USB-serial config console. Non-blocking and a no-op unless a host is
     // connected, so it never interrupts the broadcast. DMX arrives over
-    // Ethernet, leaving USB-CDC free for this.
+    // Ethernet, leaving USB-CDC free for this. The console lives in the
+    // NOCT_DMX_ETHERNET translation unit (net_config.cpp), so a lean reuse
+    // of this backend (the headless repeater build) that omits Ethernet
+    // omits the console too - the call is gated to match.
     nocturnation::dal::net_console_poll();
+#endif
 }
 
 // -----------------------------------------------------------------------------

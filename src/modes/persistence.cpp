@@ -149,6 +149,29 @@ void save_lume_channel(uint8_t c) {
     prefs.end();
 }
 
+// Headless repeater channel: 0 = auto-scan, else 1 / 6 / 11. First-boot
+// default comes from the build flag so a fleet can ship pre-pinned; the
+// operator's button double-click then persists a live override.
+#ifndef NOCT_REPEATER_CHANNEL
+#define NOCT_REPEATER_CHANNEL 0
+#endif
+uint8_t load_repeater_channel() {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/true);
+    uint8_t c = prefs.getUChar("rpt_chan", NOCT_REPEATER_CHANNEL);
+    prefs.end();
+    if (c != 0 && c != 1 && c != 6 && c != 11) c = 0;
+    return c;
+}
+
+void save_repeater_channel(uint8_t c) {
+    if (c != 0 && c != 1 && c != 6 && c != 11) c = 0;
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/false);
+    prefs.putUChar("rpt_chan", c);
+    prefs.end();
+}
+
 bool load_lume_repeat_enabled() {
     Preferences prefs;
     prefs.begin("noct", /*readOnly=*/true);
@@ -507,6 +530,7 @@ void save_calibration(const AudioCalibration& c) {
 // the helper at the bottom of this block.
 namespace {
 uint8_t s_native_lume_channel    = 0;
+uint8_t s_native_repeater_channel = 0;
 bool    s_native_lume_repeat_en  = false;
 uint8_t s_native_lume_group        = 0;
 bool    s_native_lume_group_set    = false;   // tracks "has slv_group been written" (the isKey() analogue)
@@ -550,6 +574,11 @@ uint8_t          load_lume_channel()           { return s_native_lume_channel; }
 void             save_lume_channel(uint8_t c)  {
     if (c != 0 && c != 1 && c != 6 && c != 11) c = 0;
     s_native_lume_channel = c;
+}
+uint8_t          load_repeater_channel()       { return s_native_repeater_channel; }
+void             save_repeater_channel(uint8_t c) {
+    if (c != 0 && c != 1 && c != 6 && c != 11) c = 0;
+    s_native_repeater_channel = c;
 }
 bool             load_lume_repeat_enabled()           { return s_native_lume_repeat_en; }
 void             save_lume_repeat_enabled(bool e)     { s_native_lume_repeat_en = e; }

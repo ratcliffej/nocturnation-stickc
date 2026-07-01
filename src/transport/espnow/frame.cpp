@@ -84,6 +84,7 @@ bool is_known_message_type(uint8_t raw) {
         case static_cast<uint8_t>(MessageType::BitmapHeader):
         case static_cast<uint8_t>(MessageType::BitmapPlane):
         case static_cast<uint8_t>(MessageType::ClearScreen):
+        case static_cast<uint8_t>(MessageType::RepeaterHeartbeat):
         case static_cast<uint8_t>(MessageType::Extension):
             return true;
         default:
@@ -105,6 +106,21 @@ size_t encode_heartbeat(uint8_t* buf, size_t buf_len, const Header& hdr,
     write_u32_le(buf + kHeaderSize + 0, p.tick);
     write_u16_le(buf + kHeaderSize + 4, p.days_since_2026);
     write_u24_le(buf + kHeaderSize + 6, p.centiseconds_today);
+    return total;
+}
+
+size_t encode_repeater_heartbeat(uint8_t* buf, size_t buf_len, const Header& hdr,
+                                 const RepeaterHeartbeatPayload& p) {
+    constexpr size_t total = kHeaderSize + kRepeaterHeartbeatPayloadLen;
+    if (buf_len < total) return 0;
+    write_header(buf, hdr, MessageType::RepeaterHeartbeat,
+                 kRepeaterHeartbeatPayloadLen);
+    buf[kHeaderSize + 0] = p.uid[0];
+    buf[kHeaderSize + 1] = p.uid[1];
+    buf[kHeaderSize + 2] = p.uid[2];
+    buf[kHeaderSize + 3] = p.channel;
+    write_u16_le(buf + kHeaderSize + 4, p.uptime_s);
+    write_u32_le(buf + kHeaderSize + 6, p.relayed_count);
     return total;
 }
 
@@ -307,6 +323,25 @@ DecodeResult decode_heartbeat(const Header& hdr,
     out.tick                = read_u32_le(payload + 0);
     out.days_since_2026     = read_u16_le(payload + 4);
     out.centiseconds_today  = read_u24_le(payload + 6);
+    return DecodeResult::Ok;
+}
+
+DecodeResult decode_repeater_heartbeat(const Header& hdr,
+                                       const uint8_t* payload, size_t payload_len,
+                                       RepeaterHeartbeatPayload& out) {
+    if (hdr.message_type != MessageType::RepeaterHeartbeat) {
+        return DecodeResult::InvalidMessageType;
+    }
+    if (hdr.payload_len != kRepeaterHeartbeatPayloadLen ||
+        payload_len    != kRepeaterHeartbeatPayloadLen) {
+        return DecodeResult::PayloadLenMismatch;
+    }
+    out.uid[0]        = payload[0];
+    out.uid[1]        = payload[1];
+    out.uid[2]        = payload[2];
+    out.channel       = payload[3];
+    out.uptime_s      = read_u16_le(payload + 4);
+    out.relayed_count = read_u32_le(payload + 6);
     return DecodeResult::Ok;
 }
 
