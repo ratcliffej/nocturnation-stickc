@@ -244,11 +244,8 @@ void LumeMode::loop_tick() {
             ++repeats_emitted_;
             draw_repeat_count();
 #ifdef ARDUINO
-            // hop_count is at byte offset 5 (2-byte magic + version +
-            // source_id + sequence_number, then hop_count). Same fix
-            // as the increment-site bug at lume_mode.cpp:~903.
             Serial.printf("[espnow REPEAT hop=%u] ",
-                          (unsigned)pending_repeat_buf_[5]);
+                          (unsigned)pending_repeat_buf_[transport::espnow::kHopCountOffset]);
             for (size_t i = 0; i < pending_repeat_len_ && i < 32; ++i) {
                 Serial.printf("%02X ", pending_repeat_buf_[i]);
             }
@@ -890,20 +887,14 @@ void LumeMode::on_recv(const hal::ESPNowMessage& m) {
         && hdr.hop_count < kMaxHopCount
         && m.len <= kRepeatBufSize) {
         std::memcpy(pending_repeat_buf_, m.data, m.len);
-        // Bench-found bug fix 2026-06-28: hop_count is at byte
-        // OFFSET 5 of the on-wire header, not 3. The wire format
-        // is 2-byte magic ("NN") + 1-byte protocol_version +
-        // source_id + sequence_number + hop_count + ... (see
-        // transport/espnow/frame.cpp::write_header). Pre-fix the
-        // relay was overwriting byte 3 (source_id) with
-        // hop_count+1, corrupting the source_id of every relayed
-        // frame. Receivers' TOFU lock then rejected the relay
-        // because the source_id (= 1) didn't match the original
-        // Director's id - which is exactly the "Hop: 0 ()" symptom
-        // seen at 2m bench LoS in Epic 15. Original comment
-        // referenced "4th byte" from a long-since-replaced 1-byte-
-        // magic version of the wire format.
-        pending_repeat_buf_[5] = hdr.hop_count + 1;
+        // Bump hop_count in place at its v2 wire offset. Named constant +
+        // helper live in transport/espnow/frame.h so the offset can't
+        // drift from the header layout again (v1 was byte 3, v2 is byte 5
+        // - the 2-byte magic + version prefix shifted every field). Fix
+        // history: pre-2026-06-28 this wrote to buf_[3], corrupting
+        // source_id and breaking mesh-wide dedup + TOFU lock.
+        transport::espnow::set_hop_count(pending_repeat_buf_, m.len,
+                                          hdr.hop_count + 1);
         pending_repeat_len_    = m.len;
         pending_repeat_        = true;
     }
