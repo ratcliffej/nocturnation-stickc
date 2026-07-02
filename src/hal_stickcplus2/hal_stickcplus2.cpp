@@ -37,6 +37,7 @@
 #include "mic_stickcplus2.h"
 #include "ir_tx_stickcplus2.h"
 #include "esp_now_stickcplus2.h"
+#include "led_strip_stickcplus2.h"
 
 namespace nocturnation {
 namespace hal {
@@ -64,6 +65,26 @@ static constexpr Capability kCapabilities[] = {
     Capability::AnalyserDropDetection,
     Capability::AnalyserSpectrumFrame,
     Capability::AnalyserBandSummary,
+
+    // Epic 7: the USB-CDC peripheral can carry an Enttec Pro DMX
+    // stream at 921 600 baud while DmxBridge mode is active. Mode-
+    // entry switches Serial off the 115 200 console rate; mode-exit
+    // restores it.
+    Capability::DmxInput,
+
+    // Epic 12 live B4: Grove-connected SK6812 flex strip on GPIO 33.
+    // Always declared - the LedStripDriver writes bits regardless of
+    // whether a strip is plugged in (the data line just radiates to
+    // a dead pin). A future Config "LED Strip -> Enable" toggle can
+    // gate the driver at runtime once that wiring lands.
+    Capability::LedStrip,
+
+    // Epic 13: the Stick's LCD can render orchestrator-pushed text
+    // and bitmap content. Both surfaces share the same M5Unified
+    // framebuffer; the LumeTextBinding + LumeBitmapBinding compose
+    // text on top of bitmap as their layering policy.
+    Capability::DisplayText,
+    Capability::DisplayBitmap,
 };
 static constexpr size_t kCapabilityCount =
     sizeof(kCapabilities) / sizeof(kCapabilities[0]);
@@ -92,6 +113,7 @@ IRTxStickCplus2    s_ir_tx;       // built-in IR LED, GPIO 19
 IRTxStickCplus2    s_ir_tx_ext(   // optional external IR unit, GPIO 26 header
     IRTxStickCplus2::kExternalIRPin);
 ESPNowStickCplus2  s_esp_now;
+LedStripStickCplus2 s_led_strip;
 }  // namespace
 
 // -----------------------------------------------------------------------------
@@ -151,6 +173,10 @@ Display* HAL::display()  { return &s_display; }
 Buttons* HAL::buttons()  { return &s_buttons; }
 IMU*     HAL::imu()      { return &s_imu; }
 Battery* HAL::battery()  { return &s_battery; }
+LedStrip* HAL::led_strip() { return &s_led_strip; }
+// Plus2 has battery + USB-C supply. Operator-cycle resolution is
+// sufficient; no firmware cap.
+uint8_t HAL::max_strip_brightness_percent() { return 100; }
 
 }  // namespace hal
 }  // namespace nocturnation

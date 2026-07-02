@@ -29,6 +29,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "hal/hal.h"   // for hal::Capability (used by message_type_required_capability)
+
 namespace nocturnation {
 namespace transport {
 namespace espnow {
@@ -91,8 +93,61 @@ enum class MessageType : uint8_t {
     LightWash      = 0x06,   // Epic 6C Phase D - reclaims the v0.27-deprecated MUSIC_EVENT slot
     LightWashEnd   = 0x07,
     LightWashPulse = 0x08,
+    // Epic 13: display-content family. Routed to DeviceClass::Display
+    // bindings on hosts that declare Capability::DisplayText /
+    // Capability::DisplayBitmap. The wash family targets Light;
+    // the display family targets Display - addressing is independent.
+    TextDisplay    = 0x09,   // header + body strings on the Lume's screen
+    BitmapHeader   = 0x0A,   // bitmap framing: dimensions, planes, colours, checksum
+    BitmapPlane    = 0x0B,   // bitmap plane data chunk (multiple frames per plane allowed)
+    ClearScreen    = 0x0C,   // clear text and/or bitmap on the Lume's screen
     Extension      = 0xFF,
 };
+
+// =============================================================================
+// Message-type → required-capability map (Epic 13).
+//
+// Each message type that targets a SPECIFIC surface maps to the HAL
+// capability a host needs to render it. The Lume's on_recv path uses
+// this to quick-drop frames before decoding the payload - a Lume that
+// has no display silently discards every TEXT_DISPLAY / BITMAP_* /
+// CLEAR_SCREEN frame at the radio gate, no decode work, no fan-out.
+//
+// Wash-family / Heartbeat / Extension don't map to a single capability
+// (a LIGHT_PULSE can be rendered on PixMob via IRTx, a strip via
+// LedStrip, etc.); they return kNoSpecificCapability and binding-level
+// filtering decides which surfaces actually fire.
+//
+// PixMob relay note: this gate is on the Lume's INBOUND path. PixMob
+// IR-side relay decisions (which PixMob capabilities exist downstream)
+// remain owned by PixMobIrBinding and run against bracelet IR codes,
+// not this map.
+constexpr hal::Capability kNoSpecificCapability =
+    static_cast<hal::Capability>(0xFF);
+
+constexpr hal::Capability message_type_required_capability(MessageType t) {
+    switch (t) {
+        case MessageType::TextDisplay:    return hal::Capability::DisplayText;
+        case MessageType::BitmapHeader:   return hal::Capability::DisplayBitmap;
+        case MessageType::BitmapPlane:    return hal::Capability::DisplayBitmap;
+        // ClearScreen: cheapest reasonable gate is "host has a display
+        // text/bitmap surface to clear". Hosts that declare DisplayText
+        // also declare DisplayBitmap (and vice versa) in current fleet
+        // bringup, so this single capability suffices as a Display-
+        // family proxy. A future split (text-only host) wouldn't see
+        // bitmap clears, which is the correct behaviour.
+        case MessageType::ClearScreen:    return hal::Capability::DisplayText;
+
+        case MessageType::Heartbeat:
+        case MessageType::LightPulse:
+        case MessageType::LightWash:
+        case MessageType::LightWashEnd:
+        case MessageType::LightWashPulse:
+        case MessageType::Extension:
+        default:
+            return kNoSpecificCapability;
+    }
+}
 
 struct Header {
     uint8_t     protocol_version;  // forced to kProtocolVersion by encoders
@@ -188,6 +243,135 @@ struct LightWashPulsePayload {
 constexpr uint8_t kLightWashPulsePayloadLen = 9;
 
 // =============================================================================
+// Epic 13: display-content payloads (TEXT_DISPLAY, BITMAP_HEADER,
+// BITMAP_PLANE, CLEAR_SCREEN).
+//
+// Variable-length payloads (TEXT_DISPLAY, BITMAP_PLANE) use a length-
+// prefixed in-band encoding. The struct itself holds max-sized buffers
+// + an explicit length field; encoders write only the valid portion;
+// decoders validate length fields against payload_len and copy the
+// valid bytes back into the struct's buffer. The wash family stays
+// fixed-size on the wire - the variable-length pattern is introduced
+// for Epic 13 only.
+// =============================================================================
+
+// TEXT_DISPLAY payload. The message type itself denotes the surface
+// (DeviceClass::Display + Capability::DisplayText); we don't carry a
+// target_class byte here - it would be dead weight, see the
+// message_type_required_capability() helper below. target_group stays
+// for per-Lume addressing within the Display class (group 0 = all).
+//
+// header and body are independent strings - either may be empty
+// (length 0). Empty header means "no header line"; empty body means
+// "no body text". Empty both is legal (acts as a no-op on a surface
+// that has no current content).
+//
+// Wire layout (variable, 8..200 bytes):
+//   target_group(1) + r(1) + g(1) + b(1)
+//   + ttl_ms(2 LE) + header_len(1) + header_bytes(header_len)
+//   + body_len(1) + body_bytes(body_len)
+//
+// ttl_ms == 0 means "sticky" (persists until CLEAR_SCREEN); non-zero is
+// auto-clear after that many milliseconds (Lume side).
+constexpr uint8_t kTextDisplayMaxHeaderLen = 64;
+constexpr uint8_t kTextDisplayMaxBodyLen   = 128;
+constexpr uint16_t kTextDisplayFixedPrefixLen = 6;  // group+r+g+b+ttl_ms_LE
+constexpr uint16_t kTextDisplayMinPayloadLen  =     // both strings empty
+    kTextDisplayFixedPrefixLen + 1 /*header_len*/ + 1 /*body_len*/;
+constexpr uint16_t kTextDisplayMaxPayloadLen  =
+    kTextDisplayMinPayloadLen + kTextDisplayMaxHeaderLen + kTextDisplayMaxBodyLen;
+
+struct TextDisplayPayload {
+    uint8_t  target_group;
+    uint8_t  r;
+    uint8_t  g;
+    uint8_t  b;
+    uint16_t ttl_ms;          // 0 = sticky; non-zero = auto-clear after N ms
+
+    uint8_t  header_len;      // 0..kTextDisplayMaxHeaderLen
+    char     header[kTextDisplayMaxHeaderLen];  // UTF-8; bytes 0..header_len-1 valid
+
+    uint8_t  body_len;        // 0..kTextDisplayMaxBodyLen
+    char     body[kTextDisplayMaxBodyLen];      // UTF-8; bytes 0..body_len-1 valid
+};
+
+// BITMAP_HEADER payload (fixed-size, 37 bytes). One emission per logical
+// bitmap; the receiver allocates a staging buffer sized to width*height
+// bits per plane * plane_count, accumulates bytes from BITMAP_PLANE
+// frames, verifies the CRC32 once the expected total has arrived, then
+// commits the bitmap to the render surface.
+//
+// As with TEXT_DISPLAY, the message type denotes the surface
+// (Capability::DisplayBitmap) - no target_class byte.
+//
+// Wire layout (37 bytes):
+//   target_group(1) + width(1) + height(1)
+//   + plane_count(1) + colours[8] (24, three bytes each)
+//   + fit(1) + zoom_pct(1) + overwrite(1)
+//   + checksum(4 LE) + ttl_ms(2 LE)
+//
+// fit:
+//   0 = ACTUAL (plot at native dimensions, top-left origin)
+//   1 = FIT    (preserve aspect, fit to display largest dimension)
+//   2 = ZOOM   (preserve aspect, fill display + crop)
+// zoom_pct multiplies the FIT/ZOOM scale (100 = baseline; 50 = half; 200 = 2x).
+// overwrite:
+//   0 = ADDITIVE (compose onto whatever is currently on the surface)
+//   1 = REPLACE  (clear surface at plane 0 of this header set)
+constexpr uint8_t  kBitmapMaxPlanes       = 8;
+constexpr uint8_t  kBitmapMaxDimension    = 64;   // hard cap to keep wire airtime sane
+constexpr uint8_t  kBitmapHeaderPayloadLen = 37;
+
+struct BitmapHeaderPayload {
+    uint8_t  target_group;
+    uint8_t  width;             // 1..kBitmapMaxDimension
+    uint8_t  height;            // 1..kBitmapMaxDimension
+    uint8_t  plane_count;       // 1..kBitmapMaxPlanes
+    uint8_t  colours[kBitmapMaxPlanes][3];   // RGB per plane slot
+    uint8_t  fit;               // 0=ACTUAL, 1=FIT, 2=ZOOM
+    uint8_t  zoom_pct;          // baseline 100
+    uint8_t  overwrite;         // 0=ADDITIVE, 1=REPLACE
+    uint32_t checksum;          // CRC32 over all plane bytes concatenated
+    uint16_t ttl_ms;            // 0 = sticky
+};
+
+// BITMAP_PLANE payload (variable-length, 5..242 bytes). Carries a chunk
+// of one plane's pixel bytes. Multiple BITMAP_PLANE frames per plane are
+// allowed and distinguished by byte_offset; the receiver assembles them
+// into the staging buffer at the plane's base offset + byte_offset.
+//
+// Wire layout (variable, 5..242 bytes):
+//   target_group(1) + plane_index(1)
+//   + byte_offset(2 LE) + data_len(1) + data_bytes(data_len)
+constexpr uint16_t kBitmapPlaneFixedPrefixLen = 5;
+constexpr uint16_t kBitmapPlaneMinPayloadLen  = kBitmapPlaneFixedPrefixLen;
+constexpr uint16_t kBitmapPlaneMaxDataLen     =
+    kMaxPayloadSize - kBitmapPlaneFixedPrefixLen;   // = 237
+
+struct BitmapPlanePayload {
+    uint8_t  target_group;
+    uint8_t  plane_index;       // 0..plane_count-1 (per the preceding BITMAP_HEADER)
+    uint16_t byte_offset;       // offset into this plane's pixel-byte stream
+    uint8_t  data_len;          // 0..kBitmapPlaneMaxDataLen
+    uint8_t  data[kBitmapPlaneMaxDataLen];
+};
+
+// CLEAR_SCREEN payload (fixed-size, 3 bytes). Per-surface clear request.
+// clear_text and clear_bitmap are independent so an author can clear
+// one without disturbing the other (e.g. drop the song title but keep
+// the band logo visible underneath).
+//
+// Wire layout (3 bytes):
+//   target_group(1) + clear_text(1) + clear_bitmap(1)
+constexpr uint8_t kClearScreenPayloadLen = 3;
+
+struct ClearScreenPayload {
+    uint8_t target_group;
+    uint8_t clear_text;         // 0 = leave text alone, 1 = clear text layer
+    uint8_t clear_bitmap;       // 0 = leave bitmap alone, 1 = clear bitmap layer
+};
+
+// =============================================================================
 // Result codes
 // =============================================================================
 
@@ -221,6 +405,18 @@ size_t encode_light_wash_end  (uint8_t* buf, size_t buf_len, const Header& hdr,
                                const LightWashEndPayload& p);
 size_t encode_light_wash_pulse(uint8_t* buf, size_t buf_len, const Header& hdr,
                                const LightWashPulsePayload& p);
+
+// Epic 13 encoders. Variable-length encoders write the in-band length
+// prefixes and only the valid bytes; payload_len in the header is
+// computed by the encoder per-call from the variable lengths.
+size_t encode_text_display    (uint8_t* buf, size_t buf_len, const Header& hdr,
+                               const TextDisplayPayload& p);
+size_t encode_bitmap_header   (uint8_t* buf, size_t buf_len, const Header& hdr,
+                               const BitmapHeaderPayload& p);
+size_t encode_bitmap_plane    (uint8_t* buf, size_t buf_len, const Header& hdr,
+                               const BitmapPlanePayload& p);
+size_t encode_clear_screen    (uint8_t* buf, size_t buf_len, const Header& hdr,
+                               const ClearScreenPayload& p);
 
 // =============================================================================
 // Decoders
@@ -259,6 +455,23 @@ DecodeResult decode_light_wash_end  (const Header& hdr,
 DecodeResult decode_light_wash_pulse(const Header& hdr,
                                      const uint8_t* payload, size_t payload_len,
                                      LightWashPulsePayload& out);
+
+// Epic 13 decoders. Variable-length decoders validate the length
+// prefixes against payload_len; out_struct's *_len fields reflect the
+// actual decoded length, and only those bytes of out_struct.header /
+// out_struct.body / out_struct.data are populated.
+DecodeResult decode_text_display    (const Header& hdr,
+                                     const uint8_t* payload, size_t payload_len,
+                                     TextDisplayPayload& out);
+DecodeResult decode_bitmap_header   (const Header& hdr,
+                                     const uint8_t* payload, size_t payload_len,
+                                     BitmapHeaderPayload& out);
+DecodeResult decode_bitmap_plane    (const Header& hdr,
+                                     const uint8_t* payload, size_t payload_len,
+                                     BitmapPlanePayload& out);
+DecodeResult decode_clear_screen    (const Header& hdr,
+                                     const uint8_t* payload, size_t payload_len,
+                                     ClearScreenPayload& out);
 
 }  // namespace espnow
 }  // namespace transport

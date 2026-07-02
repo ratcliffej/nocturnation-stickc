@@ -31,6 +31,15 @@ bool ESPNowStickCS3::begin(uint8_t wifi_channel) {
     WiFi.mode(WIFI_STA);
     WiFi.disconnect();
 
+    // Epic 15: ESP-NOW Long Range mode. See hal_stickcplus2/
+    // esp_now_stickcplus2.cpp for the design rationale - this is the
+    // same call, fleet-wide commitment. LR-only peers cannot decode
+    // standard 802.11b/g/n peers, so every Director and Lume must
+    // enable this together.
+    if (esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_LR) != ESP_OK) {
+        return false;
+    }
+
     if (esp_wifi_set_channel(wifi_channel, WIFI_SECOND_CHAN_NONE) != ESP_OK) {
         return false;
     }

@@ -10,6 +10,8 @@
 #include "drivers/local_driver.h"
 #include "drivers/pixmob_ir_driver.h"
 #include "drivers/espnow_broadcast_driver.h"
+#include "drivers/led_strip_driver.h"
+#include "../modes/persistence.h"
 #include "output_bindings/output_binding.h"
 #include "output_bindings/output_binding_registry.h"
 
@@ -223,6 +225,22 @@ bool dispatch_output_class_group(uint8_t target_class,
             local->increment_send_count();
         }
     }
+
+    // 4. Director-local LED-strip loopback (Epic 12 follow-on). Mirrors
+    // the IR step: when the strip is a Light-class surface and the
+    // event targets Light (1) or All (0), fire the strip driver so a
+    // Director with a Grove strip plugged in joins its own show. On a
+    // host without a strip the led_strip_driver_instance() returns a
+    // driver whose begin() refused registration (HAL::led_strip() ==
+    // nullptr), so find_driver_for_transport just returns null and
+    // this branch is a cheap miss.
+    if (target_class == 0 || target_class == 1) {
+        Driver* strip = find_driver_for_transport("led-strip");
+        if (strip && strip->enabled()) {
+            strip->send(target_group, ev);
+            strip->increment_send_count();
+        }
+    }
     return wire_ok;
 }
 
@@ -309,6 +327,10 @@ void DAL::begin() {
     register_driver(local_driver_instance());
     register_driver(pixmob_ir_driver_instance());
     register_driver(esp_now_broadcast_driver_instance());
+    // Epic 12: LED strip driver. Refuses registration on hosts where
+    // hal::HAL::led_strip() returns nullptr, so the rest of the fleet
+    // (Tildagon, StickC without Grove strip enabled) gets a no-op.
+    register_driver(led_strip_driver_instance());
 }
 
 void DAL::loop_tick() {
@@ -373,6 +395,24 @@ bool DAL::set_driver_enabled(const char* transport_name, bool enabled) {
     if (!d) return false;
     d->set_enabled(enabled);
     return true;
+}
+
+void DAL::apply_persisted_strip_settings() {
+    // No-op on hosts without a strip - the singleton still stores
+    // the values harmlessly, but no pixels get pushed regardless.
+    if (hal::HAL::led_strip() == nullptr) return;
+    auto* strip_drv = led_strip_driver_instance();
+    if (!strip_drv) return;
+    // Apply the host's max-brightness cap FIRST so the subsequent
+    // set_brightness_percent call clamps to it. The cap is a per-host
+    // power-budget property declared in the HAL backend; the Atom
+    // Lite caps at 10 % because its supply can't sustain anything
+    // higher without brownout (see hal_atomlite.cpp).
+    strip_drv->set_max_brightness_percent(hal::HAL::max_strip_brightness_percent());
+    strip_drv->set_brightness_percent(modes::persistence::load_strip_brightness());
+    strip_drv->set_group_size       (modes::persistence::load_strip_group_size());
+    strip_drv->set_pixel_count      (modes::persistence::load_strip_chain_size());
+    set_driver_enabled("led-strip",  modes::persistence::load_strip_enabled());
 }
 
 bool DAL::driver_enabled(const char* transport_name) {
@@ -517,12 +557,31 @@ inline uint32_t wash_now_ms() {
 bool DAL::render_wash(const char* t, const LightWashEvent& ev) {
     uint8_t cls = 0, grp = 0;
     if (!parse_target_class_group(t, cls, grp)) return false;
+    // (1) Wire to ESP-NOW-receiving Lumes (Tildagons, StickC LCD).
     auto* drv = esp_now_broadcast_driver_instance();
     if (!drv || !drv->enabled()) return false;
     const bool ok = drv->send_wash(cls, grp, ev);
     if (ok) {
         drv->increment_send_count();
         record_active_wash(cls, grp, ev, wash_now_ms());
+    }
+    // (2) Epic 11: Director-local IR loopback so PixMob bracelets in
+    // range render the wash via periodic SingleColor refresh. Gated on
+    // class so non-Light routes don't fire IR; gated on the ir-pixmob
+    // driver's enabled flag so Config > IR > Disable mutes it without
+    // the Show needing to know.
+    if (cls == 0 || cls == 1) {
+        auto* ir = pixmob_ir_driver_instance();
+        if (ir && ir->enabled() && grp < PixMobIRDriver::kWashSlots) {
+            ir->send_wash(grp, ev);
+            ir->increment_send_count();
+        }
+        // Epic 12 follow-on: Director-local LED-strip loopback for wash.
+        auto* strip = led_strip_driver_instance();
+        if (strip && strip->enabled()) {
+            strip->send_wash(grp, ev);
+            strip->increment_send_count();
+        }
     }
     return ok;
 }
@@ -537,6 +596,20 @@ bool DAL::render_wash_end(const char* t, uint8_t release_time) {
         drv->increment_send_count();
         clear_active_wash(cls, grp);
     }
+    // Epic 11: also tell the IR driver to stop refreshing this group
+    // (and optionally fire one final SingleColor for a faded exit).
+    if (cls == 0 || cls == 1) {
+        auto* ir = pixmob_ir_driver_instance();
+        if (ir && ir->enabled() && grp < PixMobIRDriver::kWashSlots) {
+            ir->send_wash_end(grp, release_time);
+            ir->increment_send_count();
+        }
+        auto* strip = led_strip_driver_instance();
+        if (strip && strip->enabled()) {
+            strip->send_wash_end(grp, release_time);
+            strip->increment_send_count();
+        }
+    }
     return ok;
 }
 
@@ -547,6 +620,21 @@ bool DAL::render_wash_pulse(const char* t, const RgbPulseEvent& ev) {
     if (!drv || !drv->enabled()) return false;
     const bool ok = drv->send_wash_pulse(cls, grp, ev);
     if (ok) drv->increment_send_count();
+    // Epic 11: PixMob composite. If the IR driver has an active wash on
+    // this group, fire TwoColors(sparkle, current_wash); otherwise fall
+    // back to a regular SingleColor pulse.
+    if (cls == 0 || cls == 1) {
+        auto* ir = pixmob_ir_driver_instance();
+        if (ir && ir->enabled() && grp < PixMobIRDriver::kWashSlots) {
+            ir->send_wash_pulse(grp, ev);
+            ir->increment_send_count();
+        }
+        auto* strip = led_strip_driver_instance();
+        if (strip && strip->enabled()) {
+            strip->send_wash_pulse(grp, ev);
+            strip->increment_send_count();
+        }
+    }
     return ok;
 }
 

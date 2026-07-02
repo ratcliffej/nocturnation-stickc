@@ -70,6 +70,9 @@ hal::CapabilityMask OutputBindingContext::host_caps() const {
     if (hal::HAL::has(hal::Capability::Buttons)) m.set(hal::Capability::Buttons);
     if (hal::HAL::has(hal::Capability::Battery)) m.set(hal::Capability::Battery);
     if (hal::HAL::has(hal::Capability::Mic))     m.set(hal::Capability::Mic);
+    if (hal::HAL::has(hal::Capability::LedStrip)) m.set(hal::Capability::LedStrip);
+    if (hal::HAL::has(hal::Capability::DisplayText))   m.set(hal::Capability::DisplayText);
+    if (hal::HAL::has(hal::Capability::DisplayBitmap)) m.set(hal::Capability::DisplayBitmap);
     return m;
 }
 

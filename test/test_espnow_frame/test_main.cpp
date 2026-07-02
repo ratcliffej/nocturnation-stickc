@@ -591,5 +591,16 @@ int main(int, char**) {
     RUN_TEST(test_source_id_partition_boundary_values);
     RUN_TEST(test_is_community_range);
     RUN_TEST(test_is_performance_range);
+    // Epic 13 display-content codecs
+    RUN_TEST(test_text_display_round_trip);
+    RUN_TEST(test_text_display_empty_strings_round_trip);
+    RUN_TEST(test_text_display_max_strings_round_trip);
+    RUN_TEST(test_text_display_rejects_oversize_header);
+    RUN_TEST(test_bitmap_header_round_trip);
+    RUN_TEST(test_bitmap_header_rejects_invalid_dimensions);
+    RUN_TEST(test_bitmap_plane_round_trip);
+    RUN_TEST(test_bitmap_plane_rejects_oversize_data);
+    RUN_TEST(test_clear_screen_round_trip);
+    RUN_TEST(test_message_type_required_capability_map);
     return UNITY_END();
 }

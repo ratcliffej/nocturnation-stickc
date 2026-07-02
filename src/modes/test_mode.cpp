@@ -7,6 +7,8 @@
 #include "effects/effects.h"
 #include "../dal/drivers/local_driver.h"               // for cancel_pulse / is_pulse_active
 #include "../dal/drivers/espnow_broadcast_driver.h"    // for start/stop_broadcast
+#include "../dal/drivers/pixmob_ir_driver.h"           // for direct IR transmit in PMob Bench
+#include "pixmob_protocol.h"                            // for buildSetColor / buildSingleColor
 
 #include <cmath>
 #include <cstdio>
@@ -59,7 +61,7 @@ constexpr uint32_t kSparkleStepMs     = 1100;
 
 }  // namespace
 
-constexpr TestMode::MenuItem TestMode::kSubTests[8];
+constexpr TestMode::MenuItem TestMode::kSubTests[9];
 
 void TestMode::enter() {
     menu_selected_    = 0;
@@ -70,6 +72,11 @@ void TestMode::enter() {
     // just like during a real show.
     dal::esp_now_broadcast_driver_instance()->start_broadcast(
         persistence::load_director_channel());
+    // Pulse / Whiteout tests render through the local LED strip too.
+    // Apply persisted brightness so the Config-menu setting is
+    // honoured here, not just in LumeMode - otherwise the strip
+    // defaults to 100 % and runs the board into brownout on white.
+    DAL::apply_persisted_strip_settings();
     return_to_menu();
 }
 
@@ -90,6 +97,7 @@ void TestMode::loop_tick() {
         case SubTest::SparkleTest: tick_sparkle(now);                        break;
         case SubTest::AudioLive:   tick_audio_live(now);                     break;
         case SubTest::Calibrate:   tick_calibrate(now);                      break;
+        case SubTest::PixMobBench: tick_pixmob_bench(now);                   break;
         default: break;
     }
     // Redundant-retransmit pump + 1 Hz skip-if-recent heartbeat now run
@@ -237,6 +245,7 @@ void TestMode::launch_test(SubTest t) {
         case SubTest::AudioLive:    enter_audio_live();                   break;
         case SubTest::Calibrate:    enter_calibrate();                    break;
         case SubTest::WashTest:     enter_wash_test();                    break;
+        case SubTest::PixMobBench:  enter_pixmob_bench();                 break;
         default: break;
     }
 }
@@ -260,6 +269,9 @@ void TestMode::handle_button_in_test(const ButtonPressEvent& ev) {
             break;
         case SubTest::WashTest:
             handle_button_wash_test(ev);
+            break;
+        case SubTest::PixMobBench:
+            handle_button_pixmob_bench(ev);
             break;
         default:
             // Continuous tests (Pulse/Fade/Rainbow/Sparkle/AudioLive)
@@ -911,8 +923,21 @@ void TestMode::handle_button_wash_test(const ButtonPressEvent& ev) {
             w.ttl_seconds    = 0;
             w.pulse_response = 1;
             DAL::render_wash("00:00", w);
-        } else {
+        } else if (step_index_ == 1) {
             DAL::render_wash_end("00:00", /*release_time=*/10);   // 1.0 s
+        } else {
+            // Pulse over wash. Bright white sparkle envelope. On any
+            // currently-washing target (Tildagon, PixMob, StickC LCD)
+            // the dispatch layer adds the pulse on top of the wash;
+            // PixMob routes through TwoColors(white, current_wash_rgb)
+            // so the bracelet flashes white then returns to wash.
+            RgbPulseEvent p{};
+            p.r = 255; p.g = 255; p.b = 255;
+            p.attack  = pixmob::T_0_MS;
+            p.sustain = pixmob::T_32_MS;
+            p.release = pixmob::T_96_MS;
+            p.chance  = pixmob::CHANCE_100;
+            DAL::render_fx("00:00", p);
         }
         last_step_ms_ = millis();
         draw_wash_test();
@@ -927,6 +952,7 @@ void TestMode::draw_wash_test() {
     const char* lines[kWashTestItemCount] = {
         "Fire test wash",
         "Cancel wash",
+        "Pulse over wash",
     };
     for (size_t i = 0; i < kWashTestItemCount; ++i) {
         const bool sel = (i == step_index_);
@@ -948,6 +974,305 @@ void TestMode::draw_wash_test() {
 
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         10, 128, "B: cycle  A: fire  B-hold: back",
+        WHITE, BLACK, 1});
+}
+
+// -------------------------------------------------------------------------
+// PixMob Bench (Epic 11 B-0.5). Three sequential experiments that drive
+// the IR HAL directly (bypassing DAL::render_fx) to settle the
+// EEPROM-vs-RAM storage question and the cancel-while-illuminated path.
+//
+// Btn2 cycles tests T1 -> T2 -> T3 -> T1. Btn1 advances within a test.
+// step_index_ tracks the within-test step (0/1) so Btn1 toggles between
+// "set colour" and "verify behaviour" prompts. Bench operator reads the
+// bracelet's behaviour and writes it into epic-11's progress log.
+// -------------------------------------------------------------------------
+
+namespace {
+
+// Sized to match PixMobIRDriver's working buffer - any 9-byte PixMob
+// command produces under 80 pulses on the wire.
+constexpr size_t kPMobPulseBufSize = 80;
+
+}  // namespace
+
+void TestMode::pmob_fire_set_background(uint8_t r, uint8_t g, uint8_t b) {
+    uint16_t buf[kPMobPulseBufSize];
+    const size_t n = pixmob::buildSetColor(
+        buf, kPMobPulseBufSize,
+        r, g, b,
+        /*profileId=*/0,
+        /*isBackground=*/true,
+        /*skipDisplay=*/false,
+        /*restrictGroupId=*/0);
+    if (n == 0) return;
+    auto* drv = dal::pixmob_ir_driver_instance();
+    if (drv) drv->transmit(buf, n);
+}
+
+void TestMode::pmob_fire_single_color(uint8_t r, uint8_t g, uint8_t b,
+                                       uint8_t attack, uint8_t sustain,
+                                       uint8_t release) {
+    uint16_t buf[kPMobPulseBufSize];
+    const size_t n = pixmob::buildSingleColor(
+        buf, kPMobPulseBufSize,
+        r, g, b,
+        static_cast<pixmob::Time>(attack),
+        static_cast<pixmob::Time>(sustain),
+        static_cast<pixmob::Time>(release),
+        pixmob::CHANCE_100,
+        /*restrictGroupId=*/0);
+    if (n == 0) return;
+    auto* drv = dal::pixmob_ir_driver_instance();
+    if (drv) drv->transmit(buf, n);
+}
+
+void TestMode::enter_pixmob_bench() {
+    pmob_test_         = PMobTest::Test1Persistence;
+    pmob_step_         = 0;
+    pmob_last_fire_ms_ = 0;
+    draw_pixmob_bench();
+}
+
+void TestMode::handle_button_pixmob_bench(const ButtonPressEvent& ev) {
+    if (ev.kind != ButtonEvent::Pressed) return;
+    if (ev.id == ButtonId::Btn2) {
+        // Cycle through the tests; reset step on each switch. Also stops
+        // any in-flight T5 auto-refresh so leaving T5 doesn't keep the IR
+        // firing.
+        uint8_t next = static_cast<uint8_t>(pmob_test_) + 1;
+        if (next > static_cast<uint8_t>(PMobTest::Test6TwoColors)) next = 0;
+        pmob_test_ = static_cast<PMobTest>(next);
+        pmob_step_ = 0;
+        pmob_last_fire_ms_ = 0;
+        pmob_t5_index_ = 0;
+        draw_pixmob_bench();
+        return;
+    }
+    if (ev.id != ButtonId::Btn1) return;
+
+    // Per-test action. Each test fires a specific IR command and may
+    // advance pmob_step_ to track which prompt the LCD shows next.
+    switch (pmob_test_) {
+        case PMobTest::Test1Persistence:
+            // T1 has one IR step: set background purple. Operator pulls
+            // and replaces the batteries and observes whether the colour
+            // persists. Re-pressing Btn1 just re-fires (harmless).
+            pmob_fire_set_background(200, 0, 200);
+            pmob_step_ = 1;
+            break;
+        case PMobTest::Test2Sleep:
+            if (pmob_step_ == 0) {
+                // Step 0: set background purple, then operator waits for
+                // the bracelet to auto-sleep visibly.
+                pmob_fire_set_background(200, 0, 200);
+                pmob_step_ = 1;
+            } else {
+                // Step 1: wake the bracelet with a no-op SingleColor at
+                // RGB=0 / ASR all-zero. If the background state survived
+                // sleep, the bracelet wakes back to purple. If state was
+                // cleared, the bracelet wakes to default (or stays dark).
+                // After observing, Btn1 again resets to step 0.
+                pmob_fire_single_color(
+                    0, 0, 0,
+                    pixmob::T_0_MS, pixmob::T_0_MS, pixmob::T_0_MS);
+                pmob_step_ = 0;
+            }
+            break;
+        case PMobTest::Test3Cancel:
+            if (pmob_step_ == 0) {
+                // Step 0: set background red and display.
+                pmob_fire_set_background(255, 0, 0);
+                pmob_step_ = 1;
+            } else {
+                // Step 1: cancel via set-background-black-and-display.
+                // Operator observes: instant black, fades, or no response.
+                pmob_fire_set_background(0, 0, 0);
+                pmob_step_ = 0;
+            }
+            break;
+        case PMobTest::Test4EnvelopeSweep: {
+            // Fire SingleColor(255,255,255) at the current sustain bucket.
+            // Attack and release at T_0_MS so the visible duration is
+            // mainly the sustain - the operator times what they see and
+            // compares to the documented bucket centre.
+            const uint8_t sustain_bucket = pmob_step_ & 0x07;
+            pmob_fire_single_color(
+                255, 255, 255,
+                pixmob::T_0_MS, sustain_bucket, pixmob::T_0_MS);
+            // Advance to next bucket; wraps after T_3840_MS (index 7).
+            pmob_step_ = (pmob_step_ + 1) & 0x07;
+            break;
+        }
+        case PMobTest::Test5AutoRefresh:
+            // Cycle through the interval table: OFF -> 3000 -> 2500 -> 2000
+            // -> 1500 -> 1000 -> OFF. While interval > 0, tick_pixmob_bench()
+            // auto-fires SingleColor(255,255,255, T_0_MS, T_3840_MS,
+            // T_0_MS) at the current interval. Square envelope - snap on,
+            // hold, snap off - so the visible window is the sustain only
+            // (no release fade) and refresh overlap is clean: the new
+            // command pre-empts the old envelope and continues the held
+            // colour at full brightness with no decay tail to hide.
+            pmob_t5_index_ = (pmob_t5_index_ + 1) % kPMobT5IntervalCount;
+            if (pmob_t5_index_ != 0) {
+                // Fire the first refresh immediately so the operator
+                // doesn't wait the interval before seeing anything. The
+                // tick fires subsequent refreshes on cadence from here.
+                pmob_fire_single_color(
+                    255, 255, 255,
+                    pixmob::T_0_MS, pixmob::T_3840_MS, pixmob::T_0_MS);
+                pmob_t5_last_refresh_ms_ = millis();
+            }
+            break;
+        case PMobTest::Test6TwoColors: {
+            // Fire buildTwoColors(red, blue) directly via the IR
+            // driver, bypassing any wash state. High contrast colour
+            // pair so the brief red flash + held blue tail are both
+            // distinguishable. Diagnoses whether the bracelet renders
+            // TwoColors visibly in isolation - a precondition for
+            // sparkle-on-wash (which encodes via TwoColors) being
+            // visible during shows.
+            uint16_t buf[kPMobPulseBufSize];
+            const size_t n = pixmob::buildTwoColors(
+                buf, kPMobPulseBufSize,
+                255, 0, 0,     // colour 1: red sparkle
+                0, 0, 255);    // colour 2: blue tail (~384 ms hold)
+            if (n != 0) {
+                auto* drv = dal::pixmob_ir_driver_instance();
+                if (drv) drv->transmit(buf, n);
+            }
+            break;
+        }
+    }
+    pmob_last_fire_ms_ = millis();
+    draw_pixmob_bench();
+}
+
+void TestMode::tick_pixmob_bench(uint32_t now) {
+    if (pmob_test_ != PMobTest::Test5AutoRefresh) return;
+    if (pmob_t5_index_ == 0) return;
+    const uint32_t interval = kPMobT5Intervals[pmob_t5_index_];
+    if ((now - pmob_t5_last_refresh_ms_) < interval) return;
+    // Square envelope (T_0 / T_3840 / T_0) - no decay tail. New refresh
+    // pre-empts the previous sustain cleanly; the bracelet stays at
+    // full brightness as long as refresh cadence < sustain duration.
+    pmob_fire_single_color(
+        255, 255, 255,
+        pixmob::T_0_MS, pixmob::T_3840_MS, pixmob::T_0_MS);
+    pmob_t5_last_refresh_ms_ = now;
+    // Don't update pmob_last_fire_ms_ - the auto-fire is silent on the
+    // LCD (operator is watching the bracelet, not the screen). A
+    // "Sent!" flash every cycle would just be a distraction.
+}
+
+void TestMode::draw_pixmob_bench() {
+    using dal::DisplayClearEvent;
+    using dal::DisplayShowTextEvent;
+    DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
+
+    // Header.
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 5, "PMob Bench", WHITE, BLACK, 2});
+
+    // Test label.
+    const char* test_label = "?";
+    switch (pmob_test_) {
+        case PMobTest::Test1Persistence:    test_label = "T1 Persist";   break;
+        case PMobTest::Test2Sleep:          test_label = "T2 Sleep";     break;
+        case PMobTest::Test3Cancel:         test_label = "T3 Cancel";    break;
+        case PMobTest::Test4EnvelopeSweep:  test_label = "T4 Envelope";  break;
+        case PMobTest::Test5AutoRefresh:    test_label = "T5 Refresh";   break;
+        case PMobTest::Test6TwoColors:      test_label = "T6 TwoColor";  break;
+    }
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 30, test_label, YELLOW, BLACK, 2});
+
+    // Per-test instruction (kept short for the 160-px-wide LCD).
+    // T4 builds the strings dynamically from the current sustain bucket
+    // so the user knows what's ABOUT to fire; line1 = bucket name,
+    // line2 = nominal ms.
+    char t4_line1[24];
+    char t4_line2[24];
+    const char* line1 = "";
+    const char* line2 = "";
+    switch (pmob_test_) {
+        case PMobTest::Test1Persistence:
+            line1 = (pmob_step_ == 0)
+                ? "A: set purple"
+                : "Pull battery 30s,";
+            line2 = (pmob_step_ == 0)
+                ? "background"
+                : "replace, observe";
+            break;
+        case PMobTest::Test2Sleep:
+            line1 = (pmob_step_ == 0)
+                ? "A: set purple,"
+                : "A: wake. Did it";
+            line2 = (pmob_step_ == 0)
+                ? "wait til dark"
+                : "come back purple?";
+            break;
+        case PMobTest::Test3Cancel:
+            line1 = (pmob_step_ == 0)
+                ? "A: red. then A"
+                : "Black instantly?";
+            line2 = (pmob_step_ == 0)
+                ? "for black."
+                : "Fades? Ignored?";
+            break;
+        case PMobTest::Test4EnvelopeSweep: {
+            // Documented bucket centres from the pixmob::Time enum.
+            static constexpr const char* kBucketLabels[8] = {
+                "T_0_MS",   "T_32_MS",   "T_96_MS",   "T_192_MS",
+                "T_480_MS", "T_960_MS",  "T_2400_MS", "T_3840_MS",
+            };
+            static constexpr uint16_t kBucketMs[8] = {
+                0, 32, 96, 192, 480, 960, 2400, 3840,
+            };
+            const uint8_t idx = pmob_step_ & 0x07;
+            std::snprintf(t4_line1, sizeof(t4_line1),
+                          "Next: %s", kBucketLabels[idx]);
+            std::snprintf(t4_line2, sizeof(t4_line2),
+                          "%u ms (eyeball it)", (unsigned)kBucketMs[idx]);
+            line1 = t4_line1;
+            line2 = t4_line2;
+            break;
+        }
+        case PMobTest::Test5AutoRefresh: {
+            if (pmob_t5_index_ == 0) {
+                line1 = "OFF";
+                line2 = "A: cycle 3000/2500/";
+                // Continuation in line2 alone is enough; LCD can't fit much more.
+            } else {
+                std::snprintf(t4_line1, sizeof(t4_line1),
+                              "Refresh: %u ms",
+                              (unsigned)kPMobT5Intervals[pmob_t5_index_]);
+                line1 = t4_line1;
+                line2 = "A: next interval";
+            }
+            break;
+        }
+        case PMobTest::Test6TwoColors: {
+            line1 = "A: fire TwoColors";
+            line2 = "red flash + blue hold";
+            break;
+        }
+    }
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 60, line1, WHITE, BLACK, 1});
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 75, line2, WHITE, BLACK, 1});
+
+    // "Sent!" flash on recent fire.
+    if (pmob_last_fire_ms_ != 0
+     && (millis() - pmob_last_fire_ms_) < kPMobConfirmFlashMs) {
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 95, "Sent!", GREEN, BLACK, 2});
+    }
+
+    // Footer hint.
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 128, "B: next test  B-hold: back",
         WHITE, BLACK, 1});
 }
 

@@ -119,6 +119,29 @@ public:
     virtual void on_light_wash_pulse(OutputBindingContext&,
                                       const dal::RgbPulseEvent&) {}
 
+    // Display family hooks (Epic 13). Dispatched only on bindings whose
+    // device_class() is DeviceClass::Display (orthogonal to the wash
+    // family, which targets Light / MultiLedScreen). Bindings that don't
+    // care leave the defaults as no-ops. See [[epic-13-lume-display-content]]
+    // for the per-payload semantic contract.
+    //
+    //   on_text_display - render a header/body string set onto the bound
+    //                      surface, optionally TTL-bounded.
+    //   on_bitmap_header - prepare to receive a multi-plane bitmap; stage
+    //                       dimensions + colours + checksum. Render only
+    //                       after all planes arrive and the checksum matches.
+    //   on_bitmap_plane  - chunk of one plane's pixel bytes. Appends into
+    //                       the staging buffer at byte_offset.
+    //   on_clear_screen  - clear the text and/or bitmap layer on this surface.
+    virtual void on_text_display(OutputBindingContext&,
+                                  const transport::espnow::TextDisplayPayload&) {}
+    virtual void on_bitmap_header(OutputBindingContext&,
+                                   const transport::espnow::BitmapHeaderPayload&) {}
+    virtual void on_bitmap_plane(OutputBindingContext&,
+                                  const transport::espnow::BitmapPlanePayload&) {}
+    virtual void on_clear_screen(OutputBindingContext&,
+                                  const transport::espnow::ClearScreenPayload&) {}
+
     // Optional: bindings that need to react to user input (e.g. a
     // diagnostic test-fire button). Default no-op.
     virtual void on_input_action(OutputBindingContext&,
@@ -135,6 +158,29 @@ public:
     // binding can hold a wash" and a wash will be silently lost.
     // See BindingCapabilities above for the vocabulary.
     virtual BindingCapabilities capabilities() const = 0;
+
+    // Epic 13: dispatch context safety flag. True means the binding's
+    // on_light_pulse / on_*_wash* / on_text_display / on_bitmap_* /
+    // on_clear_screen handlers are SAFE to call from the WiFi receive
+    // callback (the ESP-NOW recv task on ESP32). The Lume-side
+    // dispatch fast-paths capable bindings: a LIGHT_PULSE renders to
+    // an LED strip pixel envelope within microseconds of the broadcast
+    // landing instead of waiting up to one loop_tick (~50 ms) for the
+    // main task to drain a queue. Inter-Lume unison improves
+    // dramatically.
+    //
+    // Default false (safe): bindings whose handlers might block,
+    // toggle GPIOs with interrupts disabled, or touch peripherals
+    // that conflict with the WiFi task (notably IRsend::sendRaw)
+    // stay on the deferred path - LumeMode queues their work and
+    // fires it from loop_tick on the main task.
+    //
+    // Concrete: PixMobIrBinding returns false (IRsend is a ~30 ms
+    // blocking bit-bang loop with cli/sei). LumeLedStripBinding,
+    // LumeTextBinding, and LumeBitmapBinding return true (they only
+    // update in-RAM state in their on_X handler; the actual paint
+    // happens later in their tick()).
+    virtual bool can_render_in_callback() const { return false; }
 };
 
 }  // namespace output_bindings

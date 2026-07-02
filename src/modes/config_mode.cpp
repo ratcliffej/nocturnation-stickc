@@ -5,6 +5,7 @@
 #include "firmware_version.h"
 #include "persistence.h"
 #include "dal/dal.h"
+#include "../dal/drivers/led_strip_driver.h"
 #include "hal/hal.h"                        // for ir_tx_ext() emitter probe
 #include "../dal/drivers/local_driver.h"   // for set_pulse_enabled gating
 #include "../dal/drivers/pixmob_ir_driver.h"   // for internal/external IR toggles
@@ -70,7 +71,7 @@ size_t scroll_offset(size_t selected, size_t total, size_t max_visible) {
 }  // namespace
 
 // Out-of-class definitions for the ODR-used static constexpr members.
-constexpr ConfigMode::TopEntry    ConfigMode::kTop[6];
+constexpr ConfigMode::TopEntry    ConfigMode::kTop[5];
 constexpr ConfigMode::PickerEntry ConfigMode::kConnectivity[4];
 constexpr ConfigMode::PickerEntry ConfigMode::kUtilities[2];
 constexpr const char* ConfigMode::kWifiItems[];
@@ -86,6 +87,8 @@ void ConfigMode::enter() {
     confirm_until_ms_ = 0;
     last_drawn_battery_ = -2;     // force first battery redraw
     level_tuning_audio_active_ = false;
+    dir_id_edit_active_ = false;
+    dir_id_edit_cursor_ = DirIdCursor::HiNibble;
     draw();
 }
 
@@ -152,6 +155,15 @@ void ConfigMode::on_button_event(const ButtonPressEvent& ev) {
                 && pixmob_state_ != PixMobState::Menu) {
             pixmob_state_     = PixMobState::Menu;
             confirm_until_ms_ = 0;
+            draw();
+        } else if (level_ == Level::Sub
+                && active_sub_ == SubMenu::EspNow
+                && dir_id_edit_active_) {
+            // Hex-edit drill-down exits back to the EspNow menu.
+            // Value is already persisted (saved on every edit), so
+            // no save action is needed here.
+            dir_id_edit_active_ = false;
+            dir_id_edit_cursor_ = DirIdCursor::HiNibble;
             draw();
         } else if (level_ == Level::Sub && active_picker_ != SubMenu::None) {
             // Came in via a picker - return to the picker, not Top.
@@ -370,6 +382,7 @@ void ConfigMode::handle_sub(const ButtonPressEvent& ev) {
         case SubMenu::EspNow:      handle_espnow(ev);      break;
         case SubMenu::PixMob:      handle_pixmob(ev);      break;
         case SubMenu::LevelTuning: handle_level_tuning(ev); break;
+        case SubMenu::LedStrip:    handle_led_strip(ev); break;
         case SubMenu::WiFi:
         case SubMenu::Dmx:
             // Stub submenus accept Btn2 cycling for read-only browsing
@@ -392,6 +405,7 @@ void ConfigMode::draw_sub() {
         case SubMenu::EspNow:      draw_espnow(); break;
         case SubMenu::WiFi:        draw_stub("WiFi", kWifiItems, kWifiItemCount, "Epic 4"); break;
         case SubMenu::Dmx:         draw_stub("DMX",  kDmxItems,  kDmxItemCount,  "Epic 7"); break;
+        case SubMenu::LedStrip:    draw_led_strip(); break;
         case SubMenu::PixMob:      draw_pixmob(); break;
         case SubMenu::LevelTuning: draw_level_tuning(); break;
         case SubMenu::System:      draw_system(); break;
@@ -448,12 +462,25 @@ void ConfigMode::draw_stub(const char* title,
 void ConfigMode::handle_show(const ButtonPressEvent& ev) {
     const size_t count = shows::show_registry().count();
     if (count == 0) return;
+    // Epic 15 bench follow-up: list "DMX Bridge" as a synthetic row
+    // at the end. It's not a Show, so picking it doesn't save an
+    // active_show_id - it switches the device to DmxBridge mode
+    // immediately (mirroring the Director-mode picker's behaviour
+    // for the same entry). DmxBridge is intentionally NOT boot-
+    // persisted per persistence::is_persisted_runtime_mode (Q4
+    // 2026-06-05 decision); Config-menu pick is one-time.
+    const size_t total_rows = count + 1;
+    const size_t dmx_bridge_row = count;
     if (ev.id == ButtonId::Btn2) {
-        sub_selected_ = (sub_selected_ + 1) % count;
+        sub_selected_ = (sub_selected_ + 1) % total_rows;
         draw();
         return;
     }
     if (ev.id == ButtonId::Btn1) {
+        if (sub_selected_ == dmx_bridge_row) {
+            ModeMachine::switch_to(ModeId::DmxBridge);
+            return;
+        }
         shows::Show* picked = shows::show_registry().at(sub_selected_);
         if (picked) {
             persistence::save_active_show_id(picked->id());
@@ -482,17 +509,28 @@ void ConfigMode::draw_show() {
     constexpr int kRowY0 = 22;
     const size_t  max_visible = static_cast<size_t>(
         (kBodyBottomLimit - kRowY0) / kRowStride);
-    const size_t  first       = scroll_offset(sub_selected_, count, max_visible);
-    const size_t  last_excl   = (first + max_visible > count)
-                                ? count
+    // Epic 15: + 1 synthetic "DMX Bridge" row at the end.
+    const size_t  total_rows  = count + 1;
+    const size_t  dmx_row     = count;
+    const size_t  first       = scroll_offset(sub_selected_, total_rows, max_visible);
+    const size_t  last_excl   = (first + max_visible > total_rows)
+                                ? total_rows
                                 : first + max_visible;
 
     for (size_t i = first; i < last_excl; ++i) {
-        const bool   sel = (i == sub_selected_);
-        shows::Show* s   = shows::show_registry().at(i);
+        const bool sel = (i == sub_selected_);
+        char buf[40];
+        if (i == dmx_row) {
+            std::snprintf(buf, sizeof(buf), "%s DMX Bridge",
+                          sel ? ">" : " ");
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, kRowY0 + static_cast<int>(i - first) * kRowStride, buf,
+                sel ? YELLOW : WHITE, BLACK, 2});
+            continue;
+        }
+        shows::Show* s = shows::show_registry().at(i);
         const bool   active = s && active_id
                               && std::strcmp(s->id(), active_id) == 0;
-        char buf[40];
         std::snprintf(buf, sizeof(buf), "%s %s%s",
                       sel ? ">" : " ",
                       s ? s->display_name() : "(null)",
@@ -916,6 +954,15 @@ uint8_t ConfigMode::cycle_lume_channel(uint8_t c) {
 }
 
 void ConfigMode::handle_espnow(const ButtonPressEvent& ev) {
+    // While the DirectorId hex-edit screen is open, route everything
+    // through its dedicated handler. The drill-down is entered when
+    // the operator A-clicks the DirID row below; B-hold inside the
+    // editor exits back to this menu (handled in handle_root_b_hold).
+    if (dir_id_edit_active_) {
+        handle_dir_id_edit(ev);
+        return;
+    }
+
     if (ev.id == ButtonId::Btn2) {
         sub_selected_ = (sub_selected_ + 1) % kEspNowFunctionalItemCount;
         draw();
@@ -927,6 +974,15 @@ void ConfigMode::handle_espnow(const ButtonPressEvent& ev) {
                 persistence::save_director_channel(
                     cycle_director_channel(persistence::load_director_channel()));
                 break;
+            case EspNowItem::DirectorId: {
+                // Drill into the hex-edit screen. Three cursor
+                // positions (high nibble / low nibble / re-roll) -
+                // see handle_dir_id_edit. The value the operator
+                // sees here was the persisted value at draw time.
+                dir_id_edit_active_ = true;
+                dir_id_edit_cursor_ = DirIdCursor::HiNibble;
+                break;
+            }
             case EspNowItem::SlaveChannel:
                 persistence::save_lume_channel(
                     cycle_lume_channel(persistence::load_lume_channel()));
@@ -942,21 +998,95 @@ void ConfigMode::handle_espnow(const ButtonPressEvent& ev) {
     }
 }
 
+// -------------------------------------------------------------------------
+// Director ID hex editor (drill-down from EspNow > DirectorId)
+// -------------------------------------------------------------------------
+
+uint8_t ConfigMode::cycle_dir_id_high_nibble(uint8_t current) {
+    // Performance range is 0x40..0xFE, so the high nibble cycles
+    // through {4, 5, ..., F}. Increment-only with wrap; the low
+    // nibble carries; if the result would be 0xFF (reserved for
+    // broadcast) we snap to 0xFE.
+    uint8_t hi = (current >> 4) & 0x0F;
+    hi = (hi >= 0x0F) ? 0x04 : static_cast<uint8_t>(hi + 1);
+    if (hi < 0x04) hi = 0x04;
+    const uint8_t lo = current & 0x0F;
+    uint8_t v = static_cast<uint8_t>((hi << 4) | lo);
+    if (v == 0xFF) v = 0xFE;
+    return v;
+}
+
+uint8_t ConfigMode::cycle_dir_id_low_nibble(uint8_t current) {
+    // Low nibble cycles {0..F}. If the high nibble is F and the low
+    // would wrap to F (giving 0xFF), snap to 0 - the operator
+    // chooses 0xFE by stepping through {F0..FE}, and the wrap from
+    // FE goes to F0 (matching the "skipped" 0xFF).
+    uint8_t lo = current & 0x0F;
+    const uint8_t hi = (current >> 4) & 0x0F;
+    lo = (lo >= 0x0F) ? 0x00 : static_cast<uint8_t>(lo + 1);
+    uint8_t v = static_cast<uint8_t>((hi << 4) | lo);
+    if (v == 0xFF) v = 0xF0;   // skip broadcast slot
+    return v;
+}
+
+void ConfigMode::handle_dir_id_edit(const ButtonPressEvent& ev) {
+    if (ev.id == ButtonId::Btn2) {
+        // Cycle cursor: hi -> lo -> re-roll -> hi.
+        const uint8_t next = (static_cast<uint8_t>(dir_id_edit_cursor_) + 1)
+                             % kDirIdCursorCount;
+        dir_id_edit_cursor_ = static_cast<DirIdCursor>(next);
+        draw();
+        return;
+    }
+    if (ev.id == ButtonId::Btn1) {
+        switch (dir_id_edit_cursor_) {
+            case DirIdCursor::HiNibble: {
+                const uint8_t v = cycle_dir_id_high_nibble(
+                    persistence::load_director_perf_source_id());
+                persistence::save_director_perf_source_id(v);
+                break;
+            }
+            case DirIdCursor::LoNibble: {
+                const uint8_t v = cycle_dir_id_low_nibble(
+                    persistence::load_director_perf_source_id());
+                persistence::save_director_perf_source_id(v);
+                break;
+            }
+            case DirIdCursor::Reroll:
+                (void)persistence::reroll_director_perf_source_id();
+                break;
+        }
+        draw();
+    }
+}
+
 void ConfigMode::draw_espnow() {
+    if (dir_id_edit_active_) {
+        draw_dir_id_edit();
+        return;
+    }
     DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         10, 5, "ESP-NOW", WHITE, BLACK, 2});
 
     char m_line[28];
+    char id_line[28];
     char s_line[28];
     char r_line[28];
     std::snprintf(m_line, sizeof(m_line), "Director: %s",
                   director_channel_label(persistence::load_director_channel()));
+    // DirectorID is the persisted Performance-range id (channel 11).
+    // Selecting this row + A-click re-rolls it (handle_espnow above).
+    // Label format mirrors the Lume-side TOFU lock label "P:nn" so
+    // the value reads the same on both sides of the wire.
+    std::snprintf(id_line, sizeof(id_line), "DirID:    P:%02X",
+                  static_cast<unsigned>(persistence::load_director_perf_source_id()));
     std::snprintf(s_line, sizeof(s_line), "Lume:     %s",
                   lume_channel_label(persistence::load_lume_channel()));
     std::snprintf(r_line, sizeof(r_line), "Repeat:   %s",
                   persistence::load_lume_repeat_enabled() ? "ON" : "OFF");
-    const char* lines[kEspNowFunctionalItemCount] = { m_line, s_line, r_line };
+    const char* lines[kEspNowFunctionalItemCount] = {
+        m_line, id_line, s_line, r_line };
 
     constexpr int  kRowY0      = 30;
     const size_t   max_visible = static_cast<size_t>(
@@ -978,6 +1108,58 @@ void ConfigMode::draw_espnow() {
     }
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         10, 122, "B: cycle  A: select  B-hold: back",
+        WHITE, BLACK, 1});
+}
+
+void ConfigMode::draw_dir_id_edit() {
+    DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 5, "Set DirID", WHITE, BLACK, 2});
+
+    const uint8_t v  = persistence::load_director_perf_source_id();
+    const uint8_t hi = (v >> 4) & 0x0F;
+    const uint8_t lo = v & 0x0F;
+    static constexpr const char* kHex = "0123456789ABCDEF";
+
+    // Cursor-aware hex display - bracket the active nibble so the
+    // operator can see which one Btn1 will increment. "P:" prefix
+    // matches the Lume-side TofuLock label convention so the value
+    // reads identically on Director Config and Lume screens.
+    //
+    // Format = "P:" + hi_open + hi_char + hi_close + lo_open + lo_char + lo_close
+    //
+    // Examples (DirID = 0x4F):
+    //   cursor on hi:    "P:[4]F"
+    //   cursor on lo:    "P: 4[F]"
+    //   cursor on roll:  "P: 4 F"  (neither nibble bracketed)
+    const bool on_hi = (dir_id_edit_cursor_ == DirIdCursor::HiNibble);
+    const bool on_lo = (dir_id_edit_cursor_ == DirIdCursor::LoNibble);
+    const char* hi_open  = on_hi ? "[" : " ";
+    const char* hi_close = on_hi ? "]" : " ";
+    const char* lo_open  = on_lo ? "[" : "";
+    const char* lo_close = on_lo ? "]" : "";
+    char hex_line[20];
+    // %s + %c + %s + %s + %c + %s - all-matching-types this time.
+    // The previous version had %c consuming a const char* and %s
+    // consuming a char (which dereferenced an arbitrary integer as
+    // a pointer) - reliable LCD-not-rendering + reboot-on-button bug.
+    std::snprintf(hex_line, sizeof(hex_line), "P:%s%c%s%s%c%s",
+                  hi_open, kHex[hi], hi_close,
+                  lo_open, kHex[lo], lo_close);
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 36, hex_line, on_hi || on_lo ? YELLOW : WHITE, BLACK, 3});
+
+    // Re-roll cursor position - a one-liner action labelled like a
+    // menu item. Highlighted when the cursor is on it.
+    const bool on_roll = (dir_id_edit_cursor_ == DirIdCursor::Reroll);
+    char roll_line[24];
+    std::snprintf(roll_line, sizeof(roll_line), "%s Re-roll",
+                  on_roll ? ">" : " ");
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 86, roll_line, on_roll ? YELLOW : WHITE, BLACK, 2});
+
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 122, "A: change  B: next  B-hold: back",
         WHITE, BLACK, 1});
 }
 
@@ -1187,6 +1369,182 @@ void ConfigMode::draw() {
         case Level::Picker: draw_picker(); break;
         case Level::Sub:    draw_sub();    break;
     }
+}
+
+// =============================================================================
+// LED Strip submenu (Epic 12)
+//
+// Brightness is the only live item for now; Enable / Group size / Repeat are
+// reserved labels that future B4-live wiring promotes to interactive. The
+// brightness cycle mirrors Btn1-in-Lume - same level table (50 / 25 / 10 / 1),
+// same NVS key (strip_bri), so toggling here vs Lume reaches the same
+// persisted value.
+//
+// Levels chosen for the worst-case 30-pixel SK6812 strip current
+// draw (RGB at 255,255,255, master at 255):
+//    50 % -> ~900 mA peak. Wall-powered only. Brownout on a Plus2 S3
+//             battery once master DMX > ~71; brownout on laptop
+//             USB-CDC (500 mA budget). Use when the Stick is on a
+//             USB-C charger / hub with real power, e.g. the
+//             Director / DMX-bridge Stick at a wired stage rig.
+//    25 % -> ~450 mA peak. Safe on USB-CDC laptop; safe on a healthy
+//             Plus2 battery up to master ~142. The right pick for
+//             mobile / demo work and any unattended Stick on a
+//             battery you'd like to last a show.
+//    10 % -> ~180 mA peak. Safe on every supply this firmware
+//             targets, including a low-charge battery. Default for
+//             first-install devices so out-of-box behaviour can't
+//             brown out regardless of how it's powered.
+//     1 % -> ~ 18 mA peak. Ambient hint, near-darkness operation.
+//
+// 100 % was retired 2026-06-23 after bench-confirmed brownout reboots
+// on the Lume Stick when a stage-team raw RGB slider hit 255 (~1.8 A
+// peak, well past any reasonable USB / battery supply). Devices that
+// still have 100 stored in NVS land at kStripBrightnessLevels[0]
+// (50 %) on the next Config-menu cycle press.
+// =============================================================================
+
+namespace {
+constexpr uint8_t kStripBrightnessLevels[] = { 50, 25, 10, 1 };
+constexpr size_t  kStripBrightnessLevelCount =
+    sizeof(kStripBrightnessLevels) / sizeof(kStripBrightnessLevels[0]);
+
+uint8_t cycle_strip_brightness(uint8_t current_pct) {
+    for (size_t i = 0; i < kStripBrightnessLevelCount; ++i) {
+        if (kStripBrightnessLevels[i] == current_pct) {
+            return kStripBrightnessLevels[(i + 1) % kStripBrightnessLevelCount];
+        }
+    }
+    return kStripBrightnessLevels[0];
+}
+
+// Group sizes the operator can pick from. 1 / 6 / 12 / 24.
+//   1   - every pixel rolls its own CHANCE die (Tildagon ring-style
+//         fine-grain sparkle: each LED independent, matches the way
+//         a 12-LED perimeter ring responds to a wash_with_sparkle cue)
+//   6   - small chunky groups
+//   12  - Tildagon-ring-sized blocks
+//   24  - large coarse groups (whole-strip-feel at chain >= 144)
+// PixMob bracelets are effectively group_size = pixel_count (the
+// whole bracelet responds as one), but we don't offer that as a
+// preset - chain-size = group-size has the same effect.
+constexpr uint8_t kStripGroupSizes[] = { 1, 6, 12, 24 };
+constexpr size_t  kStripGroupSizeCount =
+    sizeof(kStripGroupSizes) / sizeof(kStripGroupSizes[0]);
+
+uint8_t cycle_strip_group_size(uint8_t current) {
+    for (size_t i = 0; i < kStripGroupSizeCount; ++i) {
+        if (kStripGroupSizes[i] == current) {
+            return kStripGroupSizes[(i + 1) % kStripGroupSizeCount];
+        }
+    }
+    return kStripGroupSizes[0];
+}
+
+// Chain sizes match the M5Stack shop SKUs. Showing the physical
+// length is the operator-friendly label (counting LEDs on a 1 m
+// strip is a poor UX); the pixel count tags along in brackets.
+struct ChainSize {
+    uint16_t    pixels;
+    const char* label;     // e.g. "1 m (144)"
+};
+constexpr ChainSize kStripChainSizes[] = {
+    { 15,  "10cm (15)"  },
+    { 29,  "20cm (29)"  },
+    { 72,  "50cm (72)"  },
+    { 144, "1m (144)"   },
+    { 288, "2m (288)"   },
+};
+constexpr size_t kStripChainSizeCount =
+    sizeof(kStripChainSizes) / sizeof(kStripChainSizes[0]);
+
+uint16_t cycle_strip_chain_size(uint16_t current) {
+    for (size_t i = 0; i < kStripChainSizeCount; ++i) {
+        if (kStripChainSizes[i].pixels == current) {
+            return kStripChainSizes[(i + 1) % kStripChainSizeCount].pixels;
+        }
+    }
+    return kStripChainSizes[0].pixels;
+}
+
+const char* strip_chain_size_label(uint16_t pixels) {
+    for (size_t i = 0; i < kStripChainSizeCount; ++i) {
+        if (kStripChainSizes[i].pixels == pixels) {
+            return kStripChainSizes[i].label;
+        }
+    }
+    return "?";
+}
+}  // namespace
+
+void ConfigMode::handle_led_strip(const ButtonPressEvent& ev) {
+    if (ev.id == ButtonId::Btn2) {
+        sub_selected_ = (sub_selected_ + 1) % kLedStripItemCount;
+        draw();
+        return;
+    }
+    if (ev.id == ButtonId::Btn1) {
+        switch (static_cast<LedStripItem>(sub_selected_)) {
+            case LedStripItem::Enable: {
+                const bool next = !persistence::load_strip_enabled();
+                persistence::save_strip_enabled(next);
+                DAL::set_driver_enabled("led-strip", next);
+                break;
+            }
+            case LedStripItem::Brightness: {
+                const uint8_t current = persistence::load_strip_brightness();
+                const uint8_t next    = cycle_strip_brightness(current);
+                persistence::save_strip_brightness(next);
+                dal::led_strip_driver_instance()->set_brightness_percent(next);
+                break;
+            }
+            case LedStripItem::GroupSize: {
+                const uint8_t current = persistence::load_strip_group_size();
+                const uint8_t next    = cycle_strip_group_size(current);
+                persistence::save_strip_group_size(next);
+                dal::led_strip_driver_instance()->set_group_size(next);
+                break;
+            }
+            case LedStripItem::ChainSize: {
+                const uint16_t current = persistence::load_strip_chain_size();
+                const uint16_t next    = cycle_strip_chain_size(current);
+                persistence::save_strip_chain_size(next);
+                dal::led_strip_driver_instance()->set_pixel_count(next);
+                break;
+            }
+        }
+        draw();
+    }
+}
+
+void ConfigMode::draw_led_strip() {
+    DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 5, "LED Strip", WHITE, BLACK, 2});
+
+    char ena[28], bri[28], grp[28], chn[28];
+    std::snprintf(ena, sizeof(ena), "Enable: %s",
+                  persistence::load_strip_enabled() ? "ON" : "OFF");
+    std::snprintf(bri, sizeof(bri), "Brightness: %u%%",
+                  (unsigned)persistence::load_strip_brightness());
+    std::snprintf(grp, sizeof(grp), "Group size: %u",
+                  (unsigned)persistence::load_strip_group_size());
+    std::snprintf(chn, sizeof(chn), "Chain: %s",
+                  strip_chain_size_label(persistence::load_strip_chain_size()));
+
+    const char* lines[kLedStripItemCount] = { ena, bri, grp, chn };
+    for (size_t i = 0; i < kLedStripItemCount; ++i) {
+        const bool sel = (i == sub_selected_);
+        char buf[40];
+        std::snprintf(buf, sizeof(buf), "%s %s",
+                      sel ? ">" : " ", lines[i]);
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 30 + (int)i * 16, buf,
+            sel ? YELLOW : WHITE, BLACK, 2});
+    }
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 122, "B: cycle  A: select  B-hold: back",
+        WHITE, BLACK, 1});
 }
 
 }  // namespace modes

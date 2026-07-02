@@ -67,6 +67,12 @@ private:
         PixMob,
         LevelTuning,
         System,
+        // Epic 12 B4 stub. Functional wiring (NVS-backed enable +
+        // brightness cap + group/repeat data model) lands once the
+        // Plus2 / S3 HAL backends gain a real LedStrip on the Grove
+        // port; until then this leaf renders read-only via the
+        // shared draw_stub() template.
+        LedStrip,
     };
 
     // Within the PixMob submenu, drilling into one of its items enters a
@@ -90,10 +96,17 @@ private:
         TopAction   action;
         const char* label;
     };
-    static constexpr TopEntry kTop[6] = {
+    // Display submenu retired post-Epic-15: its only functional item
+    // was Pulse Enable, which gated a code path retired in Epic 13 B0
+    // (LCD became a text-content surface for lyrics, not a light
+    // surface). The submenu's handle_display / draw_display code stays
+    // in the .cpp as dead branches (matches the SubMenu::WiFi
+    // precedent); only the top-level entry is removed so operators
+    // stop seeing a phantom control. Re-add the entry here if a
+    // future Epic restores LCD-as-light-surface.
+    static constexpr TopEntry kTop[5] = {
         { SubMenu::None,         TopAction::GroupId, "Group"        },
         { SubMenu::Show,         TopAction::Drill,   "Show"         },
-        { SubMenu::Display,      TopAction::Drill,   "Display"      },
         { SubMenu::Connectivity, TopAction::Drill,   "Connectivity" },
         { SubMenu::Utilities,    TopAction::Drill,   "Utilities"    },
         { SubMenu::System,       TopAction::Drill,   "System"       },
@@ -105,11 +118,17 @@ private:
         SubMenu     target;
         const char* label;
     };
+    // WiFi was listed pre-Epic-15 ("reserved for future Epic"); removed
+    // because Epic 15 commits the fleet to ESP-NOW Long Range mode -
+    // standard 802.11b/g/n is disabled at the radio layer and there's
+    // no path that would surface a WiFi config screen now or in the
+    // foreseeable future. A future PoE-Director config entry will
+    // likely replace this slot.
     static constexpr PickerEntry kConnectivity[4] = {
-        { SubMenu::IR,     "IR"      },
-        { SubMenu::EspNow, "ESP-NOW" },
-        { SubMenu::WiFi,   "WiFi"    },
-        { SubMenu::Dmx,    "DMX"     },
+        { SubMenu::IR,       "IR"        },
+        { SubMenu::EspNow,   "ESP-NOW"   },
+        { SubMenu::Dmx,      "DMX"       },
+        { SubMenu::LedStrip, "LED Strip" },   // Epic 12 B4 (stub)
     };
     static constexpr size_t kConnectivityCount =
         sizeof(kConnectivity) / sizeof(kConnectivity[0]);
@@ -169,6 +188,20 @@ private:
         "Carrier", "Universe ID", "Channel mapping",
     };
     static constexpr size_t kDmxItemCount = sizeof(kDmxItems) / sizeof(kDmxItems[0]);
+
+    // LED Strip submenu items - all live. Btn1 toggles / cycles the
+    // selected value through the table below in handle_led_strip:
+    //   Enable      -> ON / OFF
+    //   Brightness  -> 100 / 10 / 1 %
+    //   Group size  -> 6 / 12 / 24 pixels-per-CHANCE-roll
+    //   Chain size  -> 10 cm (15) / 20 cm (29) / 50 cm (72) / 1 m (144) / 2 m (288)
+    enum class LedStripItem : uint8_t {
+        Enable = 0,
+        Brightness,
+        GroupSize,
+        ChainSize,
+    };
+    static constexpr size_t kLedStripItemCount = 4;
 
     size_t stub_item_count() const;
 
@@ -255,20 +288,59 @@ private:
     void handle_ir(const dal::ButtonPressEvent& ev);
     void draw_ir();
 
-    // ESP-NOW submenu (functional: Director Channel + Lume Channel +
-    // Lume Repeat). The Lume Group setting moved to the top-level
-    // Config > Group item (direct action).
+    // LED Strip submenu (Epic 12). Items kept stub-style except for
+    // Brightness, which is live: Btn1 cycles 100 / 10 / 1 % through
+    // the same level table the Btn1-in-Lume gesture uses, with the
+    // value persisted to NVS via persistence::save_strip_brightness().
+    // Enable, Group size, Repeat are reserved labels for now; future
+    // B4-live wiring lights them up.
+    void handle_led_strip(const dal::ButtonPressEvent& ev);
+    void draw_led_strip();
+
+    // ESP-NOW submenu (functional: Director Channel + Director ID +
+    // Lume Channel + Lume Repeat). The Lume Group setting moved to
+    // the top-level Config > Group item (direct action).
+    //
+    // DirectorId (added 2026-06-24, EMF prep) shows the device's
+    // persisted Performance-range source id. A-click on the row
+    // drills into a hex-edit screen with three cursor positions:
+    // high nibble / low nibble / re-roll. Knowable IDs matter for
+    // upstream tagging - e.g. a Tildagon show can choose a logo /
+    // QR overlay based on which Director it's locked to (stage D
+    // -> 0xD0, etc.), which only works if the operator can pin
+    // the value rather than relying on a random roll.
     enum class EspNowItem : uint8_t {
         MasterChannel = 0,
+        DirectorId,
         SlaveChannel,
         SlaveRepeat,
     };
-    static constexpr size_t kEspNowFunctionalItemCount = 3;
+    static constexpr size_t kEspNowFunctionalItemCount = 4;
+
+    // DirectorId hex-edit sub-state (entered from EspNow menu by
+    // A-click on the DirectorId row). Three cursor positions cycled
+    // by Btn2: 0 = high nibble, 1 = low nibble, 2 = re-roll. Btn1
+    // acts on the active cursor (increment nibble OR roll). The
+    // edited value is saved to NVS on every change so B-hold simply
+    // exits - no explicit Save action needed.
+    enum class DirIdCursor : uint8_t { HiNibble = 0, LoNibble, Reroll };
+    static constexpr size_t kDirIdCursorCount = 3;
 
     static const char* director_channel_label(uint8_t c);
     static const char* lume_channel_label(uint8_t c);
     static uint8_t cycle_director_channel(uint8_t c);
     static uint8_t cycle_lume_channel(uint8_t c);
+
+    bool        dir_id_edit_active_ = false;
+    DirIdCursor dir_id_edit_cursor_ = DirIdCursor::HiNibble;
+
+    void handle_dir_id_edit(const dal::ButtonPressEvent& ev);
+    void draw_dir_id_edit();
+    // Mutate the persisted value (cycling within the Performance
+    // range 0x40..0xFE), then return what was saved. Pure logic in
+    // the header for testability without instantiating ConfigMode.
+    static uint8_t cycle_dir_id_high_nibble(uint8_t current);
+    static uint8_t cycle_dir_id_low_nibble (uint8_t current);
 
     void handle_espnow(const dal::ButtonPressEvent& ev);
     void draw_espnow();

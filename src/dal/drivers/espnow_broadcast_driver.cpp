@@ -193,12 +193,19 @@ bool EspNowBroadcastDriver::start_broadcast(uint8_t channel) {
     last_tx_ms_ = 0;
 
     if (channel == 11) {
-        // Channel 11 (Performance mode): pick a Performance-range id,
-        // install a listen-window recv callback, bring the radio up
-        // RX-capable, and leave active_ = false so loop_tick() holds
-        // TX off until listen_tick() settles. See spec §3.4 and the
-        // B4a design notes in the Epic working copy.
-        listen_candidate_          = pick_performance_id_random();
+        // Channel 11 (Performance mode): load the persisted
+        // Performance-range id (rolled randomly on first install,
+        // sticky thereafter - see persistence::load_director_perf_source_id
+        // docstring for the why). Install a listen-window recv
+        // callback, bring the radio up RX-capable, and leave active_
+        // = false so loop_tick() holds TX off until listen_tick()
+        // settles. See spec §3.4 and the B4a design notes.
+        //
+        // If listen_tick() detects a collision and proceeds to re-
+        // roll, the new value is persisted so subsequent boots line
+        // up with what's actually on air. Stable-by-default, drifts
+        // only when the radio environment forces it.
+        listen_candidate_          = modes::persistence::load_director_perf_source_id();
         listen_collision_heard_    = false;
         listen_attempts_remaining_ = kListenMaxAttempts;
         radio->set_recv_callback([this](const hal::ESPNowMessage& m) {
@@ -291,10 +298,11 @@ void EspNowBroadcastDriver::send_frame_bytes(const uint8_t* buf, size_t n, const
     if (!radio) return;
     const bool ok = radio->send_broadcast(buf, n);
     if (ok) last_tx_ms_ = now_ms();
-#ifdef ARDUINO
-    Serial.printf("[espnow TX %s%s] ", label, ok ? "" : " FAIL");
-    for (size_t i = 0; i < n; ++i) Serial.printf("%02X ", buf[i]);
-    Serial.println();
+    // Brief per-TX line for diagnostics (Epic 13 trimmed the old per-frame
+    // hex dump that was blocking the Stick's DMX-bridge parser). Suppressed
+    // on the AtomS3-PoE Director, which uses Serial as its config console.
+#if defined(ARDUINO) && !defined(NOCT_DMX_ETHERNET)
+    Serial.printf("[espnow TX %s%s len=%u]\n", label, ok ? "" : " FAIL", (unsigned)n);
 #else
     (void)ok; (void)label;
 #endif
@@ -311,6 +319,48 @@ void EspNowBroadcastDriver::send_frame_bytes(const uint8_t* buf, size_t n, const
     } else {
         retransmits_remaining_ = 0;
     }
+}
+
+void EspNowBroadcastDriver::send_passthrough(const uint8_t* buf, size_t n) {
+    // Epic 13: orchestrator-originated frame (TextDisplay / Bitmap*
+    // / ClearScreen) unwrapped by the DMX bridge from its Enttec
+    // label-0x10 envelope. Routes through send_frame_bytes so the
+    // initial send + spec-§4.3 retransmit queue handle it
+    // identically to wash/pulse/heartbeat. Label "PASS" lets bench
+    // logs distinguish passthrough from native sends.
+    //
+    // EMF multi-show source-id rewrite (2026-06-24, phase 3 of the
+    // multi-show partitioning work): the orchestrator emits these
+    // frames with source_id = 0xFF (broadcast) because it doesn't
+    // know which Director it's bridging through. The Director knows
+    // its own id; re-stamp the source_id byte (header offset 3) so
+    // the frame is attributable to this Director when it lands at a
+    // Lume's TofuLock. Lumes locked to a DIFFERENT Director then
+    // reject these display frames as "from a different source" -
+    // which is exactly the multi-show partitioning we want.
+    //
+    // Pre-flight validate the magic + version so we don't blindly
+    // mutate a frame from a misbehaving upstream sender. Drop on
+    // anomaly rather than letting bad bytes hit the air.
+    if (n < transport::espnow::kHeaderSize) return;
+    if (buf[0] != transport::espnow::kMagic0
+        || buf[1] != transport::espnow::kMagic1) return;
+    if (buf[2] != transport::espnow::kProtocolVersion) return;
+    if (!active_) return;   // not settled yet; nothing to stamp with
+
+    // Patch source_id in place if the upstream put 0xFF (broadcast)
+    // there. If the upstream already stamped a specific source_id
+    // (e.g. a future orchestrator running its own listen-before-
+    // broadcast handshake), preserve it - the rewrite is for the
+    // orchestrator-as-anonymous-bridge case, not as a blanket
+    // identity hijack.
+    uint8_t patched[transport::espnow::kMaxFrameSize];
+    if (n > sizeof(patched)) return;   // defensive; shouldn't happen for orch-sized frames
+    std::memcpy(patched, buf, n);
+    if (patched[3] == transport::espnow::kBroadcastSourceId) {
+        patched[3] = source_id_;
+    }
+    send_frame_bytes(patched, n, "PASS");
 }
 
 void EspNowBroadcastDriver::pump_retransmits() {
@@ -363,7 +413,8 @@ bool EspNowBroadcastDriver::maybe_send_heartbeat() {
     const uint32_t now = now_ms();
     const uint32_t gap = now - last_tx_ms_;
     if (gap < kHeartbeatPeriodMs) return false;
-#ifdef ARDUINO
+    // Suppressed on the AtomS3-PoE Director (Serial is its config console).
+#if defined(ARDUINO) && !defined(NOCT_DMX_ETHERNET)
     Serial.printf("[HBEAT] firing after %lu ms gap since last TX\n",
                   static_cast<unsigned long>(gap));
 #endif
@@ -394,6 +445,12 @@ void EspNowBroadcastDriver::listen_tick() {
             listen_candidate_       = pick_performance_id_random();
             listen_collision_heard_ = false;
             listen_started_ms_      = now;
+            // Persist the re-rolled value so we boot onto the same
+            // id next time rather than re-running the collision dance.
+            // The stable-by-default contract for DirectorID applies as
+            // long as the radio environment cooperates; once it forces
+            // us off the original id, the new id IS the stable one.
+            modes::persistence::save_director_perf_source_id(listen_candidate_);
 #ifdef ARDUINO
             Serial.printf("[espnow] listen collision; re-rolling to 0x%02X "
                           "(attempts left=%u)\n",

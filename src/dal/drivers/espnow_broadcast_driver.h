@@ -33,20 +33,47 @@ class EspNowBroadcastDriver : public Driver {
 public:
     static constexpr uint32_t kHeartbeatPeriodMs = 1000;   // 1 Hz alive signal
 
-    // Per spec §4.3 reliability strategy: each frame goes out 3 times
-    // total (initial + 2 retransmits) with the SAME sequence number,
+    // Per spec §4.3 reliability strategy: each frame goes out N times
+    // (initial + N-1 retransmits) with the SAME sequence number,
     // separated by 5-15 ms of pseudo-random jitter. Lume dedup catches
     // the duplicates; the redundancy buys airtime resilience against
-    // collisions and brief interference. Total send burst is ~20-30 ms,
-    // well under the inter-beat interval at any musical tempo.
-    static constexpr uint8_t  kRedundantSends     = 3;
+    // collisions and brief interference.
+    //
+    // Bench finding 2026-06-23: bumping from 3 to 5 INCREASED visible
+    // pulse dropouts on the M5 fleet at the bench. Counter-intuitive
+    // but consistent with airtime saturation - each 5-send burst eats
+    // ~40-70 ms of radio time, and at the 7 Hz sparkle rate of
+    // sparkle_on_beat the bursts overlap each other plus the wash-
+    // refresh traffic. Lumes' WiFi receive queues fill before the
+    // main task can drain them, and frames get dropped at the radio
+    // IDF layer. 3 sends (~20-30 ms burst) leaves enough quiet
+    // between bursts for the receive path to keep up. The EMF noise-
+    // floor concern that motivated the bump remains valid for the
+    // venue, but 5 isn't the right knob - if RF reliability needs
+    // more, the answer is the Lume-repeat mesh setting (Spec §4.3),
+    // not louder Director retransmits.
+    //
+    // Epic 15 2026-06-27: dropped 3 -> 2 alongside the move to
+    // ESP-NOW Long Range mode. LR doubles per-frame airtime (500
+    // kbps vs 1 Mbps), so 3 retransmits would eat ~80-140 ms per
+    // burst at the 7 Hz sparkle rate, deeper into the saturation
+    // territory the 5-send bench finding identified. 2 retransmits
+    // gives us 1 initial + 1 redundant copy with comfortable margin.
+    // If the EMF lighting engineer's park test shows dropouts, the
+    // answer is Lume-repeat mesh, not increasing this back to 3.
+    static constexpr uint8_t  kRedundantSends     = 2;
     static constexpr uint8_t  kRedundantGapMinMs  = 5;
     static constexpr uint8_t  kRedundantGapMaxMs  = 15;
 
-    // Maximum frame size we ever buffer for retransmit. Matches the
-    // transport-level cap so the LIGHT_PULSE frame (largest at 14
-    // bytes including header) fits comfortably.
-    static constexpr size_t   kRetransmitBufSize  = 32;
+    // Maximum frame size we ever buffer for retransmit. Was 32 (sized
+    // for LIGHT_PULSE at 14 bytes including header); Epic 13 raised
+    // the wire ceiling to 250 for TextDisplay (~200 bytes payload at
+    // the max) and bitmap planes, and the DMX-bridge passthrough now
+    // routes display frames through this driver too (so the retransmit
+    // protection applies uniformly to wash/pulse/heartbeat AND display).
+    // Set to the transport-level ceiling so no frame size silently
+    // skips retransmit.
+    static constexpr size_t   kRetransmitBufSize  = 250;
 
     // Channel 11 Performance-mode listen-before-broadcast (Epic 5.5 B4).
     // Spec §3.4: Director MUST listen for at least one second on its
@@ -152,6 +179,17 @@ public:
     // listen-before-broadcast. Exposed public for direct unit testing
     // without spinning up the radio or HAL.
     static uint8_t  derive_source_id(uint8_t channel);
+
+    // Epic 13: send an arbitrary pre-encoded ESP-NOW frame buffer
+    // (typically a TextDisplay / BitmapHeader / BitmapPlane /
+    // ClearScreen that the orchestrator built client-side and the
+    // DMX bridge unwrapped from its Enttec passthrough envelope).
+    // Reuses the per-spec-§4.3 reliability strategy: initial send +
+    // jittered retransmits via the same retransmit queue wash and
+    // pulse traffic use. Non-blocking; the queue drains via
+    // pump_retransmits() during loop_tick. Label is logged so bench
+    // diagnostics can distinguish passthrough from native sends.
+    void send_passthrough(const uint8_t* buf, size_t n);
 
 #ifndef ARDUINO
     // ----- Native test seam (compiled only in host builds) -----
