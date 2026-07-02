@@ -294,6 +294,11 @@ DecodeResult decode_header(const uint8_t* buf, size_t buf_len, Header& out_hdr) 
     return DecodeResult::Ok;
 }
 
+void set_hop_count(uint8_t* buf, size_t buf_len, uint8_t new_hops) {
+    if (buf == nullptr || buf_len < kHeaderSize) return;
+    buf[kHopCountOffset] = new_hops;
+}
+
 DecodeResult decode_heartbeat(const Header& hdr,
                               const uint8_t* payload, size_t payload_len,
                               HeartbeatPayload& out) {
