@@ -59,6 +59,44 @@ the Boot splash is Stick UX whose layout assumes the 240×135 panel and
 rendered mangled on the S3R's square screen for the whole Ethernet
 bring-up.
 
+## 2026-07-03 — Fleet-review Tier 1 quick wins
+
+Three targeted robustness fixes surfaced by the 2026-07-02 Fable
+multi-agent fleet review; all small, isolated, and closing genuine
+deployment-risk failure paths.
+
+- **PixMob wash divide-by-zero guard** (`pixmob_ir_driver.cpp`,
+  finding #10). `compute_drift_rgb` re-read `state.cycle_ms` twice
+  under a caller-side `cycle_ms > 0` gate, so a mid-cycle
+  drifting→static wash swap (WiFi task overwriting the slot's
+  `cycle_ms` between the guard and the modulo) produced an Xtensa
+  IntegerDivideByZero panic. Fixed by snapshotting `cycle_ms` once
+  into a local and holding colour A on the zero path, matching the
+  documented static-wash behaviour every caller already pre-seeds
+  for.
+
+- **Passthrough sequence-number rewrite** (`espnow_broadcast_driver.cpp`,
+  finding #9). `send_passthrough` re-stamped `source_id` (byte 3) to
+  claim orchestrator-originated display frames as this Director's,
+  but left the orchestrator's independent 1..255 seq counter in
+  place. Two unrelated seq streams under one `source_id` collide in
+  every receiver's `(source_id, sequence_number)` dedup ring and
+  inflate SignalQuality's forward-gap miss count. Fixed by also
+  re-stamping `sequence_number` (byte 4) from `next_seq()` in the
+  same branch, so passthrough frames join this Director's single
+  monotonic stream.
+
+- **Lume session state reset on enter** (`lume_mode.cpp`, finding
+  #33). `LumeMode` is a persistent static singleton, so a Config
+  round-trip re-entered it with the previous session's dedup ring
+  and any staged-but-undrained `pending_light_` / `pending_repeat_`
+  frame still present. After the round-trip up to 16 fresh unique
+  frames could be silently dropped as "already seen" (or a stale
+  queued frame could fire once against a possibly-stale source_id).
+  Fixed by zeroing the dedup ring and clearing both pending slots
+  in `enter()`, before `radio->begin()` re-arms the WiFi-task recv
+  callback.
+
 ## 2026-07-02 — Repeater hop_count: pin the byte offset
 
 `LumeMode`'s repeater already writes `hop_count` at the correct wire
