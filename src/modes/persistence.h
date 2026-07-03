@@ -189,6 +189,51 @@ constexpr bool kStripForceDefaults = false;
 // ModeMachine::begin() before any load_strip_* consumer reads NVS.
 void apply_strip_force_defaults();
 
+// -------------------------------------------------------------------------
+// Compile-time Lume-group default (Atom Lite fleet deployment)
+// -------------------------------------------------------------------------
+//
+// The Atom Lite has no display, so no runtime path reaches Config > Group.
+// To bake a specific slv_group into a per-device build, set both flags in
+// the env's build_flags:
+//
+//   [env:m5stack-atomlite]
+//   build_flags =
+//     ${env:firmware-base.build_flags}
+//     -DNOCT_DEFAULT_LUME_GROUP=2
+//     -DNOCT_LUME_GROUP_FORCE_DEFAULTS=1
+//
+// With FORCE_DEFAULTS on, apply_lume_group_force_defaults() overwrites the
+// slv_group NVS key on the first boot of each fresh build (build tag
+// __DATE__ + __TIME__ tracked under "lg_btag") - matching the strip-defaults
+// semantic. Runtime Config > Group edits on Sticks survive reboots and are
+// only reset when a NEW build (fresh compile) with the flag set boots.
+//
+// Off (default) preserves the historical behaviour: migrate_legacy_nvs_keys
+// rolls a random {1, 2, 3} on first install and the value is stable
+// thereafter.
+
+#ifndef NOCT_DEFAULT_LUME_GROUP
+#define NOCT_DEFAULT_LUME_GROUP 0
+#endif
+
+constexpr uint8_t kDefaultLumeGroup = NOCT_DEFAULT_LUME_GROUP;
+
+#ifdef NOCT_LUME_GROUP_FORCE_DEFAULTS
+constexpr bool kLumeGroupForceDefaults = (NOCT_LUME_GROUP_FORCE_DEFAULTS != 0);
+#else
+constexpr bool kLumeGroupForceDefaults = false;
+#endif
+
+// Apply the compile-time slv_group value to NVS on the first boot of each
+// fresh build, IF NOCT_LUME_GROUP_FORCE_DEFAULTS is set. Uses __DATE__ +
+// __TIME__ as the per-build tag ("lg_btag") so every reflash triggers
+// exactly one override. No-op when the flag isn't set. Called once from
+// ModeMachine::begin() after migrate_legacy_nvs_keys so the compile-time
+// value wins over both the first-install random roll and any prior
+// runtime Config > Group edit.
+void apply_lume_group_force_defaults();
+
 // Director source_id for channel 1 (community range, 0x00-0x3F) per
 // protocol manual §3.4. Stable per device: chosen randomly within the
 // community range on first boot by migrate_legacy_nvs_keys, persisted

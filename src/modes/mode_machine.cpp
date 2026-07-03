@@ -168,6 +168,14 @@ void ModeMachine::begin() {
     // for the override semantics and platformio.ini for per-env values.
     persistence::apply_strip_force_defaults();
 
+    // Apply compile-time Lume-group default (slv_group) on the first
+    // boot of each fresh build, IF NOCT_LUME_GROUP_FORCE_DEFAULTS is set.
+    // Primary user is the Atom Lite (no display, so no Config > Group
+    // path at runtime); bakes a per-device group ID via build_flags.
+    // No-op when the flag isn't set. Must run AFTER migrate_legacy_nvs_keys
+    // so the compile-time value wins over the first-install random roll.
+    persistence::apply_lume_group_force_defaults();
+
     s_active_mode  = nullptr;          // force enter() in enter_mode()
     enter_mode(ModeId::Boot);
 }

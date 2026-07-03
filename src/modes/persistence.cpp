@@ -288,6 +288,22 @@ void apply_strip_force_defaults() {
     prefs.end();
 }
 
+void apply_lume_group_force_defaults() {
+    if (!kLumeGroupForceDefaults) return;
+    constexpr const char* kBuildTag = __DATE__ " " __TIME__;
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/false);
+    char stored[40] = { 0 };
+    prefs.getString("lg_btag", stored, sizeof(stored));
+    if (std::strcmp(stored, kBuildTag) == 0) {
+        prefs.end();
+        return;     // this build's default already applied
+    }
+    prefs.putUChar("slv_group", kDefaultLumeGroup);
+    prefs.putString("lg_btag", kBuildTag);
+    prefs.end();
+}
+
 uint8_t load_director_source_id() {
     Preferences prefs;
     prefs.begin("noct", /*readOnly=*/true);
@@ -589,6 +605,12 @@ void apply_strip_force_defaults()                        {
     s_native_strip_brightness = kDefaultStripBrightness;
     s_native_strip_group_size = kDefaultStripGroupSize;
     s_native_strip_chain_size = kDefaultStripChainSize;
+}
+
+void apply_lume_group_force_defaults()                   {
+    if (!kLumeGroupForceDefaults) return;
+    s_native_lume_group     = kDefaultLumeGroup;
+    s_native_lume_group_set = true;
 }
 
 uint8_t load_director_source_id() {
