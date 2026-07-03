@@ -405,7 +405,26 @@ void LumeMode::loop_tick() {
     //   Active           overlay disabled; pixel 0 belongs to the wash
     if (hal::HAL::led_strip() != nullptr && hal::HAL::display() == nullptr) {
         auto* strip_drv = led_strip_driver_instance();
-        if (no_signal_ || rx_count_ == 0) {
+        if (flash_group_remaining_ > 0) {
+            // Group-cycle confirmation: N white pulses on pixel 0.
+            // Runs to completion regardless of signal state so the
+            // operator always sees the count they just set. Each
+            // toggle edge fires every kGroupFlashHalfPeriodMs; the
+            // off half decrements the remaining counter, so a group
+            // of N gives exactly N on/off pairs.
+            if (now >= flash_next_edge_ms_) {
+                flash_on_ = !flash_on_;
+                strip_drv->set_overlay_pixel_0(
+                    flash_on_ ? 192 : 0,
+                    flash_on_ ? 192 : 0,
+                    flash_on_ ? 192 : 0,
+                    true);
+                flash_next_edge_ms_ = now + kGroupFlashHalfPeriodMs;
+                if (!flash_on_ && --flash_group_remaining_ == 0) {
+                    strip_drv->set_overlay_pixel_0(0, 0, 0, false);
+                }
+            }
+        } else if (no_signal_ || rx_count_ == 0) {
             const uint32_t phase = now % kIndicatorFlashPeriodMs;
             const bool     lit   = phase < (kIndicatorFlashPeriodMs / 2);
             strip_drv->set_overlay_pixel_0(0, lit ? 96 : 0, 0, true);
@@ -422,6 +441,34 @@ void LumeMode::on_button_event(const ButtonPressEvent& ev) {
         ModeMachine::switch_to(ModeId::Menu);
         return;
     }
+
+    // Btn1 LongPressed on display-less hosts (Atom Lite) cycles
+    // lume_group_ through 1 -> 2 -> 3 -> 1. Sticks have Config >
+    // Group as the canonical path and are excluded by the display
+    // guard. Modulo (g % 3) + 1 also pulls values outside {1, 2, 3}
+    // (e.g. 0 or a build-flag override outside the cycle range) back
+    // into the cycle on the first press. Persists immediately; the
+    // white pixel-0 flash sequence confirms the new value visually.
+    // Compile-time gate lets deployments disable per-device runtime
+    // regrouping; see lume_mode.h for the flag semantic.
+#if NOCT_LUME_GROUP_LONGPRESS_ENABLED
+    if (ev.id == ButtonId::Btn1
+        && ev.kind == ButtonEvent::LongPressed
+        && hal::HAL::display() == nullptr
+        && hal::HAL::led_strip() != nullptr) {
+        lume_group_ = static_cast<uint8_t>((lume_group_ % 3) + 1);
+        persistence::save_lume_group(lume_group_);
+        flash_group_remaining_ = lume_group_;
+        flash_next_edge_ms_    = millis();
+        flash_on_              = false;
+#ifdef ARDUINO
+        Serial.printf("[lume] group -> %u (flash %u pulses)\n",
+                      (unsigned)lume_group_,
+                      (unsigned)flash_group_remaining_);
+#endif
+        return;
+    }
+#endif
 
     // Btn1 short-press cycles the LED-strip brightness through
     // 100 / 50 / 25 / 10 (per cent), persists to NVS, and applies

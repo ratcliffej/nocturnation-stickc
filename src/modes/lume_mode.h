@@ -28,6 +28,17 @@
 #include "modes/mode_machine.h"
 #include "hal/hal.h"
 #include "output_bindings/output_binding.h"
+
+// Compile-time gate on the Atom-Lite Btn1 LongPressed group-cycle
+// gesture. Default 1 (enabled). Set to 0 in a deployment's build_flags
+// to lock the group down at flash-time - the handler compiles out
+// entirely, so the operator can only change slv_group via a reflash
+// with NOCT_DEFAULT_LUME_GROUP / NOCT_LUME_GROUP_FORCE_DEFAULTS or by
+// clearing NVS. Applies to all hosts, but only display-less hosts
+// register the gesture in the first place (see LumeMode::on_button_event).
+#ifndef NOCT_LUME_GROUP_LONGPRESS_ENABLED
+#define NOCT_LUME_GROUP_LONGPRESS_ENABLED 1
+#endif
 #include "output_bindings/output_binding_context.h"
 #include "transport/espnow/frame.h"
 #include "transport/espnow/tofu_lock.h"
@@ -193,6 +204,24 @@ private:
     // "respond to everything". Distinct from the per-PixMobIrBinding
     // `group` property which is the PixMob protocol's IR group code.
     uint8_t   lume_group_            = 0;
+
+    // Btn1 LongPressed on display-less hosts (Atom Lite) cycles
+    // lume_group_ 1->2->3->1, persists to NVS, and confirms the new
+    // value by pulsing pixel 0 white N times. Non-zero
+    // flash_group_remaining_ = N pulses left in the sequence; each
+    // pair of ticks toggles flash_on_ and, on completion of the off
+    // half, decrements the remaining counter. Isolated to display-less
+    // hosts by the same guard the status overlay uses; Sticks use the
+    // Config > Group menu instead.
+    //
+    // Compile-time gate NOCT_LUME_GROUP_LONGPRESS_ENABLED (default 1)
+    // lets a deployment lock the group down at flash-time: set to 0
+    // in build_flags to compile the handler out entirely (the flash
+    // driver stays as a cheap no-op when the counter never rises).
+    uint8_t   flash_group_remaining_  = 0;
+    uint32_t  flash_next_edge_ms_     = 0;
+    bool      flash_on_               = false;
+    static constexpr uint32_t kGroupFlashHalfPeriodMs = 250;
 
     // Sequence-loss-rate signal quality. Transport-agnostic; could feed
     // off any sequenced protocol (future BLE / IR ack channels) the same
