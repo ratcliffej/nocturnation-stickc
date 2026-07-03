@@ -626,6 +626,93 @@ static void test_raw_disengage_reseeds_fx_wash(void) {
 
 
 // ---------------------------------------------------------------------------
+// preview_rgb - steady-state colour preview (AtomS3R Director dashboard)
+// ---------------------------------------------------------------------------
+
+static void test_preview_short_or_null_slice_is_black(void) {
+    uint8_t r = 9, g = 9, b = 9;
+    BlockBuf buf;
+    buf.set(DmxChannelMapper::kWashAR, 255)
+       .set(DmxChannelMapper::kMasterIntensity, 255)
+       .set(DmxChannelMapper::kWashIntensity, 255);
+    DmxChannelMapper::preview_rgb(buf.data(), kBlockChannels - 1, r, g, b);
+    TEST_ASSERT_EQUAL_UINT8(0, r);
+    TEST_ASSERT_EQUAL_UINT8(0, g);
+    TEST_ASSERT_EQUAL_UINT8(0, b);
+
+    r = g = b = 9;
+    DmxChannelMapper::preview_rgb(nullptr, kBlockChannels, r, g, b);
+    TEST_ASSERT_EQUAL_UINT8(0, r);
+    TEST_ASSERT_EQUAL_UINT8(0, g);
+    TEST_ASSERT_EQUAL_UINT8(0, b);
+}
+
+static void test_preview_wash_scales_by_intensity_and_master(void) {
+    // FX path: anchor A x (intensity x master / 255) / 255 - the same
+    // collapsed product a Lume displays from the wire's separate anchor +
+    // intensity fields.
+    BlockBuf buf;
+    buf.set(DmxChannelMapper::kMasterIntensity, 128)
+       .set(DmxChannelMapper::kWashAR, 200)
+       .set(DmxChannelMapper::kWashAG, 100)
+       .set(DmxChannelMapper::kWashAB, 0)
+       .set(DmxChannelMapper::kWashIntensity, 255);
+    uint8_t r, g, b;
+    DmxChannelMapper::preview_rgb(buf.data(), kBlockChannels, r, g, b);
+    // intensity = 255*128/255 = 128; r = 200*128/255 = 100; g = 100*128/255 = 50.
+    TEST_ASSERT_EQUAL_UINT8(100, r);
+    TEST_ASSERT_EQUAL_UINT8(50,  g);
+    TEST_ASSERT_EQUAL_UINT8(0,   b);
+}
+
+static void test_preview_wash_zero_intensity_is_black(void) {
+    BlockBuf buf;
+    buf.set(DmxChannelMapper::kMasterIntensity, 255)
+       .set(DmxChannelMapper::kWashAR, 255)
+       .set(DmxChannelMapper::kWashAG, 255)
+       .set(DmxChannelMapper::kWashAB, 255);
+    // kWashIntensity left at 0.
+    uint8_t r, g, b;
+    DmxChannelMapper::preview_rgb(buf.data(), kBlockChannels, r, g, b);
+    TEST_ASSERT_EQUAL_UINT8(0, r);
+    TEST_ASSERT_EQUAL_UINT8(0, g);
+    TEST_ASSERT_EQUAL_UINT8(0, b);
+}
+
+static void test_preview_raw_overrides_wash(void) {
+    // Raw enable high: preview shows the master-scaled raw colour and
+    // ignores the wash channels entirely.
+    BlockBuf buf;
+    buf.set(DmxChannelMapper::kMasterIntensity, 255)
+       .set(DmxChannelMapper::kWashAR, 255)
+       .set(DmxChannelMapper::kWashIntensity, 255)
+       .set(DmxChannelMapper::kRawR, 10)
+       .set(DmxChannelMapper::kRawG, 20)
+       .set(DmxChannelMapper::kRawB, 30)
+       .set(DmxChannelMapper::kRawEnable, DmxChannelMapper::kRawEnableThreshold);
+    uint8_t r, g, b;
+    DmxChannelMapper::preview_rgb(buf.data(), kBlockChannels, r, g, b);
+    TEST_ASSERT_EQUAL_UINT8(10, r);
+    TEST_ASSERT_EQUAL_UINT8(20, g);
+    TEST_ASSERT_EQUAL_UINT8(30, b);
+}
+
+static void test_preview_raw_min1_floor_matches_wire(void) {
+    // Non-zero LD input never scales to 0 on the raw path (the anti-
+    // flicker floor in maybe_emit_raw_wash_on_change); the preview must
+    // agree with the wire byte-for-byte. 5 * 50 / 255 = 0 -> floored to 1.
+    BlockBuf buf;
+    buf.set(DmxChannelMapper::kMasterIntensity, 50)
+       .set(DmxChannelMapper::kRawR, 5)
+       .set(DmxChannelMapper::kRawEnable, 255);
+    uint8_t r, g, b;
+    DmxChannelMapper::preview_rgb(buf.data(), kBlockChannels, r, g, b);
+    TEST_ASSERT_EQUAL_UINT8(1, r);
+    TEST_ASSERT_EQUAL_UINT8(0, g);  // genuine zero stays zero
+    TEST_ASSERT_EQUAL_UINT8(0, b);
+}
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
@@ -662,5 +749,10 @@ int main(int, char**) {
     RUN_TEST(test_raw_change_reemits);
     RUN_TEST(test_raw_suppresses_fx_pulse);
     RUN_TEST(test_raw_disengage_reseeds_fx_wash);
+    RUN_TEST(test_preview_short_or_null_slice_is_black);
+    RUN_TEST(test_preview_wash_scales_by_intensity_and_master);
+    RUN_TEST(test_preview_wash_zero_intensity_is_black);
+    RUN_TEST(test_preview_raw_overrides_wash);
+    RUN_TEST(test_preview_raw_min1_floor_matches_wire);
     return UNITY_END();
 }

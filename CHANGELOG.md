@@ -2,6 +2,33 @@
 
 Notable changes to the NocturNation M5 firmware. Newest first.
 
+## 2026-07-03 — AtomS3R Director: LCD dashboard
+
+New `m5stack-atoms3r-poe` env: the same Ethernet DMX Director as
+`m5stack-atoms3-poe`, on the AtomS3R (which has a 0.85" 128×128 LCD).
+`NOCT_ATOMS3R` declares `Capability::Display` in the shared
+`hal_atoms3poe` backend and DmxBridge draws a 10 Hz dashboard through
+the DAL's `local` display path: health banner (same red/purple/amber/
+green taxonomy as the Lite's status LED, plus the ESP-NOW fleet
+channel), IP / universes / frame-count / age vitals, the 27
+broadcast-block channels as colour-coded bars, and a fleet-colour box
+showing the colour the broadcast block currently commands. The
+onboard-WS2812 LED path is compiled out on the S3R (no such LED —
+GPIO 35 is an in-package PSRAM line).
+
+- `src/hal_atoms3poe/display_atoms3r.{h,cpp}` — M5.Display-backed
+  `hal::Display`, compiled only under `NOCT_ATOMS3R`.
+- `src/hal_atoms3poe/hal_atoms3poe.cpp` — conditional `Display`
+  capability + accessor.
+- `src/modes/dmx_bridge_mode.cpp` — `draw_screen_dashboard()` in the
+  Ethernet branch; no-ops on Directors without a panel.
+- `src/dal/drivers/dmx_channel_mapper.{h,cpp}` — pure static
+  `preview_rgb()` mirroring the raw/wash wire-scaling rules (shared
+  `scale_raw_byte` helper), so the fleet box shows exactly what the
+  fleet is told; 5 new native tests in `test_dmx_channel_mapper`.
+- `src/dal/drivers/ethernet_dmx_adapter.{h,cpp}` — `local_ip()`
+  accessor so the mode doesn't include `Ethernet.h`.
+
 ## 2026-07-02 — Repeater hop_count: pin the byte offset
 
 `LumeMode`'s repeater already writes `hop_count` at the correct wire

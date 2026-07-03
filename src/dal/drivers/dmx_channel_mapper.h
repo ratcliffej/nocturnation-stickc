@@ -184,6 +184,17 @@ public:
     static pixmob::Time   quantize_time  (uint8_t slider);
     static pixmob::Chance quantize_chance(uint8_t slider);
 
+    // Steady-state colour this block currently commands, using the same
+    // scaling rules as the emit paths: raw RGB (master-scaled, min-1
+    // floor) when kRawEnable is high, otherwise wash anchor A scaled by
+    // intensity x master. Pure and stateless - transients (pulse,
+    // strobe, wash A<->B cycling) are not modelled, so this is "what a
+    // Lume settles on", not a frame-accurate replay. Drives the AtomS3R
+    // Director's on-screen fleet-colour box. Short/null slices yield
+    // black.
+    static void preview_rgb(const uint8_t* block, uint16_t channel_count,
+                            uint8_t& r, uint8_t& g, uint8_t& b);
+
 private:
     uint8_t target_group_;
     char    target_[6];  // "00:XX\0"

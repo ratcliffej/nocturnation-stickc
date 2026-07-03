@@ -16,6 +16,17 @@ inline uint8_t scale_byte(uint8_t channel, uint8_t master) {
                                  * static_cast<uint16_t>(master)) / 255);
 }
 
+// Raw-path variant of scale_byte with a min-1 floor: a non-zero LD
+// input never scales to 0. See maybe_emit_raw_wash_on_change for the
+// flicker bench-finding this defends against; shared here so
+// preview_rgb mirrors the wire byte-for-byte.
+inline uint8_t scale_raw_byte(uint8_t channel, uint8_t master) {
+    if (channel == 0) return 0;
+    const uint16_t scaled = static_cast<uint16_t>(channel)
+                            * static_cast<uint16_t>(master) / 255;
+    return scaled == 0 ? 1 : static_cast<uint8_t>(scaled);
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------------
@@ -36,6 +47,36 @@ pixmob::Chance DmxChannelMapper::quantize_chance(uint8_t slider) {
     const uint8_t inv = static_cast<uint8_t>(255 - slider);
     const uint8_t idx = inv / 32;
     return static_cast<pixmob::Chance>(idx);
+}
+
+// ---------------------------------------------------------------------
+// Steady-state colour preview
+// ---------------------------------------------------------------------
+
+void DmxChannelMapper::preview_rgb(const uint8_t* block,
+                                   uint16_t channel_count,
+                                   uint8_t& r, uint8_t& g, uint8_t& b) {
+    r = g = b = 0;
+    if (block == nullptr || channel_count < kActiveChannelsPerBlock) {
+        return;  // same short-slice defence as process()
+    }
+    const uint8_t master = block[kMasterIntensity];
+
+    if (block[kRawEnable] >= kRawEnableThreshold) {
+        r = scale_raw_byte(block[kRawR], master);
+        g = scale_raw_byte(block[kRawG], master);
+        b = scale_raw_byte(block[kRawB], master);
+        return;
+    }
+
+    // FX wash path: on the wire anchor A travels unscaled with a
+    // separate intensity scalar (channel intensity x master); the
+    // receiver multiplies them. Collapse both here into one displayed
+    // colour. Cycle is ignored - anchor A is the wash's "home" colour.
+    const uint8_t intensity = scale_byte(block[kWashIntensity], master);
+    r = scale_byte(block[kWashAR], intensity);
+    g = scale_byte(block[kWashAG], intensity);
+    b = scale_byte(block[kWashAB], intensity);
 }
 
 // ---------------------------------------------------------------------
@@ -138,16 +179,11 @@ void DmxChannelMapper::maybe_emit_raw_wash_on_change(const uint8_t* ch,
     // the LD's input was non-zero preserves the operator's "the
     // colour is set" intent through the scaling math. Genuine zero
     // (LD wrote 0) is preserved as zero - the all-zero filter only
-    // fires when all three RGBs are explicitly 0.
-    auto scale_raw = [](uint8_t channel, uint8_t master_v) -> uint8_t {
-        if (channel == 0) return 0;
-        const uint16_t scaled = static_cast<uint16_t>(channel)
-                                * static_cast<uint16_t>(master_v) / 255;
-        return scaled == 0 ? 1 : static_cast<uint8_t>(scaled);
-    };
-    const uint8_t scaled_r = scale_raw(ch[kRawR], master);
-    const uint8_t scaled_g = scale_raw(ch[kRawG], master);
-    const uint8_t scaled_b = scale_raw(ch[kRawB], master);
+    // fires when all three RGBs are explicitly 0. (Scaling lives in
+    // scale_raw_byte at the top of this file, shared with preview_rgb.)
+    const uint8_t scaled_r = scale_raw_byte(ch[kRawR], master);
+    const uint8_t scaled_g = scale_raw_byte(ch[kRawG], master);
+    const uint8_t scaled_b = scale_raw_byte(ch[kRawB], master);
 
     const bool first_entry = !raw_active_;
     const bool changed     = (scaled_r != last_raw_r_)

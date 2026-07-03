@@ -72,6 +72,11 @@ public:
     bool hardware_present() const;   // W5500 detected on the SPI bus
     bool link_up() const;            // Ethernet PHY link is up (cable in)
 
+    // Current IPv4 address (DHCP lease or static fallback) for the AtomS3R
+    // dashboard. All-zeros before begin() / with no address. Kept here so
+    // DmxBridge doesn't have to include Ethernet.h itself.
+    void local_ip(uint8_t out[4]) const;
+
 private:
     // Feed a freshly received DMX-512 channel slice through the parser as
     // one Enttec "Output Only Send DMX" frame. `n` is the channel count

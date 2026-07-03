@@ -11,10 +11,12 @@
 #include "dal/drivers/dmx_input_parser.h"   // kLabelEspNowBroadcast (passthrough)
 #endif
 #include "../dal/drivers/espnow_broadcast_driver.h"
+#include "../dal/drivers/local_driver.h"     // buffered paint for the S3R dashboard
 #include "hal/hal.h"                         // HAL::esp_now() for passthrough
 #include "persistence.h"
 
 #include <cstdio>
+#include <cstring>
 
 #ifdef ARDUINO
 #include <Arduino.h>
@@ -267,12 +269,14 @@ void DmxBridgeMode::on_button_event(const dal::ButtonPressEvent& ev) {
 
 void DmxBridgeMode::draw_status() {
 #if defined(NOCT_DMX_ETHERNET)
-    // Headless AtomS3-PoE Director: no LCD - drive the onboard RGB status
-    // LED (red/purple/amber/green diagnostic scheme; health queried inside).
+    // AtomS3-PoE Director: drive the onboard RGB status LED (Lite) and/or
+    // the LCD dashboard (S3R) - each is a no-op where the hardware is
+    // absent. Same red/purple/amber/green health taxonomy on both.
     const uint32_t now    = millis();
     const bool     active = (last_frame_seen_ms_ != 0) &&
         ((now - last_frame_seen_ms_) < kIdleAfterMs);
     update_status_led(active);
+    draw_screen_dashboard(active);
 #else
     DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
 
@@ -326,7 +330,11 @@ void DmxBridgeMode::draw_status() {
 }
 
 void DmxBridgeMode::update_status_led(bool active) {
-#if defined(NOCT_DMX_ETHERNET)
+#if defined(NOCT_DMX_ETHERNET) && !defined(NOCT_ATOMS3R)
+    // (S3R excluded: it has no onboard WS2812 - GPIO 35 belongs to its
+    // in-package octal-PSRAM lines - and its LCD dashboard carries the
+    // same health states.)
+    //
     // AtomS3 Lite onboard WS2812 (GPIO 35). neopixelWrite() is the
     // arduino-esp32 built-in single-pixel driver; low brightness since the
     // LED is bright and this runs continuously. Diagnostic scheme:
@@ -354,6 +362,148 @@ void DmxBridgeMode::update_status_led(bool active) {
 #else
     (void)active;
 #endif
+}
+
+void DmxBridgeMode::draw_screen_dashboard(bool active) {
+#if defined(NOCT_DMX_ETHERNET)
+    // Lite Director: no panel - HAL::display() is nullptr and the onboard
+    // LED is the whole status surface.
+    if (hal::HAL::display() == nullptr) {
+        (void)active;
+        return;
+    }
+
+    auto*      adapter  = dmx_adapter_or_null();
+    const bool hw_ok    = (adapter != nullptr) && adapter->hardware_present();
+    const bool fleet_ok = esp_now_broadcast_driver_instance()->active();
+    const bool link_ok  = hw_ok && adapter->link_up();
+
+    // RGB565 shades beyond dal.h's primaries; hues match the Lite's
+    // status-LED taxonomy so the two Director variants read the same.
+    constexpr uint16_t kPurple = 0x8010;   // networking fault
+    constexpr uint16_t kAmber  = 0xFD20;   // up, but no data
+    constexpr uint16_t kGrey   = 0x8410;   // chrome / separators
+
+    const char* state  = "LIVE";
+    uint16_t    banner = GREEN;
+    if (!hw_ok || !fleet_ok) { state = "FAULT";   banner = RED;     }
+    else if (!link_ok)       { state = "NO LINK"; banner = kPurple; }
+    else if (!active)        { state = "NO DMX";  banner = kAmber;  }
+
+    // AtomS3R 128x128 panel, three zones: banner + vitals on top, the
+    // broadcast-block channel bars in the middle, the fleet-colour box
+    // at the bottom.
+    constexpr int kW        = 128;
+    constexpr int kH        = 128;
+    constexpr int kBannerH  = 13;
+    constexpr int kBarsTop  = 49;   // full-scale bar tops out here
+    constexpr int kBarsBase = 92;   // bars grow up from this baseline
+    constexpr int kBoxTop   = 97;
+
+    // Batch the ~40 draw ops into one sprite push. On allocation failure
+    // begin_buffered_paint returns false and the same draws route direct
+    // to the panel - visually noisier, functionally identical.
+    auto* ld = dal::local_driver_instance();
+    ld->begin_buffered_paint(0, 0, kW, kH);
+
+    DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
+
+    // --- Banner: health word left, ESP-NOW fleet channel right ---------
+    const dal::NetConfig cfg = net_config_load();
+    DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
+        0, 0, kW, kBannerH, banner});
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        4, 3, state, BLACK, banner, 1});
+    char text[24];
+    std::snprintf(text, sizeof(text), "ch%u", (unsigned)cfg.wifi_channel);
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        kW - 4 - 6 * (int)std::strlen(text), 3, text, BLACK, banner, 1});
+
+    // --- Vitals: IP, universes, frames + last-frame age -----------------
+    if (link_ok) {
+        uint8_t ip[4] = {0, 0, 0, 0};
+        adapter->local_ip(ip);
+        std::snprintf(text, sizeof(text), "IP %u.%u.%u.%u",
+                      ip[0], ip[1], ip[2], ip[3]);
+    } else {
+        std::snprintf(text, sizeof(text), "IP --");
+    }
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        4, 17, text, WHITE, BLACK, 1});
+
+    std::snprintf(text, sizeof(text), "sACN %u  Art %u",
+                  (unsigned)cfg.sacn_universe, (unsigned)cfg.artnet_universe);
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        4, 27, text, WHITE, BLACK, 1});
+
+    const uint32_t frames =
+        (adapter != nullptr) ? adapter->parser().frame_count() : 0;
+    if (last_frame_seen_ms_ != 0) {
+        const uint32_t age_s = (millis() - last_frame_seen_ms_ + 500) / 1000;
+        std::snprintf(text, sizeof(text), "f %lu  age %lus",
+                      (unsigned long)frames, (unsigned long)age_s);
+    } else {
+        std::snprintf(text, sizeof(text), "f %lu  age --",
+                      (unsigned long)frames);
+    }
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        4, 37, text, kGrey, BLACK, 1});
+
+    // --- DMX preview: broadcast block ch1-27 as vertical bars -----------
+    // universe_ holds the last-received frame, so the preview freezes on
+    // the final look when the console stops rather than blanking. RGB-
+    // family channels (pulse / wash A / wash B / raw) take their own hue
+    // so the operator can read the block's shape at a glance; raw-enable
+    // is yellow; the rest white.
+    constexpr int kBarCount = DmxChannelMapper::kActiveChannelsPerBlock;
+    for (int i = 0; i < kBarCount; ++i) {
+        const uint8_t v = universe_[i];
+        if (v == 0) continue;
+        int h = (v * (kBarsBase - kBarsTop)) / 255;
+        if (h == 0) h = 1;   // non-zero channel stays visible
+        uint16_t c = WHITE;
+        switch (i) {
+            case DmxChannelMapper::kPulseR:
+            case DmxChannelMapper::kWashAR:
+            case DmxChannelMapper::kWashBR:
+            case DmxChannelMapper::kRawR:      c = RED;    break;
+            case DmxChannelMapper::kPulseG:
+            case DmxChannelMapper::kWashAG:
+            case DmxChannelMapper::kWashBG:
+            case DmxChannelMapper::kRawG:      c = GREEN;  break;
+            case DmxChannelMapper::kPulseB:
+            case DmxChannelMapper::kWashAB:
+            case DmxChannelMapper::kWashBB:
+            case DmxChannelMapper::kRawB:      c = BLUE;   break;
+            case DmxChannelMapper::kRawEnable: c = YELLOW; break;
+            default: break;
+        }
+        const int x = 2 + (i * (kW - 4)) / kBarCount;
+        DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
+            x, kBarsBase - h, 3, h, c});
+    }
+    DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
+        0, kBarsBase + 1, kW, 1, kGrey});
+
+    // --- Fleet-colour box: what the broadcast block commands ------------
+    // Mirrors the wire's scaling rules via preview_rgb, so this square is
+    // the colour every Lume settles on. Grey frame so a black wash still
+    // reads as "box present, fleet dark" rather than dead space.
+    uint8_t pr = 0, pg = 0, pb = 0;
+    DmxChannelMapper::preview_rgb(universe_,
+                                  DmxChannelMapper::kActiveChannelsPerBlock,
+                                  pr, pg, pb);
+    const uint16_t preview = static_cast<uint16_t>(
+        ((pr & 0xF8) << 8) | ((pg & 0xFC) << 3) | (pb >> 3));
+    DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
+        0, kBoxTop, kW, kH - kBoxTop, kGrey});
+    DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
+        1, kBoxTop + 1, kW - 2, kH - kBoxTop - 2, preview});
+
+    ld->end_buffered_paint();
+#else
+    (void)active;
+#endif  // NOCT_DMX_ETHERNET
 }
 
 }  // namespace modes
