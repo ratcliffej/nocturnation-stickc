@@ -411,10 +411,25 @@ void PixMobIRDriver::compute_drift_rgb(const WashState& state,
     // compensate for). Visual difference between linear and cosine-
     // eased blend at refresh granularity is sub-perceptual; integer-
     // only math keeps the refresh tick cheap.
-    const uint32_t elapsed = (now - state.started_ms) % state.cycle_ms;
+    // Snapshot cycle_ms once before using it. send_wash runs on the WiFi
+    // task (ESP-NOW recv callback) and can overwrite this slot's
+    // cycle_ms with 0 - a routine cue change from a drifting wash to a
+    // static colour - while this runs on the main task, in the window
+    // between a caller's `cycle_ms > 0` check and the modulo/divide
+    // below. Re-reading state.cycle_ms for each operation would then
+    // divide by zero, which on Xtensa is a hardware IntegerDivideByZero
+    // panic (reboot mid-show). One local load plus a zero guard closes
+    // that window: a mid-flight transition to a static wash just holds
+    // colour A, exactly as the cycle_ms == 0 path elsewhere does.
+    const uint32_t cycle_ms = state.cycle_ms;
+    if (cycle_ms == 0) {
+        r = state.r1; g = state.g1; b = state.b1;
+        return;
+    }
+    const uint32_t elapsed = (now - state.started_ms) % cycle_ms;
     // phase in 0..1 over one full A↔B↔A oscillation, scaled by 1024
     // to keep it integer-friendly: 0..512 = A→B, 512..1024 = B→A.
-    const uint32_t phase_q10 = (elapsed * 1024u) / state.cycle_ms;
+    const uint32_t phase_q10 = (elapsed * 1024u) / cycle_ms;
     uint32_t blend_q10;
     if (phase_q10 < 512u) {
         blend_q10 = phase_q10 * 2u;             // 0..1024 as we go A→B
