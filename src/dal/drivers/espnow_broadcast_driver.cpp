@@ -354,11 +354,28 @@ void EspNowBroadcastDriver::send_passthrough(const uint8_t* buf, size_t n) {
     // broadcast handshake), preserve it - the rewrite is for the
     // orchestrator-as-anonymous-bridge case, not as a blanket
     // identity hijack.
+    //
+    // When we take ownership of the source_id we MUST also re-stamp
+    // the sequence_number (header offset 4) from next_seq(), so the
+    // passthrough frame joins this Director's single monotonic seq
+    // stream. The orchestrator emits these with its OWN independent
+    // 1..255 wrapping counter; leaving it in place puts two unrelated
+    // seq streams under one source_id. Every receiver dedups on the
+    // (source_id, sequence_number) pair over a small ring (Lume
+    // kDedupRingSize=16, Tildagon likewise), and SignalQuality derives
+    // missed frames from forward seq gaps - so a collision drops
+    // display frames AND native pulses fleet-wide and inflates the
+    // signal-quality "loss %" to nonsense on all Lumes. send_frame_bytes
+    // copies the stamped buffer into the retransmit queue, so all
+    // redundant copies share the one seq and dedup as a single logical
+    // frame. A frame that kept its own source_id keeps its own seq
+    // (preserved-identity case, deliberately untouched).
     uint8_t patched[transport::espnow::kMaxFrameSize];
     if (n > sizeof(patched)) return;   // defensive; shouldn't happen for orch-sized frames
     std::memcpy(patched, buf, n);
     if (patched[3] == transport::espnow::kBroadcastSourceId) {
-        patched[3] = source_id_;
+        patched[3] = source_id_;         // header offset 3 = source_id
+        patched[4] = next_seq();         // header offset 4 = sequence_number
     }
     send_frame_bytes(patched, n, "PASS");
 }

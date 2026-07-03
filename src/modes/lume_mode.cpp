@@ -68,6 +68,19 @@ void LumeMode::enter() {
     lock_acquired_ms_ = 0;
     tofu_.clear();
 
+    // LumeMode is a persistent static singleton (mode_machine.cpp), so
+    // a Config round-trip re-enters this same instance with the
+    // previous session's dedup ring and any staged-but-undrained
+    // pending_light_/pending_repeat_ frame still present. Reset them
+    // here - before radio->begin() below re-arms the WiFi-task recv
+    // callback - so a fresh Lume session starts from a clean dedup
+    // window and never fires a stale queued frame.
+    std::memset(dedup_ring_, 0, sizeof(dedup_ring_));
+    dedup_head_         = 0;
+    pending_light_      = false;
+    pending_repeat_     = false;
+    pending_repeat_len_ = 0;
+
     // Load operator-configured preferences from NVS. Channel preference
     // picks hobby (1) / show (11) / advanced (6) / auto-scan (0) per
     // spec §4.5. The slv_ir_grp setting moved to PixMobIrBinding's
