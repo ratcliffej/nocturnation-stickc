@@ -855,8 +855,11 @@ static void test_relay_hop_increment_preserves_source_id(void) {
     const size_t n = encode_light_pulse(buf, sizeof(buf), in, payload);
     TEST_ASSERT_EQUAL_size_t(kHeaderSize + kLightPulsePayloadLen, n);
 
-    // Mimic the relay's in-place byte rewrite (lume_mode.cpp ~903).
-    buf[5] = in.hop_count + 1;
+    // Exercise the relay's in-place bump via the same helper the
+    // repeater uses (lume_mode.cpp) - not a raw byte-index rewrite -
+    // so this test pins the helper's behaviour, not just the current
+    // offset value.
+    set_hop_count(buf, n, in.hop_count + 1);
 
     Header decoded{};
     TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
@@ -873,6 +876,48 @@ static void test_relay_hop_increment_preserves_source_id(void) {
     TEST_ASSERT_EQUAL_UINT8(in.sequence_number, decoded.sequence_number);
 }
 
+// Direct unit test of set_hop_count's contract: it touches ONLY the
+// hop_count byte at kHopCountOffset and leaves every other header byte
+// alone. Guards against a future refactor that widens the write and
+// silently corrupts an adjacent field.
+static void test_set_hop_count_only_touches_hop_byte(void) {
+    uint8_t buf[kHeaderSize + kLightPulsePayloadLen] = {};
+    const Header in = make_header(/*source_id=*/0x42,
+                                  /*seq=*/99,
+                                  /*hops=*/0);
+    const LightPulsePayload payload{};
+    const size_t n = encode_light_pulse(buf, sizeof(buf), in, payload);
+
+    uint8_t before[sizeof(buf)];
+    std::memcpy(before, buf, sizeof(buf));
+
+    set_hop_count(buf, n, 2);
+
+    // Every byte OTHER THAN kHopCountOffset is unchanged.
+    for (size_t i = 0; i < n; ++i) {
+        if (i == kHopCountOffset) continue;
+        TEST_ASSERT_EQUAL_UINT8_MESSAGE(before[i], buf[i],
+                                         "set_hop_count modified a byte outside the hop_count slot");
+    }
+    // hop_count byte is the value we wrote.
+    TEST_ASSERT_EQUAL_UINT8(2, buf[kHopCountOffset]);
+}
+
+// set_hop_count is a no-op on short buffers - the caller may pass a
+// truncated frame and must not get a stray write past the buffer.
+static void test_set_hop_count_no_op_on_short_buffer(void) {
+    uint8_t buf[kHeaderSize] = {};
+    for (size_t len = 0; len < kHeaderSize; ++len) {
+        uint8_t snapshot[kHeaderSize];
+        std::memcpy(snapshot, buf, sizeof(buf));
+        set_hop_count(buf, len, 0xAA);
+        // No byte was written.
+        for (size_t i = 0; i < sizeof(buf); ++i) {
+            TEST_ASSERT_EQUAL_UINT8(snapshot[i], buf[i]);
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
@@ -880,6 +925,8 @@ static void test_relay_hop_increment_preserves_source_id(void) {
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_relay_hop_increment_preserves_source_id);
+    RUN_TEST(test_set_hop_count_only_touches_hop_byte);
+    RUN_TEST(test_set_hop_count_no_op_on_short_buffer);
     RUN_TEST(test_heartbeat_round_trip);
     RUN_TEST(test_repeater_heartbeat_round_trip);
     RUN_TEST(test_light_pulse_round_trip);

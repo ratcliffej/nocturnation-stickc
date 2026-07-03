@@ -61,6 +61,15 @@ constexpr bool is_performance_range(uint8_t source_id) {
 constexpr uint8_t kHeaderSize        = 8;     // 2 magic + 1 version + 5 metadata
 constexpr uint8_t kMaxHopCount       = 3;
 
+// Wire byte offset of hop_count within the v2 header (see write_header /
+// decode_header). Exposed so a repeater can bump hop_count in place
+// without re-encoding the whole frame, and so the offset lives next to
+// the layout it depends on. The v1 -> v2 magic-prefix change shifted
+// every header field by 2 bytes (v1 hop_count was byte 3, v2 is byte 5);
+// keep this in lock-step with write_header() / decode_header() if the
+// layout ever changes again.
+constexpr size_t kHopCountOffset = 5;
+
 // ESP-NOW supports up to 250-byte payloads. Pre-Epic-13 the firmware
 // capped frames at 32 bytes because no message type exceeded 16 bytes
 // of payload. Epic 13 introduces TEXT_DISPLAY (up to ~200 bytes for
@@ -449,6 +458,13 @@ size_t encode_repeater_heartbeat(uint8_t* buf, size_t buf_len, const Header& hdr
 // =============================================================================
 
 DecodeResult decode_header(const uint8_t* buf, size_t buf_len, Header& out_hdr);
+
+// Rewrite the hop_count byte of an already-encoded frame in place. Used
+// by a repeater that rebroadcasts a frame unchanged except for
+// incrementing the hop counter (source_id + sequence_number are preserved
+// so mesh-wide dedup still recognises the original and its repeats as
+// one frame). No-op if buf_len < kHeaderSize.
+void set_hop_count(uint8_t* buf, size_t buf_len, uint8_t new_hops);
 
 DecodeResult decode_heartbeat       (const Header& hdr,
                                      const uint8_t* payload, size_t payload_len,

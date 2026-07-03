@@ -2,6 +2,36 @@
 
 Notable changes to the NocturNation M5 firmware. Newest first.
 
+## 2026-07-02 — Repeater hop_count: pin the byte offset
+
+`LumeMode`'s repeater already writes `hop_count` at the correct wire
+offset (byte 5, fixed 2026-06-28 during Epic 15 bench), but the offset
+was a bare literal at two sites in `lume_mode.cpp` and lived far from
+the header layout it depends on. This adds a named constant
+`transport::espnow::kHopCountOffset` and a `set_hop_count()` helper
+alongside `write_header()` / `decode_header()`, and routes the
+repeater's in-place bump through the helper. Same behaviour, but the
+offset can't drift silently from the header again — the v1 → v2
+magic-prefix migration missed exactly this once already.
+
+- `include/transport/espnow/frame.h` — declare `kHopCountOffset` +
+  `set_hop_count()`.
+- `src/transport/espnow/frame.cpp` — implement `set_hop_count()` as a
+  buf-length-guarded byte write.
+- `src/modes/lume_mode.cpp` — use the helper at the increment site;
+  reference `kHopCountOffset` at the debug-print site. Drops the
+  long historical comment describing the pre-2026-06-28 buf[3] bug —
+  the fix history is now in this CHANGELOG entry rather than inline.
+- `test/test_espnow_frame/test_main.cpp` — existing
+  `test_relay_hop_increment_preserves_source_id` now exercises the
+  helper instead of a raw byte-index rewrite; two new tests cover
+  `set_hop_count`'s contract directly (touches only the hop byte;
+  short-buffer no-op).
+
+Motivated by ab-gh's PR #23; opened as a fresh branch off current
+main to avoid the merge-conflict-resolution regression that ate 300
+lines of Epic 13 tests and reverted `kMaxFrameSize` in that PR.
+
 ## 2026-05-21 — Epic 6B: Tildagon Director + Show framework (M5-side + docs)
 
 Epic 6B lands the Tildagon Director + Show framework (in the

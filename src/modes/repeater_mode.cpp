@@ -128,8 +128,8 @@ void RepeaterMode::on_recv(const hal::ESPNowMessage& m) {
 
     if (hdr.hop_count < kMaxHopCount && m.len <= kRepeatBufSize) {
         std::memcpy(pending_repeat_buf_, m.data, m.len);
-        // hop_count is at on-wire byte offset 5.
-        pending_repeat_buf_[5] = static_cast<uint8_t>(hdr.hop_count + 1);
+        te::set_hop_count(pending_repeat_buf_, m.len,
+                          static_cast<uint8_t>(hdr.hop_count + 1));
         pending_repeat_len_    = m.len;
         pending_repeat_        = true;
     }
