@@ -246,6 +246,18 @@ private:
     uint32_t      repeats_emitted_      = 0;
     uint32_t      last_drawn_repeats_   = 0xFFFFFFFFu;   // forces first paint
 
+    // Repeater talkback: a repeat-enabled Lume beacons the same ~1 Hz
+    // REPEATER_HEARTBEAT the headless Atom repeater emits, so it shows
+    // up in the Director's census (console `show` / `mon`, and the
+    // AtomS3R dashboard's `rpt N`) alongside the dedicated repeaters.
+    // uid = low 3 bytes of the STA MAC, same stable identity scheme.
+    // Same interval as RepeaterMode::kCensusIntervalMs; kept as a
+    // separate constant so the modes stay dependency-free of each other.
+    static constexpr uint32_t kCensusIntervalMs = 1000;
+    uint32_t      last_census_ms_       = 0;
+    uint8_t       census_uid_[3]        = {0, 0, 0};
+    void          emit_repeat_census(uint32_t now);
+
     // Epic 15 bench-test bug fix. Set in on_recv (WiFi task) when the
     // signal-recovered edge fires; drained in loop_tick (main task)
     // by clearing the stale NO SIGNAL paint and repainting the pip.

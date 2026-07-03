@@ -2,6 +2,28 @@
 
 Notable changes to the NocturNation M5 firmware. Newest first.
 
+## 2026-07-03 — Repeater census talkback from Lume repeaters
+
+Repeat-enabled Lumes (StickC Plus2 / StickS3 / Atom Lite — any host
+running the shared `LumeMode`) now beacon the same 1 Hz
+`REPEATER_HEARTBEAT` the headless Atom repeater emits, so every relay in
+the field — dedicated or Lume — shows up in the Director's census
+(console `repeatrs: N online` listing and the AtomS3R dashboard's
+`rpt N`). Gated on holding a Director lock: an unlocked Lume may be mid
+channel-scan and is relaying nothing worth reporting. uid = low 3 bytes
+of the STA MAC, the same identity scheme as the headless repeater, so
+the census dedups both kinds identically.
+
+Safety of the beacon rests on the existing TofuLock rule that broadcast-
+source frames are never admitted: the census can't steal locks, refresh
+liveness, or be re-relayed into echoes. `LumeMode::on_recv` additionally
+drops `REPEATER_HEARTBEAT` before the TOFU gate so the RXdrop log isn't
+spammed at one line per repeater per second.
+
+- `src/modes/lume_mode.{h,cpp}` — `emit_repeat_census()` (mirror of
+  `RepeaterMode::emit_census`), census uid capture on radio bring-up,
+  early census drop in `on_recv`.
+
 ## 2026-07-03 — AtomS3R Director: LCD dashboard
 
 New `m5stack-atoms3r-poe` env: the same Ethernet DMX Director as

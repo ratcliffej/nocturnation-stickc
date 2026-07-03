@@ -93,6 +93,40 @@ Redrawn at 10 Hz, one buffered sprite push per frame:
   scaling `DmxChannelMapper` puts on the wire), i.e. what every Lume settles
   on. Grey frame so "fleet dark" still reads as a live box.
 
+## Headless repeater (`m5stack-atoms3-repeater`)
+
+Same AtomS3 board + HAL, flashed as a dedicated ESP-NOW relay instead of a
+Director: no Ethernet, no console — boots straight into RepeaterMode and
+rebroadcasts every unique fleet frame with `hop_count + 1` (3-hop ceiling,
+mesh-wide dedup on `source_id`+`sequence`).
+
+```bash
+pio run -e m5stack-atoms3-repeater -t upload
+```
+
+- **Channel:** auto-scan by default (probes 1/6/11, locks to Director
+  traffic). Double-click the button to cycle auto → 1 → 6 → 11 (persists).
+  First-boot default via `-DNOCT_REPEATER_CHANNEL=<0|1|6|11>`.
+- **LED:** red = radio down · amber = scanning · dim channel colour =
+  online · cyan flash = relaying · bright channel colour = channel just
+  changed.
+
+### Census / talkback
+
+Anything relaying beacons a 1 Hz `REPEATER_HEARTBEAT` (uid = low 3 bytes of
+its MAC, channel, frames relayed, uptime) so the Director can count its
+relays:
+
+- **headless Atom repeaters** — always, once locked;
+- **Lume Sticks / Atoms with repeat mode enabled** — while they hold a
+  Director lock.
+
+The Director's census (`RepeaterCensus`, 5 s liveness window) shows up as
+`repeatrs: N online` + one line per relay in the console `show` / `mon`,
+and as `rpt N` in the S3R dashboard banner. Census frames ride the
+anonymous broadcast source id, which every receiver's TofuLock rejects —
+they can't steal locks, refresh liveness, or be re-relayed into echoes.
+
 ## Serial config console (USB-C)
 
 DMX comes over Ethernet, so the USB-C port is free for config. Plug into any
