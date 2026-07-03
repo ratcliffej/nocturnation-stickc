@@ -792,6 +792,20 @@ void LumeMode::on_recv(const hal::ESPNowMessage& m) {
         return;
     }
 
+    // Spec §4.3: frames whose hop_count exceeds the mesh limit
+    // (kMaxHopCount = 3) MUST be dropped before admission. Matches the
+    // Tildagon Lume (nocturnation/receive.py: MAX_HOP_COUNT gate) and
+    // prevents a hop-mangled attacker frame from establishing a false
+    // TOFU lock. Frames at exactly kMaxHopCount still render but the
+    // relay gate at line ~900 refuses to re-broadcast them.
+    if (hdr.hop_count > kMaxHopCount) {
+#ifdef ARDUINO
+        Serial.printf("[espnow RX HOP DROP] hop=%u src=%02X seq=%u\n",
+                      hdr.hop_count, hdr.source_id, hdr.sequence_number);
+#endif
+        return;
+    }
+
     // TOFU lock (EMF prep 2026-06-24): partition the Lume between
     // potentially-multiple Directors broadcasting on the same channel.
     // First-eligible-frame establishes the lock; subsequent frames
