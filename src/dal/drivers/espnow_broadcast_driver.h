@@ -236,6 +236,12 @@ private:
     void on_listen_recv(const hal::ESPNowMessage& m);
     void log_listen_collision_warning() const;
 
+    // Unified HAL recv callback installed for the whole broadcast (all
+    // channels). Drives listen-window collision detection when Listening,
+    // and always tallies headless-repeater census beacons (feed_census).
+    void on_recv(const hal::ESPNowMessage& m);
+    void feed_census(const hal::ESPNowMessage& m);
+
     bool         active_      = false;
     StartupState startup_state_ = StartupState::Idle;
     uint8_t   source_id_   = 1;

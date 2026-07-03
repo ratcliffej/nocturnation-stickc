@@ -104,6 +104,12 @@ enum class MessageType : uint8_t {
     BitmapHeader   = 0x0A,   // bitmap framing: dimensions, planes, colours, checksum
     BitmapPlane    = 0x0B,   // bitmap plane data chunk (multiple frames per plane allowed)
     ClearScreen    = 0x0C,   // clear text and/or bitmap on the Lume's screen
+    // Headless repeater census (Atom repeater). A headless repeater
+    // broadcasts this ~1 Hz so the Director can count how many repeaters
+    // are online and on which channel. Not a light/display type - Lumes
+    // ignore it, and repeaters never relay it (census is point-to-Director
+    // telemetry, not mesh traffic).
+    RepeaterHeartbeat = 0x0D,
     Extension      = 0xFF,
 };
 
@@ -177,6 +183,20 @@ struct HeartbeatPayload {
     uint32_t centiseconds_today;   // u24 little-endian; high byte ignored on encode; 0 if no wall clock
 };
 constexpr uint8_t kHeartbeatPayloadLen = 9;   // 4 + 2 + 3
+
+// REPEATER_HEARTBEAT payload (headless repeater census). Emitted ~1 Hz
+// by a headless repeater. `uid` is the low 3 bytes of the repeater's STA
+// MAC - a stable per-device identity the Director dedups the census on,
+// independent of the header source_id (which the repeater sets to its own
+// derived id). `channel` lets the Director confirm the repeater is on the
+// fleet channel; `relayed_count` and `uptime_s` are liveness/telemetry.
+struct RepeaterHeartbeatPayload {
+    uint8_t  uid[3];          // low 3 bytes of STA MAC (stable device id)
+    uint8_t  channel;         // WiFi channel the repeater is relaying on
+    uint16_t uptime_s;        // seconds since boot, saturating at 0xFFFF
+    uint32_t relayed_count;   // frames relayed since boot
+};
+constexpr uint8_t kRepeaterHeartbeatPayloadLen = 10;   // 3 + 1 + 2 + 4
 
 struct LightPulsePayload {
     uint8_t target_class;          // 0 = all classes; see hal::DeviceClass enum (Epic 4.65)
@@ -421,6 +441,10 @@ size_t encode_bitmap_plane    (uint8_t* buf, size_t buf_len, const Header& hdr,
 size_t encode_clear_screen    (uint8_t* buf, size_t buf_len, const Header& hdr,
                                const ClearScreenPayload& p);
 
+// Headless repeater census.
+size_t encode_repeater_heartbeat(uint8_t* buf, size_t buf_len, const Header& hdr,
+                                 const RepeaterHeartbeatPayload& p);
+
 // =============================================================================
 // Decoders
 //
@@ -445,6 +469,9 @@ void set_hop_count(uint8_t* buf, size_t buf_len, uint8_t new_hops);
 DecodeResult decode_heartbeat       (const Header& hdr,
                                      const uint8_t* payload, size_t payload_len,
                                      HeartbeatPayload& out);
+DecodeResult decode_repeater_heartbeat(const Header& hdr,
+                                     const uint8_t* payload, size_t payload_len,
+                                     RepeaterHeartbeatPayload& out);
 DecodeResult decode_light_pulse     (const Header& hdr,
                                      const uint8_t* payload, size_t payload_len,
                                      LightPulsePayload& out);

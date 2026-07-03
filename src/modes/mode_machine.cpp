@@ -20,6 +20,7 @@
 #include "config_mode.h"
 #include "test_mode.h"
 #include "dmx_bridge_mode.h"
+#include "repeater_mode.h"
 #include "../dal/drivers/local_driver.h"   // for set_pulse_enabled gating
 #include "../dal/drivers/pixmob_ir_driver.h"   // for internal/external IR gating
 
@@ -66,6 +67,7 @@ LumeMode            s_lume;
 ConfigMode           s_config;
 TestMode             s_test;
 DmxBridgeMode        s_dmx_bridge;
+RepeaterMode         s_repeater;
 
 Mode* mode_instance(ModeId id) {
     switch (id) {
@@ -76,6 +78,7 @@ Mode* mode_instance(ModeId id) {
         case ModeId::Config:           return &s_config;
         case ModeId::Test:             return &s_test;
         case ModeId::DmxBridge:        return &s_dmx_bridge;
+        case ModeId::Repeater:         return &s_repeater;
     }
     return nullptr;
 }

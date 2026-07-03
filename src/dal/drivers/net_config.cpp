@@ -28,6 +28,7 @@
 
 #include "ethernet_dmx_adapter.h"
 #include "espnow_broadcast_driver.h"
+#include "repeater_census.h"     // headless-repeater online count
 #include "modes/persistence.h"   // Director source_id (DirectorID) get/set
 
 namespace nocturnation {
@@ -163,6 +164,27 @@ void print_status() {
                   s_cfg.wifi_channel == 1  ? "community"
                 : s_cfg.wifi_channel == 11 ? "performance"
                 :                            "mac-derived"); pln(buf);
+
+    // Headless repeaters relaying this Director's signal. Count + a line
+    // each for the ones heard within the census window (uid, channel,
+    // frames relayed, uptime).
+    {
+        RepeaterCensus& cen = repeater_census_instance();
+        const uint32_t now = millis();
+        std::snprintf(buf, sizeof(buf), "  repeatrs: %u online",
+                      (unsigned)cen.count_online(now)); pln(buf);
+        for (size_t i = 0; i < RepeaterCensus::capacity(); ++i) {
+            const RepeaterCensus::Entry& e = cen.entries()[i];
+            if (!e.used) continue;
+            if ((now - e.last_seen_ms) > RepeaterCensus::kOnlineWindowMs) continue;
+            std::snprintf(buf, sizeof(buf),
+                          "    %02X%02X%02X ch%-2u relayed %lu  up %us",
+                          e.uid[0], e.uid[1], e.uid[2], (unsigned)e.channel,
+                          (unsigned long)e.relayed, (unsigned)e.uptime_s);
+            pln(buf);
+        }
+    }
+
     std::snprintf(buf, sizeof(buf), "  sacn    : universe %u   artnet: universe %u",
                   s_cfg.sacn_universe, s_cfg.artnet_universe); pln(buf);
     std::snprintf(buf, sizeof(buf), "  frames  : %lu   bytes: %lu",

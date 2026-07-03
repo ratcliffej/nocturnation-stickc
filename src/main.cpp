@@ -125,6 +125,12 @@ void setup() {
     // Ethernet sACN/Art-Net adapter + ESP-NOW broadcast for its whole life.
     nocturnation::modes::ModeMachine::switch_to(
         nocturnation::modes::ModeId::DmxBridge);
+#elif defined(NOCT_HEADLESS_REPEATER)
+    // Dedicated headless ESP-NOW repeater (Atom repeater): no screen, its
+    // whole life is RX -> hop+1 rebroadcast + census. Jump straight into
+    // RepeaterMode; the board's one button reconfigures the channel.
+    nocturnation::modes::ModeMachine::switch_to(
+        nocturnation::modes::ModeId::Repeater);
 #endif
 }
 

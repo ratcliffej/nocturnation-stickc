@@ -102,6 +102,52 @@ static void test_heartbeat_round_trip(void) {
     TEST_ASSERT_EQUAL_UINT32(p_in.centiseconds_today, p_out.centiseconds_today);
 }
 
+static void test_repeater_heartbeat_round_trip(void) {
+    uint8_t buf[kMaxFrameSize] = {};
+    const Header in = make_header();
+    const RepeaterHeartbeatPayload p_in{
+        /*uid=*/           {0xDE, 0xAD, 0xBE},
+        /*channel=*/       11,
+        /*uptime_s=*/      0x1234u,
+        /*relayed_count=*/ 0x89ABCDEFu,
+    };
+
+    const size_t n = encode_repeater_heartbeat(buf, sizeof(buf), in, p_in);
+    TEST_ASSERT_EQUAL_size_t(kHeaderSize + kRepeaterHeartbeatPayloadLen, n);
+    assert_header_bytes(buf, MessageType::RepeaterHeartbeat,
+                        kRepeaterHeartbeatPayloadLen);
+
+    // Spot-check wire bytes: uid (3), channel, uptime u16 LE, relayed u32 LE.
+    TEST_ASSERT_EQUAL_UINT8(0xDE, buf[kHeaderSize + 0]);
+    TEST_ASSERT_EQUAL_UINT8(0xAD, buf[kHeaderSize + 1]);
+    TEST_ASSERT_EQUAL_UINT8(0xBE, buf[kHeaderSize + 2]);
+    TEST_ASSERT_EQUAL_UINT8(11,   buf[kHeaderSize + 3]);
+    TEST_ASSERT_EQUAL_UINT8(0x34, buf[kHeaderSize + 4]);  // uptime LSB
+    TEST_ASSERT_EQUAL_UINT8(0x12, buf[kHeaderSize + 5]);  // uptime MSB
+    TEST_ASSERT_EQUAL_UINT8(0xEF, buf[kHeaderSize + 6]);  // relayed LSB
+    TEST_ASSERT_EQUAL_UINT8(0xCD, buf[kHeaderSize + 7]);
+    TEST_ASSERT_EQUAL_UINT8(0xAB, buf[kHeaderSize + 8]);
+    TEST_ASSERT_EQUAL_UINT8(0x89, buf[kHeaderSize + 9]);  // relayed MSB
+
+    Header decoded{};
+    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
+                      static_cast<int>(decode_header(buf, n, decoded)));
+    TEST_ASSERT_EQUAL(MessageType::RepeaterHeartbeat, decoded.message_type);
+    TEST_ASSERT_EQUAL_UINT8(kRepeaterHeartbeatPayloadLen, decoded.payload_len);
+
+    RepeaterHeartbeatPayload p_out{};
+    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
+                      static_cast<int>(decode_repeater_heartbeat(
+                          decoded, buf + kHeaderSize, decoded.payload_len,
+                          p_out)));
+    TEST_ASSERT_EQUAL_UINT8(p_in.uid[0],        p_out.uid[0]);
+    TEST_ASSERT_EQUAL_UINT8(p_in.uid[1],        p_out.uid[1]);
+    TEST_ASSERT_EQUAL_UINT8(p_in.uid[2],        p_out.uid[2]);
+    TEST_ASSERT_EQUAL_UINT8(p_in.channel,       p_out.channel);
+    TEST_ASSERT_EQUAL_UINT16(p_in.uptime_s,     p_out.uptime_s);
+    TEST_ASSERT_EQUAL_UINT32(p_in.relayed_count, p_out.relayed_count);
+}
+
 static void test_light_pulse_round_trip(void) {
     uint8_t buf[kMaxFrameSize] = {};
     const Header in = make_header();
@@ -882,6 +928,7 @@ int main(int, char**) {
     RUN_TEST(test_set_hop_count_only_touches_hop_byte);
     RUN_TEST(test_set_hop_count_no_op_on_short_buffer);
     RUN_TEST(test_heartbeat_round_trip);
+    RUN_TEST(test_repeater_heartbeat_round_trip);
     RUN_TEST(test_light_pulse_round_trip);
     RUN_TEST(test_light_wash_round_trip_with_drift);
     RUN_TEST(test_light_wash_round_trip_cycle_ms_zero);
