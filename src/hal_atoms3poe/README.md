@@ -112,6 +112,7 @@ a host is connected and never blocks the broadcast.
 | `netpass <pw\|off>` | Set / disable the **network console** password |
 | `save` | Persist config to flash (NVS) |
 | `reboot` | Restart |
+| `bootloader` | Reboot into the ROM loader — reflash over USB without touching the button |
 
 The broadcast block shows **ch1–27**: the 23 FX channels plus the raw-RGB
 direct-control set (**ch24 R / ch25 G / ch26 B / ch27 Raw Enable** — enable high
