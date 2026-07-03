@@ -81,9 +81,9 @@ the S3R's dashboard:
 
 Redrawn at 10 Hz, one buffered sprite push per frame:
 
-- **Top — vitals:** health banner (state word left, ESP-NOW fleet channel
-  right), IP address (DHCP lease or static fallback), sACN + Art-Net
-  universes, frame counter and last-frame age.
+- **Top — vitals:** health banner (state word left; online repeater count +
+  ESP-NOW fleet channel right), IP address (DHCP lease or static fallback),
+  sACN + Art-Net universes, frame counter and last-frame age.
 - **Middle — DMX preview:** the 27 broadcast-block channels (ch 1–27) as
   vertical bars. Pulse / Wash A / Wash B / raw RGB channels are tinted
   red/green/blue, raw-enable yellow, everything else white. Holds the last

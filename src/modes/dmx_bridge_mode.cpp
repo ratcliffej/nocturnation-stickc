@@ -6,6 +6,7 @@
 #if defined(NOCT_DMX_ETHERNET)
 #include "dal/drivers/ethernet_dmx_adapter.h"
 #include "dal/drivers/net_config.h"
+#include "dal/drivers/repeater_census.h"    // online count for the dashboard
 #else
 #include "dal/drivers/dmx_usb_cdc_adapter.h"
 #include "dal/drivers/dmx_input_parser.h"   // kLabelEspNowBroadcast (passthrough)
@@ -408,14 +409,18 @@ void DmxBridgeMode::draw_screen_dashboard(bool active) {
 
     DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
 
-    // --- Banner: health word left, ESP-NOW fleet channel right ---------
+    // --- Banner: health word left; repeater count + fleet channel right
+    // (repeaters relay on that channel, so the two read as one radio
+    // fact: "2 repeaters extending channel 6").
     const dal::NetConfig cfg = net_config_load();
     DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
         0, 0, kW, kBannerH, banner});
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         4, 3, state, BLACK, banner, 1});
     char text[24];
-    std::snprintf(text, sizeof(text), "ch%u", (unsigned)cfg.wifi_channel);
+    std::snprintf(text, sizeof(text), "rpt %u ch %u",
+                  (unsigned)repeater_census_instance().count_online(millis()),
+                  (unsigned)cfg.wifi_channel);
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         kW - 4 - 6 * (int)std::strlen(text), 3, text, BLACK, banner, 1});
 

@@ -29,6 +29,14 @@ GPIO 35 is an in-package PSRAM line).
 - `src/dal/drivers/ethernet_dmx_adapter.{h,cpp}` — `local_ip()`
   accessor so the mode doesn't include `Ethernet.h`.
 
+Bench follow-ups: the banner also carries the headless-repeater online
+count (`rpt N`, from `RepeaterCensus`) next to the fleet channel, and
+headless builds (`NOCT_HEADLESS_DMX_BRIDGE` / `NOCT_HEADLESS_REPEATER`)
+now boot straight into their runtime mode in `ModeMachine::begin()` —
+the Boot splash is Stick UX whose layout assumes the 240×135 panel and
+rendered mangled on the S3R's square screen for the whole Ethernet
+bring-up.
+
 ## 2026-07-02 — Repeater hop_count: pin the byte offset
 
 `LumeMode`'s repeater already writes `hop_count` at the correct wire
