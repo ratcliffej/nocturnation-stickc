@@ -233,6 +233,44 @@ static void test_send_wash_end_on_inactive_group_returns_false(void) {
     TEST_ASSERT_FALSE(drv->send_wash_end(0, 0));
 }
 
+static void test_send_wash_all_zero_fires_fade_ir(void) {
+    // The `stop` cue on the orchestrator side becomes Blackout which
+    // zeros the whole DMX universe; the mapper emits LIGHT_WASH with
+    // all RGB + intensity == 0. Under the old fix that routed to
+    // send_wash_end(release_time=0), the bracelet's last refresh
+    // envelope (T_3840 sustain) kept it lit for up to ~3.84 s.
+    // Bench 2026-07-04: the all-zero path now uses
+    // kZeroWashReleaseTime100ms so the bracelet actively fades.
+    auto* drv = pixmob_ir_driver_instance();
+    drv->send_wash(0, purple_static());
+    const int before = nocturnation::hal::s_ir_tx.send_count;
+
+    LightWashEvent zero{};   // r/g/b/intensity all 0
+    TEST_ASSERT_TRUE(drv->send_wash(0, zero));
+
+    // One IR frame fired: the fade to black. Previously zero.
+    TEST_ASSERT_EQUAL_INT(before + 1, nocturnation::hal::s_ir_tx.send_count);
+    // Slot is deactivated so loop_tick stops refreshing it.
+    TEST_ASSERT_FALSE(drv->wash_state(0)->active);
+}
+
+static void test_send_wash_all_zero_on_inactive_group_is_noop(void) {
+    // Blackout writing zero to every block runs the all-zero path on
+    // groups that never had a wash to start with (e.g. an operator
+    // fires `stop` before any wash was ever active). No IR should
+    // fire on those groups because send_wash_end returns false for
+    // inactive slots - the guard prevents a spurious fade-to-black
+    // frame on a bracelet that was already dark.
+    auto* drv = pixmob_ir_driver_instance();
+    const int before = nocturnation::hal::s_ir_tx.send_count;
+
+    LightWashEvent zero{};
+    // send_wash returns whatever send_wash_end returned; false when
+    // the slot was inactive. No IR emitted.
+    TEST_ASSERT_FALSE(drv->send_wash(0, zero));
+    TEST_ASSERT_EQUAL_INT(before, nocturnation::hal::s_ir_tx.send_count);
+}
+
 static void test_send_wash_pulse_on_active_fires_twocolors(void) {
     auto* drv = pixmob_ir_driver_instance();
     drv->send_wash(0, purple_static());
@@ -455,6 +493,8 @@ int main(int, char**) {
     RUN_TEST(test_send_wash_end_instant_stops_refresh_no_ir);
     RUN_TEST(test_send_wash_end_faded_fires_one_final_ir);
     RUN_TEST(test_send_wash_end_on_inactive_group_returns_false);
+    RUN_TEST(test_send_wash_all_zero_fires_fade_ir);
+    RUN_TEST(test_send_wash_all_zero_on_inactive_group_is_noop);
     RUN_TEST(test_send_wash_pulse_on_active_fires_twocolors);
     RUN_TEST(test_send_wash_pulse_on_inactive_falls_back_to_pulse);
     RUN_TEST(test_drift_wash_blends_rgb_across_cycle_phase);

@@ -485,13 +485,18 @@ bool PixMobIRDriver::send_wash(uint8_t target_group, const LightWashEvent& ev) {
     // blip; and the bracelet retains the stressed state until power-
     // cycled.
     //
-    // Fix: route all-zero washes through send_wash_end with instant
-    // cancel. The IR driver stops refreshing, the bracelet's last
-    // envelope completes naturally, no black SingleColor lands.
+    // Fix (2026-06-30): route all-zero washes through send_wash_end.
+    // Original fix used release_time=0 (stop refreshing, no wire
+    // frame); bench 2026-07-04 showed that leaves the bracelet's
+    // last refresh envelope (T_3840 sustain) running for up to
+    // ~3.84 s after `stop` - the operator sees pre-stop washes
+    // visibly hanging under subsequent post-stop FX. Firing a
+    // short-fade IR frame instead makes the bracelet actively
+    // fade to black in kZeroWashReleaseTime100ms * 100 ms.
     if (ev.r1 == 0 && ev.g1 == 0 && ev.b1 == 0 &&
         ev.r2 == 0 && ev.g2 == 0 && ev.b2 == 0 &&
         ev.intensity == 0) {
-        return send_wash_end(target_group, /*release_time=*/0);
+        return send_wash_end(target_group, kZeroWashReleaseTime100ms);
     }
 
     WashState& s = wash_slots_[target_group];

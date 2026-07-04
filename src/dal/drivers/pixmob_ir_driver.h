@@ -104,6 +104,19 @@ public:
     // original single-value name. Equals kWashRefreshMaxMs.
     static constexpr uint32_t kWashRefreshMs = kWashRefreshMaxMs;
 
+    // Fade time (in 100 ms units) fired at the bracelet when send_wash
+    // receives an all-zero LIGHT_WASH - the `stop` cue / Blackout FX
+    // signal, per pixmob_ir_driver.cpp:471-495. Firing a release IR
+    // frame instead of the previous "just stop refreshing" avoids the
+    // visible hangover where the bracelet's last refresh envelope
+    // (T_3840 sustain) kept it lit for up to ~3.84 s after `stop`.
+    // 3 buckets = 300 ms: short enough to read as an instant clear
+    // but long enough for the bracelet's envelope engine to process
+    // the fade without being interpreted as a no-op (bench history
+    // at pixmob_ir_driver.cpp:549-565 shows very short attacks can
+    // be dropped by the bracelet).
+    static constexpr uint8_t kZeroWashReleaseTime100ms = 3;
+
     // Inject a wall-clock source for tests. Default (nullptr) uses
     // millis() on Arduino builds and a static 0 on native test envs.
     // Tests register a stub that advances under their control.
