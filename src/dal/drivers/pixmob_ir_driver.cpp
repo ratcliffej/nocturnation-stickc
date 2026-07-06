@@ -209,11 +209,28 @@ bool PixMobIRDriver::send(uint8_t group_id, const RgbPulseEvent& ev) {
         // orchestrator's wash_with_sparkle FX, raw 96 DMX -> T_192);
         // forcing release to T_0_MS minimises the "envelope footprint"
         // the bracelet records.
+        // Bench 2026-07-04: authored long-envelope pulses (e.g. the
+        // coldplay-x-bts-my-universe.cues pulse at 00:57.8) were reading
+        // as a fleeting flash on bracelets. The recovery IR fires ~50 ms
+        // after the sparkle to snap back to wash colour - right for a
+        // real sparkle (envelope <= 192 ms) but pre-empts any authored
+        // envelope longer than 50 ms. Decide once and share the answer
+        // with both the sparkle IR (which needs its real release, not
+        // the T_0_MS forced below, because there'll be no recovery to
+        // paint over the release phase) and the tail block that pushes
+        // next_refresh_ms past the pulse's end.
+        const uint32_t envelope_ms = pixmob_time_to_ms(ev.attack)
+                                   + pixmob_time_to_ms(ev.sustain)
+                                   + pixmob_time_to_ms(ev.release);
+        const bool skip_recovery = envelope_ms > kLongPulseEnvelopeMs;
+        const auto sparkle_release =
+            skip_recovery ? ev.release : pixmob::T_0_MS;
+
         uint16_t buf[kPulseBufSize];
         size_t n = pixmob::buildSingleColor(
             buf, kPulseBufSize,
             ev.r, ev.g, ev.b,
-            ev.attack, effective_sustain, pixmob::T_0_MS,
+            ev.attack, effective_sustain, sparkle_release,
             pixmob::CHANCE_100,    // chance roll already done above; bracelet always renders
             group_id);
         if (n == 0) return false;
@@ -227,21 +244,11 @@ bool PixMobIRDriver::send(uint8_t group_id, const RgbPulseEvent& ev) {
                       (unsigned)wr, (unsigned)wg, (unsigned)wb);
 #endif
 
-        // Bench 2026-07-04: authored long-envelope pulses (e.g. the
-        // coldplay-x-bts-my-universe.cues pulse at 00:57.8) were reading
-        // as a fleeting flash on bracelets. The recovery IR fires ~50 ms
-        // after the sparkle to snap back to wash colour - which is the
-        // right shape for a real sparkle (envelope ~192 ms) but pre-empts
-        // any authored envelope longer than 50 ms. Skip the recovery when
-        // the envelope is clearly not a sparkle, and push the next
-        // periodic refresh out past the pulse's tail so a scheduled
-        // refresh doesn't pre-empt from the other side. The wash slot
-        // stays active throughout; the next refresh (once resumed)
-        // restores the wash colour on the bracelet exactly as usual.
-        const uint32_t envelope_ms = pixmob_time_to_ms(ev.attack)
-                                   + pixmob_time_to_ms(ev.sustain)
-                                   + pixmob_time_to_ms(ev.release);
-        if (envelope_ms > kLongPulseEnvelopeMs) {
+        if (skip_recovery) {
+            // Push next refresh out past the pulse's tail so a scheduled
+            // refresh can't pre-empt the release from the other side.
+            // Wash slot stays active; the next refresh (once resumed)
+            // restores the wash colour on the bracelet as usual.
             WashState& s = wash_slots_[group_id];
             constexpr uint32_t kPostPulseRefreshMarginMs = 100;
             const uint32_t next_after_pulse =
@@ -249,7 +256,7 @@ bool PixMobIRDriver::send(uint8_t group_id, const RgbPulseEvent& ev) {
             if (s.next_refresh_ms < next_after_pulse) {
                 s.next_refresh_ms = next_after_pulse;
             }
-            return true;   // skip the recovery - the pulse plays fully
+            return true;   // pulse plays fully; no recovery IR
         }
 
         // Inter-frame quiet period (regression fix 2026-06-23). The

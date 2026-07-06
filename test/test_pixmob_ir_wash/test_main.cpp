@@ -430,7 +430,7 @@ static void test_long_envelope_pulse_on_active_wash_skips_recovery(void) {
 
     // Long envelope matching Jason's bench cue
     // `pulse 255 255 255 10 10 15 100`: attack + sustain + release =
-    // 960 + 960 + 960 = 2880 ms. Push threshold is 300 ms.
+    // 960 + 960 + 960 = 2880 ms. Threshold is 1000 ms.
     RgbPulseEvent ev{};
     ev.r = 255; ev.g = 255; ev.b = 255;
     ev.attack  = pixmob::T_960_MS;
@@ -478,6 +478,39 @@ static void test_long_envelope_pushes_refresh_when_scheduled_earlier(void) {
     const uint32_t envelope_ms = 960u + 960u + 960u;
     TEST_ASSERT_TRUE(
         drv->wash_state(0)->next_refresh_ms >= s_now_ms + envelope_ms + 100u);
+}
+
+static void test_pulse_per_bar_envelope_stays_on_recovery_path(void) {
+    // Bench 2026-07-04, follow-up to the threshold introduction: an
+    // earlier 300 ms threshold caught pulse_per_bar's envelope
+    // (T_32 + T_96 + T_480 = 608 ms) and routed it into the skip-
+    // recovery path. Every beat pushed next_refresh_ms further out,
+    // so the bracelet sat at black between pulses instead of showing
+    // the wash. Threshold is now 1000 ms; pulse_per_bar must stay on
+    // the sparkle + recovery path and NOT push the refresh.
+    auto* drv = pixmob_ir_driver_instance();
+    drv->send_wash(0, purple_static());
+    const uint32_t refresh_before = drv->wash_state(0)->next_refresh_ms;
+    const int before = nocturnation::hal::s_ir_tx.send_count;
+
+    // pulse_per_bar's tick writes CH_PULSE_ATK=32 (T_32_MS),
+    // CH_PULSE_SUS=64 (T_96_MS), CH_PULSE_REL=128 (T_480_MS). Total
+    // envelope: 32 + 96 + 480 = 608 ms.
+    RgbPulseEvent ev{};
+    ev.r = 100; ev.g = 0; ev.b = 100;
+    ev.attack  = pixmob::T_32_MS;
+    ev.sustain = pixmob::T_96_MS;
+    ev.release = pixmob::T_480_MS;
+    ev.chance  = pixmob::CHANCE_100;
+    drv->send(/*group_id=*/0, ev);
+
+    // Both frames fire (sparkle + recovery).
+    TEST_ASSERT_EQUAL_INT(before + 2,
+                          nocturnation::hal::s_ir_tx.send_count);
+    // Refresh schedule is untouched - a beat cadence FX must not
+    // starve the periodic refresh.
+    TEST_ASSERT_EQUAL_UINT32(refresh_before,
+                             drv->wash_state(0)->next_refresh_ms);
 }
 
 static void test_short_envelope_pulse_on_active_wash_still_fires_recovery(void) {
@@ -592,6 +625,7 @@ int main(int, char**) {
     RUN_TEST(test_pulse_on_active_wash_fires_sparkle_plus_recovery);
     RUN_TEST(test_long_envelope_pulse_on_active_wash_skips_recovery);
     RUN_TEST(test_long_envelope_pushes_refresh_when_scheduled_earlier);
+    RUN_TEST(test_pulse_per_bar_envelope_stays_on_recovery_path);
     RUN_TEST(test_short_envelope_pulse_on_active_wash_still_fires_recovery);
     RUN_TEST(test_refresh_interval_scales_with_cycle);
     RUN_TEST(test_clock_source_advances_state_deterministically);

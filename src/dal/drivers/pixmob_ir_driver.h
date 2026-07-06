@@ -127,10 +127,17 @@ public:
     // periodic refresh out past the pulse's tail, so the authored
     // pulse plays through and the wash refresh resumes cleanly on the
     // other side (bench 2026-07-04, coldplay-x-bts-my-universe.cues
-    // pulse at 00:57.8). 300 ms sits comfortably above the standard
-    // sparkle envelope (max 192 ms with T_192_MS release) and well
-    // below anything an author would deliberately shape.
-    static constexpr uint32_t kLongPulseEnvelopeMs = 300;
+    // pulse at 00:57.8).
+    //
+    // 1000 ms picks up authored envelopes with any T_960 or T_2400
+    // bucket in the mix (Jason's 0/10/15 = 1920 ms, 10/10/15 = 2880 ms).
+    // Deliberately above pulse_per_bar's 608 ms envelope so beat-
+    // cadence FX keep their brief-flash-back-to-wash shape - bench
+    // 2026-07-04 found that treating pulse_per_bar as "authored"
+    // hollowed the wash out (every beat pushed the next refresh, so
+    // the bracelet sat at black between beats instead of showing
+    // wash + accent).
+    static constexpr uint32_t kLongPulseEnvelopeMs = 1000;
 
     // Inject a wall-clock source for tests. Default (nullptr) uses
     // millis() on Arduino builds and a static 0 on native test envs.
