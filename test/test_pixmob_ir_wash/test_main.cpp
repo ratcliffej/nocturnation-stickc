@@ -18,6 +18,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <cstdlib>
 #include <unity.h>
 
 #include "hal/hal.h"
@@ -480,6 +481,65 @@ static void test_long_envelope_pushes_refresh_when_scheduled_earlier(void) {
         drv->wash_state(0)->next_refresh_ms >= s_now_ms + envelope_ms + 100u);
 }
 
+static void test_chance_50_bypasses_director_prefilter(void) {
+    // Bench 2026-07-04: wash_with_sparkle at probability=50 was
+    // pre-filtered on the Director, then fired with CHANCE_100 - so
+    // when it fired, ALL bracelets rendered in unison instead of the
+    // intended per-bracelet random twinkle. Hybrid policy: chances
+    // >= CHANCE_50 skip the Director-side roll and pass through, so
+    // bracelets roll independently. Test proves the Director doesn't
+    // skip any of them (send_count = N over N fires).
+    auto* drv = pixmob_ir_driver_instance();
+    drv->send_wash(0, purple_static());
+    const int before = nocturnation::hal::s_ir_tx.send_count;
+
+    RgbPulseEvent ev{};
+    ev.r = 200; ev.g = 200; ev.b = 200;
+    ev.attack  = pixmob::T_0_MS;
+    ev.sustain = pixmob::T_0_MS;
+    ev.release = pixmob::T_192_MS;
+    ev.chance  = pixmob::CHANCE_50;
+    constexpr int kFires = 30;
+    for (int i = 0; i < kFires; ++i) drv->send(0, ev);
+
+    // Every fire produces sparkle + recovery = 2 IR frames. If the
+    // Director pre-filter were still engaged, some fires would drop
+    // and the count would be short.
+    TEST_ASSERT_EQUAL_INT(before + kFires * 2,
+                          nocturnation::hal::s_ir_tx.send_count);
+}
+
+static void test_chance_16_still_prefilters_on_director(void) {
+    // Anti-stress protection stays in place for low chances - a
+    // bracelet processing then skipping N-out-of-N-plus-1 IR frames
+    // enters the 3-second-blackout degraded state (bench 2026-06-30).
+    // CHANCE_16 (16 % render rate) is well below the CHANCE_32
+    // threshold, so the Director should roll and skip most fires.
+    auto* drv = pixmob_ir_driver_instance();
+    drv->send_wash(0, purple_static());
+    const int before = nocturnation::hal::s_ir_tx.send_count;
+
+    // Deterministic seed so the flake resistance holds across builds.
+    std::srand(0xC0FFEE);
+
+    RgbPulseEvent ev{};
+    ev.r = 200; ev.g = 200; ev.b = 200;
+    ev.attack  = pixmob::T_0_MS;
+    ev.sustain = pixmob::T_0_MS;
+    ev.release = pixmob::T_192_MS;
+    ev.chance  = pixmob::CHANCE_16;
+    constexpr int kFires = 200;
+    for (int i = 0; i < kFires; ++i) drv->send(0, ev);
+
+    // Expected ~16 % render rate * 2 IR per fire = ~64 IRs. Comfortably
+    // below the "no pre-filter" ceiling of 400. Loose bound to survive
+    // future changes to std::rand seeding: any Director-side filter is
+    // functioning if fewer than half the fires got through.
+    const int fired = nocturnation::hal::s_ir_tx.send_count - before;
+    TEST_ASSERT_TRUE(fired < kFires);   // strictly less than "every fire transmitted"
+    TEST_ASSERT_TRUE(fired < (kFires * 2 / 2));   // < 200 IR (well under no-skip ceiling of 400)
+}
+
 static void test_pulse_per_bar_envelope_stays_on_recovery_path(void) {
     // Bench 2026-07-04, follow-up to the threshold introduction: an
     // earlier 300 ms threshold caught pulse_per_bar's envelope
@@ -626,6 +686,8 @@ int main(int, char**) {
     RUN_TEST(test_long_envelope_pulse_on_active_wash_skips_recovery);
     RUN_TEST(test_long_envelope_pushes_refresh_when_scheduled_earlier);
     RUN_TEST(test_pulse_per_bar_envelope_stays_on_recovery_path);
+    RUN_TEST(test_chance_50_bypasses_director_prefilter);
+    RUN_TEST(test_chance_16_still_prefilters_on_director);
     RUN_TEST(test_short_envelope_pulse_on_active_wash_still_fires_recovery);
     RUN_TEST(test_refresh_interval_scales_with_cycle);
     RUN_TEST(test_clock_source_advances_state_deterministically);
