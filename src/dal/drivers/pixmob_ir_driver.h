@@ -117,6 +117,21 @@ public:
     // be dropped by the bracelet).
     static constexpr uint8_t kZeroWashReleaseTime100ms = 3;
 
+    // Total envelope duration (attack + sustain + release) above which a
+    // LIGHT_PULSE fired on a group with an active wash is treated as an
+    // "authored accent" rather than a fleeting sparkle. The pulse's
+    // 50 ms sparkle-then-recovery sandwich (see send()) is meant for
+    // wash_with_sparkle's tiny T_0/T_0/T_192 sparkles - it pre-empts
+    // any envelope longer than the 50 ms inter-frame gap. Above this
+    // threshold the driver skips the recovery IR and pushes the next
+    // periodic refresh out past the pulse's tail, so the authored
+    // pulse plays through and the wash refresh resumes cleanly on the
+    // other side (bench 2026-07-04, coldplay-x-bts-my-universe.cues
+    // pulse at 00:57.8). 300 ms sits comfortably above the standard
+    // sparkle envelope (max 192 ms with T_192_MS release) and well
+    // below anything an author would deliberately shape.
+    static constexpr uint32_t kLongPulseEnvelopeMs = 300;
+
     // Inject a wall-clock source for tests. Default (nullptr) uses
     // millis() on Arduino builds and a static 0 on native test envs.
     // Tests register a stub that advances under their control.

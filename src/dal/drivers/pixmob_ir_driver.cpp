@@ -16,6 +16,17 @@ PixMobIRDriver s_instance;
 // PixMob command (the longest transmission is well under that). Sized to
 // match the prototype's irBuf so behaviour is byte-identical.
 constexpr size_t kPulseBufSize = 80;
+
+// pixmob::Time enum -> real-world duration in ms. Order matches the enum
+// (T_0_MS = 0 ... T_3840_MS = 7); indexing by the 3-bit value gives the
+// bracelet's rendered phase duration.
+constexpr uint16_t kPixmobTimeMs[8] = {
+    0, 32, 96, 192, 480, 960, 2400, 3840,
+};
+
+inline uint32_t pixmob_time_to_ms(pixmob::Time t) {
+    return kPixmobTimeMs[static_cast<uint8_t>(t) & 0x07];
+}
 }  // namespace
 
 PixMobIRDriver* pixmob_ir_driver_instance() { return &s_instance; }
@@ -215,6 +226,31 @@ bool PixMobIRDriver::send(uint8_t group_id, const RgbPulseEvent& ev) {
                       (unsigned)group_id,
                       (unsigned)wr, (unsigned)wg, (unsigned)wb);
 #endif
+
+        // Bench 2026-07-04: authored long-envelope pulses (e.g. the
+        // coldplay-x-bts-my-universe.cues pulse at 00:57.8) were reading
+        // as a fleeting flash on bracelets. The recovery IR fires ~50 ms
+        // after the sparkle to snap back to wash colour - which is the
+        // right shape for a real sparkle (envelope ~192 ms) but pre-empts
+        // any authored envelope longer than 50 ms. Skip the recovery when
+        // the envelope is clearly not a sparkle, and push the next
+        // periodic refresh out past the pulse's tail so a scheduled
+        // refresh doesn't pre-empt from the other side. The wash slot
+        // stays active throughout; the next refresh (once resumed)
+        // restores the wash colour on the bracelet exactly as usual.
+        const uint32_t envelope_ms = pixmob_time_to_ms(ev.attack)
+                                   + pixmob_time_to_ms(ev.sustain)
+                                   + pixmob_time_to_ms(ev.release);
+        if (envelope_ms > kLongPulseEnvelopeMs) {
+            WashState& s = wash_slots_[group_id];
+            constexpr uint32_t kPostPulseRefreshMarginMs = 100;
+            const uint32_t next_after_pulse =
+                now_ms() + envelope_ms + kPostPulseRefreshMarginMs;
+            if (s.next_refresh_ms < next_after_pulse) {
+                s.next_refresh_ms = next_after_pulse;
+            }
+            return true;   // skip the recovery - the pulse plays fully
+        }
 
         // Inter-frame quiet period (regression fix 2026-06-23). The
         // bracelet's IR decoder needs a gap between commands to lock

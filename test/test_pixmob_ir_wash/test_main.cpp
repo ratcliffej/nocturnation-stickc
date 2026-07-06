@@ -414,6 +414,95 @@ static void test_pulse_on_active_wash_fires_sparkle_plus_recovery(void) {
                              drv->wash_state(0)->next_refresh_ms);
 }
 
+static void test_long_envelope_pulse_on_active_wash_skips_recovery(void) {
+    // Bench 2026-07-04: authored long-envelope pulses had their
+    // envelope pre-empted by the 50 ms sparkle-recovery IR. The
+    // recovery is right for real sparkles (~192 ms envelope) but
+    // reads as "flash" for anything longer. Skip the recovery when
+    // the envelope exceeds kLongPulseEnvelopeMs, and push the next
+    // periodic refresh out past the pulse's tail so a scheduled
+    // refresh doesn't pre-empt from the other side.
+    auto* drv = pixmob_ir_driver_instance();
+    drv->send_wash(0, purple_static());
+    TEST_ASSERT_TRUE(drv->wash_state(0)->active);
+
+    const int before = nocturnation::hal::s_ir_tx.send_count;
+
+    // Long envelope matching Jason's bench cue
+    // `pulse 255 255 255 10 10 15 100`: attack + sustain + release =
+    // 960 + 960 + 960 = 2880 ms. Push threshold is 300 ms.
+    RgbPulseEvent ev{};
+    ev.r = 255; ev.g = 255; ev.b = 255;
+    ev.attack  = pixmob::T_960_MS;
+    ev.sustain = pixmob::T_960_MS;
+    ev.release = pixmob::T_960_MS;
+    ev.chance  = pixmob::CHANCE_100;
+    drv->send(/*group_id=*/0, ev);
+
+    // Only ONE IR fires (the sparkle); the recovery is skipped.
+    TEST_ASSERT_EQUAL_INT(before + 1,
+                          nocturnation::hal::s_ir_tx.send_count);
+    // Wash slot stays active - the periodic refresh will restore the
+    // wash on the bracelet once the envelope has played out.
+    TEST_ASSERT_TRUE(drv->wash_state(0)->active);
+    // Next refresh is safely past the envelope tail: at least
+    // envelope_ms + 100 ms margin after now. Under this invariant the
+    // periodic refresh can't fire mid-envelope and pre-empt the
+    // release from the other side.
+    const uint32_t envelope_ms = 960u + 960u + 960u;
+    TEST_ASSERT_TRUE(
+        drv->wash_state(0)->next_refresh_ms >= s_now_ms + envelope_ms + 100u);
+}
+
+static void test_long_envelope_pushes_refresh_when_scheduled_earlier(void) {
+    // Targeted check for the push: seed a wash whose next refresh is
+    // due before the pulse's envelope would complete, then fire the
+    // long pulse and confirm the refresh got shoved out past the tail
+    // rather than being left in place to pre-empt the pulse.
+    auto* drv = pixmob_ir_driver_instance();
+    drv->send_wash(0, purple_static());
+    // Force the next refresh to fire in 500 ms - much sooner than the
+    // 2880 ms envelope we're about to send would complete.
+    const_cast<PixMobIRDriver::WashState*>(drv->wash_state(0))
+        ->next_refresh_ms = s_now_ms + 500;
+
+    RgbPulseEvent ev{};
+    ev.r = 255; ev.g = 255; ev.b = 255;
+    ev.attack  = pixmob::T_960_MS;
+    ev.sustain = pixmob::T_960_MS;
+    ev.release = pixmob::T_960_MS;
+    ev.chance  = pixmob::CHANCE_100;
+    drv->send(/*group_id=*/0, ev);
+
+    // After: refresh must have been pushed past the envelope tail.
+    const uint32_t envelope_ms = 960u + 960u + 960u;
+    TEST_ASSERT_TRUE(
+        drv->wash_state(0)->next_refresh_ms >= s_now_ms + envelope_ms + 100u);
+}
+
+static void test_short_envelope_pulse_on_active_wash_still_fires_recovery(void) {
+    // Regression guard for the long-envelope threshold. A genuine
+    // sparkle (envelope <= kLongPulseEnvelopeMs) must still get the
+    // sparkle + recovery two-command pair so wash continuity between
+    // sparkles is preserved (bench 2026-06-18).
+    auto* drv = pixmob_ir_driver_instance();
+    drv->send_wash(0, purple_static());
+    const int before = nocturnation::hal::s_ir_tx.send_count;
+
+    // Standard sparkle envelope: T_0 + T_0 + T_192 = 192 ms.
+    RgbPulseEvent ev{};
+    ev.r = 255; ev.g = 255; ev.b = 255;
+    ev.attack  = pixmob::T_0_MS;
+    ev.sustain = pixmob::T_0_MS;
+    ev.release = pixmob::T_192_MS;
+    ev.chance  = pixmob::CHANCE_100;
+    drv->send(/*group_id=*/0, ev);
+
+    // Both frames fire: sparkle + recovery.
+    TEST_ASSERT_EQUAL_INT(before + 2,
+                          nocturnation::hal::s_ir_tx.send_count);
+}
+
 static void test_refresh_interval_scales_with_cycle(void) {
     // Drifting washes auto-scale their refresh cadence so the
     // bracelet's step-wise snapshots produce visibly-smooth blending
@@ -501,6 +590,9 @@ int main(int, char**) {
     RUN_TEST(test_per_group_state_isolated);
     RUN_TEST(test_invalid_group_id_silently_rejected);
     RUN_TEST(test_pulse_on_active_wash_fires_sparkle_plus_recovery);
+    RUN_TEST(test_long_envelope_pulse_on_active_wash_skips_recovery);
+    RUN_TEST(test_long_envelope_pushes_refresh_when_scheduled_earlier);
+    RUN_TEST(test_short_envelope_pulse_on_active_wash_still_fires_recovery);
     RUN_TEST(test_refresh_interval_scales_with_cycle);
     RUN_TEST(test_clock_source_advances_state_deterministically);
     return UNITY_END();
