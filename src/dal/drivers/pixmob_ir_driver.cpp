@@ -16,6 +16,33 @@ PixMobIRDriver s_instance;
 // PixMob command (the longest transmission is well under that). Sized to
 // match the prototype's irBuf so behaviour is byte-identical.
 constexpr size_t kPulseBufSize = 80;
+
+// pixmob::Time enum -> real-world duration in ms. Order matches the enum
+// (T_0_MS = 0 ... T_3840_MS = 7); indexing by the 3-bit value gives the
+// bracelet's rendered phase duration.
+constexpr uint16_t kPixmobTimeMs[8] = {
+    0, 32, 96, 192, 480, 960, 2400, 3840,
+};
+
+inline uint32_t pixmob_time_to_ms(pixmob::Time t) {
+    return kPixmobTimeMs[static_cast<uint8_t>(t) & 0x07];
+}
+
+// True when the Director should roll chance itself and either skip the
+// sparkle entirely or fire it with CHANCE_100 - trading per-bracelet
+// randomness for airtime savings + bracelet-stress protection. The
+// 2026-06-30 bug (bracelet enters degraded state after N skipped-but-
+// still-decoded IR commands, causing 3 s blackout patterns) is worst
+// at very-low chances (CHANCE_16 = 1 in 6 rendered, CHANCE_4 = 1 in
+// 25). At CHANCE_50 and higher the skip ratio is <= 50 %, so the
+// bracelet can handle the stress and the "random twinkle" aesthetic
+// is preserved (per-bracelet roll on the bracelet side). Bench
+// 2026-07-04: without this hybrid, wash_with_sparkle at 50 % rendered
+// as "all bracelets flash in unison" instead of the intended scattered
+// twinkle.
+inline bool should_prefilter_chance(pixmob::Chance c) {
+    return static_cast<uint8_t>(c) >= static_cast<uint8_t>(pixmob::CHANCE_32);
+}
 }  // namespace
 
 PixMobIRDriver* pixmob_ir_driver_instance() { return &s_instance; }
@@ -111,12 +138,19 @@ bool PixMobIRDriver::send(uint8_t group_id, const RgbPulseEvent& ev) {
         // (CHANCE_16 = 1 in 6 commands actually transmitted), giving
         // the bracelet's receiver headroom.
         //
-        // Trade-off: bracelets sparkle in unison instead of with
-        // per-bracelet randomness. For a small fleet (4 groups
-        // expected for EMF deployment) this reads as "synchronised
-        // crowd accent" rather than "random twinkle" - a different
-        // aesthetic but not worse for music-driven cues.
-        if (ev.chance != pixmob::CHANCE_100) {
+        // Trade-off (2026-06-30 -> hybrid 2026-07-04): pre-filter on
+        // the Director gives "synchronised crowd accent" (bracelets
+        // fire in unison when the roll passes) but shields against the
+        // bracelet-stress bug most aggressively. Only strictly needed
+        // for very-low chances - at CHANCE_50 and higher the skip
+        // ratio is <= 50 % which the bracelet handles cleanly and the
+        // "random twinkle" aesthetic is worth preserving. So pre-
+        // filter LOW chances only; pass HIGH chances to the bracelet
+        // and let each bracelet roll on its own (bench 2026-07-04
+        // Jason's wash_with_sparkle at 50 % rendered as unison
+        // otherwise).
+        const bool prefilter = should_prefilter_chance(ev.chance);
+        if (prefilter) {
 #ifdef ARDUINO
             const uint32_t roll = static_cast<uint32_t>(::esp_random());
 #else
@@ -144,6 +178,11 @@ bool PixMobIRDriver::send(uint8_t group_id, const RgbPulseEvent& ev) {
                 return true;   // skip this sparkle - don't fire IR
             }
         }
+        // Chance for the sparkle IR: CHANCE_100 when pre-filter did the
+        // roll (Director already decided), else ev.chance so each
+        // bracelet rolls independently.
+        const auto sparkle_chance =
+            prefilter ? pixmob::CHANCE_100 : ev.chance;
 
         // Compute the wash colour for the recovery.
         uint8_t wr = wash_slots_[group_id].r1;
@@ -198,12 +237,29 @@ bool PixMobIRDriver::send(uint8_t group_id, const RgbPulseEvent& ev) {
         // orchestrator's wash_with_sparkle FX, raw 96 DMX -> T_192);
         // forcing release to T_0_MS minimises the "envelope footprint"
         // the bracelet records.
+        // Bench 2026-07-04: authored long-envelope pulses (e.g. the
+        // coldplay-x-bts-my-universe.cues pulse at 00:57.8) were reading
+        // as a fleeting flash on bracelets. The recovery IR fires ~50 ms
+        // after the sparkle to snap back to wash colour - right for a
+        // real sparkle (envelope <= 192 ms) but pre-empts any authored
+        // envelope longer than 50 ms. Decide once and share the answer
+        // with both the sparkle IR (which needs its real release, not
+        // the T_0_MS forced below, because there'll be no recovery to
+        // paint over the release phase) and the tail block that pushes
+        // next_refresh_ms past the pulse's end.
+        const uint32_t envelope_ms = pixmob_time_to_ms(ev.attack)
+                                   + pixmob_time_to_ms(ev.sustain)
+                                   + pixmob_time_to_ms(ev.release);
+        const bool skip_recovery = envelope_ms > kLongPulseEnvelopeMs;
+        const auto sparkle_release =
+            skip_recovery ? ev.release : pixmob::T_0_MS;
+
         uint16_t buf[kPulseBufSize];
         size_t n = pixmob::buildSingleColor(
             buf, kPulseBufSize,
             ev.r, ev.g, ev.b,
-            ev.attack, effective_sustain, pixmob::T_0_MS,
-            pixmob::CHANCE_100,    // chance roll already done above; bracelet always renders
+            ev.attack, effective_sustain, sparkle_release,
+            sparkle_chance,
             group_id);
         if (n == 0) return false;
         transmit(buf, n);
@@ -215,6 +271,21 @@ bool PixMobIRDriver::send(uint8_t group_id, const RgbPulseEvent& ev) {
                       (unsigned)group_id,
                       (unsigned)wr, (unsigned)wg, (unsigned)wb);
 #endif
+
+        if (skip_recovery) {
+            // Push next refresh out past the pulse's tail so a scheduled
+            // refresh can't pre-empt the release from the other side.
+            // Wash slot stays active; the next refresh (once resumed)
+            // restores the wash colour on the bracelet as usual.
+            WashState& s = wash_slots_[group_id];
+            constexpr uint32_t kPostPulseRefreshMarginMs = 100;
+            const uint32_t next_after_pulse =
+                now_ms() + envelope_ms + kPostPulseRefreshMarginMs;
+            if (s.next_refresh_ms < next_after_pulse) {
+                s.next_refresh_ms = next_after_pulse;
+            }
+            return true;   // pulse plays fully; no recovery IR
+        }
 
         // Inter-frame quiet period (regression fix 2026-06-23). The
         // bracelet's IR decoder needs a gap between commands to lock
@@ -258,12 +329,13 @@ bool PixMobIRDriver::send(uint8_t group_id, const RgbPulseEvent& ev) {
     }
 
     // No active wash on this group - regular SingleColor pulse using
-    // the orchestrator-supplied envelope. Apply the same chance pre-
-    // filter as the wash-active path: skip the sparkle entirely on
-    // the StickC instead of asking the bracelet to skip, so the
-    // bracelet doesn't accumulate stress from processing-then-
-    // skipping (2026-06-30).
-    if (ev.chance != pixmob::CHANCE_100) {
+    // the orchestrator-supplied envelope. Apply the same hybrid chance
+    // policy as the wash-active path: pre-filter LOW chances on the
+    // Director (airtime savings + anti-stress at CHANCE_32 and below),
+    // pass HIGH chances (CHANCE_50 and up) through so each bracelet
+    // rolls independently.
+    const bool prefilter_nowash = should_prefilter_chance(ev.chance);
+    if (prefilter_nowash) {
 #ifdef ARDUINO
         const uint32_t roll = static_cast<uint32_t>(::esp_random());
 #else
@@ -277,13 +349,15 @@ bool PixMobIRDriver::send(uint8_t group_id, const RgbPulseEvent& ev) {
             return true;
         }
     }
+    const auto nowash_chance =
+        prefilter_nowash ? pixmob::CHANCE_100 : ev.chance;
 
     uint16_t buf[kPulseBufSize];
     const size_t n = pixmob::buildSingleColor(
         buf, kPulseBufSize,
         ev.r, ev.g, ev.b,
         ev.attack, ev.sustain, ev.release,
-        pixmob::CHANCE_100,    // chance pre-filtered above
+        nowash_chance,
         group_id);
     if (n == 0) return false;
 

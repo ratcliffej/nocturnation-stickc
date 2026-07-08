@@ -117,6 +117,28 @@ public:
     // be dropped by the bracelet).
     static constexpr uint8_t kZeroWashReleaseTime100ms = 3;
 
+    // Total envelope duration (attack + sustain + release) above which a
+    // LIGHT_PULSE fired on a group with an active wash is treated as an
+    // "authored accent" rather than a fleeting sparkle. The pulse's
+    // 50 ms sparkle-then-recovery sandwich (see send()) is meant for
+    // wash_with_sparkle's tiny T_0/T_0/T_192 sparkles - it pre-empts
+    // any envelope longer than the 50 ms inter-frame gap. Above this
+    // threshold the driver skips the recovery IR and pushes the next
+    // periodic refresh out past the pulse's tail, so the authored
+    // pulse plays through and the wash refresh resumes cleanly on the
+    // other side (bench 2026-07-04, coldplay-x-bts-my-universe.cues
+    // pulse at 00:57.8).
+    //
+    // 1000 ms picks up authored envelopes with any T_960 or T_2400
+    // bucket in the mix (Jason's 0/10/15 = 1920 ms, 10/10/15 = 2880 ms).
+    // Deliberately above pulse_per_bar's 608 ms envelope so beat-
+    // cadence FX keep their brief-flash-back-to-wash shape - bench
+    // 2026-07-04 found that treating pulse_per_bar as "authored"
+    // hollowed the wash out (every beat pushed the next refresh, so
+    // the bracelet sat at black between beats instead of showing
+    // wash + accent).
+    static constexpr uint32_t kLongPulseEnvelopeMs = 1000;
+
     // Inject a wall-clock source for tests. Default (nullptr) uses
     // millis() on Arduino builds and a static 0 on native test envs.
     // Tests register a stub that advances under their control.
