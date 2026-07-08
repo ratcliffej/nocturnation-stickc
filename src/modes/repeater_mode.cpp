@@ -31,9 +31,9 @@ constexpr uint8_t kScanChannels[3] = {1, 6, 11};
 // change-confirm flash.
 void channel_colour(uint8_t ch, uint8_t& r, uint8_t& g, uint8_t& b) {
     switch (ch) {
-        case 1:  r = 0;  g = 0;  b = 24; break;   // blue
-        case 6:  r = 0;  g = 24; b = 0;  break;   // green
-        case 11: r = 24; g = 0;  b = 24; break;   // magenta
+        case 1:  r = 0;  g = 24; b = 24; break;   // cyan
+        case 6:  r = 24; g = 0;  b = 24; break;   // magenta
+        case 11: r = 24; g = 24; b = 0;  break;   // yellow
         default: r = 16; g = 16; b = 16; break;   // white-ish = auto/unknown
     }
 }
@@ -123,15 +123,22 @@ void RepeaterMode::on_recv(const hal::ESPNowMessage& m) {
     last_rx_ms_ = millis();
     locked_     = true;
 
+    // Hop-transparent relay (ratcliffej, PR #27): rebroadcast verbatim,
+    // hop_count untouched, so an Atom hop never spends the fleet's 3-hop
+    // budget - Atoms buy breadth, Lume dynamic routing keeps full
+    // audience depth. With no hop ceiling on this path the dedup ring is
+    // the only loop guard, so seq-0 frames (which bypass dedup) are never
+    // relayed: two Atoms in range of each other would ping-pong one
+    // forever. Every fleet sender sequences (seq wraps 255 -> 1), so
+    // nothing real is dropped.
+    if (hdr.sequence_number == 0) return;
     if (seen_recently(hdr.source_id, hdr.sequence_number)) return;
     mark_seen(hdr.source_id, hdr.sequence_number);
 
-    if (hdr.hop_count < kMaxHopCount && m.len <= kRepeatBufSize) {
+    if (m.len <= kRepeatBufSize) {
         std::memcpy(pending_repeat_buf_, m.data, m.len);
-        te::set_hop_count(pending_repeat_buf_, m.len,
-                          static_cast<uint8_t>(hdr.hop_count + 1));
-        pending_repeat_len_    = m.len;
-        pending_repeat_        = true;
+        pending_repeat_len_ = m.len;
+        pending_repeat_     = true;
     }
 }
 
@@ -273,7 +280,7 @@ void RepeaterMode::update_led(uint32_t now) {
         return;
     }
     if (now - last_relay_ms_ < kRelayFlashMs) {
-        neopixelWrite(kPin, 0, 40, 40);     // cyan: relaying right now
+        neopixelWrite(kPin, 0, 40, 0);      // green: relaying right now
         return;
     }
     // Idle / online: dim colour of the channel we're relaying on.

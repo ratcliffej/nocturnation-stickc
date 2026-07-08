@@ -2,6 +2,30 @@
 
 Notable changes to the NocturNation M5 firmware. Newest first.
 
+## 2026-07-07 — Atom repeater: hop-transparent relay
+
+The headless Atom repeater no longer increments `hop_count` when it
+rebroadcasts — frames are relayed verbatim. Suggested by ratcliffej on
+PR #27: with the fleet's 3-hop ceiling, an Atom hop stage-side spent
+budget the audience-side Lume relays needed, trading depth for breadth.
+Now Atoms are free breadth anywhere in the field and Lume dynamic
+routing keeps the full 3 hops of depth. Duplicate copies are handled by
+receiver dedup (the Director already sends everything twice).
+
+Without a hop ceiling on this path the dedup ring is the only loop
+guard, so the repeater now drops unsequenced frames (seq 0 bypasses
+dedup) instead of relaying them — two Atoms in mutual range would
+otherwise ping-pong a seq-0 frame forever. No real traffic is lost:
+every fleet sender sequences (the Director's counter wraps 255 → 1),
+and census — the one seq-0 frame in the wild — was already filtered by
+type. Lume repeat is unchanged (still hop+1, 3-hop cap).
+
+- `src/modes/repeater_mode.cpp` — relay verbatim: drop the
+  `set_hop_count()` bump and the `hop_count < 3` gate; refuse seq-0
+  frames pre-dedup.
+- `src/modes/repeater_mode.h` — behaviour doc; drop unused
+  `kMaxHopCount`.
+
 ## 2026-07-02 — Repeater hop_count: pin the byte offset
 
 `LumeMode`'s repeater already writes `hop_count` at the correct wire
