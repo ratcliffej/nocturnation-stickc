@@ -8,9 +8,11 @@
 // Behaviour:
 //   - ESP-NOW Long Range RX on the fleet channel (fixed 1/6/11, or auto:
 //     probe 1/6/11 and lock to whichever carries Director traffic).
-//   - Every unique frame is re-broadcast with hop_count + 1 (dedup ring
-//     on (source_id, sequence), 3-hop cap) - the proven Lume-repeat path,
-//     but as the device's sole function.
+//   - Every unique frame is re-broadcast verbatim (dedup ring on
+//     (source_id, sequence)). Hop-transparent: hop_count is NOT
+//     incremented, so Atom coverage never spends the fleet's 3-hop
+//     budget - Lume dynamic routing keeps full audience depth. Seq-0
+//     frames bypass dedup and are therefore never relayed (loop guard).
 //   - Emits a REPEATER_HEARTBEAT census ~1 Hz so the Director can count
 //     how many repeaters are online. Census frames are never relayed.
 //   - The onboard RGB LED (GPIO 35) is the only output: channel colour
@@ -59,7 +61,6 @@ public:
     static constexpr uint32_t kConfirmMs = 1000;
 
     static constexpr size_t  kDedupRingSize = 16;
-    static constexpr uint8_t kMaxHopCount   = 3;
     static constexpr size_t  kRepeatBufSize = 250;   // == kMaxFrameSize
 
 private:
