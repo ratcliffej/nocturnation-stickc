@@ -2,6 +2,87 @@
 
 Notable changes to the NocturNation M5 firmware. Newest first.
 
+## 2026-07-07 — Atom repeater: hop-transparent relay
+
+The headless Atom repeater no longer increments `hop_count` when it
+rebroadcasts — frames are relayed verbatim. Suggested by ratcliffej on
+PR #27: with the fleet's 3-hop ceiling, an Atom hop stage-side spent
+budget the audience-side Lume relays needed, trading depth for breadth.
+Now Atoms are free breadth anywhere in the field and Lume dynamic
+routing keeps the full 3 hops of depth. Duplicate copies are handled by
+receiver dedup (the Director already sends everything twice).
+
+Without a hop ceiling on this path the dedup ring is the only loop
+guard, so the repeater now drops unsequenced frames (seq 0 bypasses
+dedup) instead of relaying them — two Atoms in mutual range would
+otherwise ping-pong a seq-0 frame forever. No real traffic is lost:
+every fleet sender sequences (the Director's counter wraps 255 → 1),
+and census — the one seq-0 frame in the wild — was already filtered by
+type. Lume repeat is unchanged (still hop+1, 3-hop cap).
+
+- `src/modes/repeater_mode.cpp` — relay verbatim: drop the
+  `set_hop_count()` bump and the `hop_count < 3` gate; refuse seq-0
+  frames pre-dedup.
+- `src/modes/repeater_mode.h` — behaviour doc; drop unused
+  `kMaxHopCount`.
+
+## 2026-07-03 — Repeater census talkback from Lume repeaters
+
+Repeat-enabled Lumes (StickC Plus2 / StickS3 / Atom Lite — any host
+running the shared `LumeMode`) now beacon the same 1 Hz
+`REPEATER_HEARTBEAT` the headless Atom repeater emits, so every relay in
+the field — dedicated or Lume — shows up in the Director's census
+(console `repeatrs: N online` listing and the AtomS3R dashboard's
+`rpt N`). Gated on holding a Director lock: an unlocked Lume may be mid
+channel-scan and is relaying nothing worth reporting. uid = low 3 bytes
+of the STA MAC, the same identity scheme as the headless repeater, so
+the census dedups both kinds identically.
+
+Safety of the beacon rests on the existing TofuLock rule that broadcast-
+source frames are never admitted: the census can't steal locks, refresh
+liveness, or be re-relayed into echoes. `LumeMode::on_recv` additionally
+drops `REPEATER_HEARTBEAT` before the TOFU gate so the RXdrop log isn't
+spammed at one line per repeater per second.
+
+- `src/modes/lume_mode.{h,cpp}` — `emit_repeat_census()` (mirror of
+  `RepeaterMode::emit_census`), census uid capture on radio bring-up,
+  early census drop in `on_recv`.
+
+## 2026-07-03 — AtomS3R Director: LCD dashboard
+
+New `m5stack-atoms3r-poe` env: the same Ethernet DMX Director as
+`m5stack-atoms3-poe`, on the AtomS3R (which has a 0.85" 128×128 LCD).
+`NOCT_ATOMS3R` declares `Capability::Display` in the shared
+`hal_atoms3poe` backend and DmxBridge draws a 10 Hz dashboard through
+the DAL's `local` display path: health banner (same red/purple/amber/
+green taxonomy as the Lite's status LED, plus the ESP-NOW fleet
+channel), IP / universes / frame-count / age vitals, the 27
+broadcast-block channels as colour-coded bars, and a fleet-colour box
+showing the colour the broadcast block currently commands. The
+onboard-WS2812 LED path is compiled out on the S3R (no such LED —
+GPIO 35 is an in-package PSRAM line).
+
+- `src/hal_atoms3poe/display_atoms3r.{h,cpp}` — M5.Display-backed
+  `hal::Display`, compiled only under `NOCT_ATOMS3R`.
+- `src/hal_atoms3poe/hal_atoms3poe.cpp` — conditional `Display`
+  capability + accessor.
+- `src/modes/dmx_bridge_mode.cpp` — `draw_screen_dashboard()` in the
+  Ethernet branch; no-ops on Directors without a panel.
+- `src/dal/drivers/dmx_channel_mapper.{h,cpp}` — pure static
+  `preview_rgb()` mirroring the raw/wash wire-scaling rules (shared
+  `scale_raw_byte` helper), so the fleet box shows exactly what the
+  fleet is told; 5 new native tests in `test_dmx_channel_mapper`.
+- `src/dal/drivers/ethernet_dmx_adapter.{h,cpp}` — `local_ip()`
+  accessor so the mode doesn't include `Ethernet.h`.
+
+Bench follow-ups: the banner also carries the headless-repeater online
+count (`rpt N`, from `RepeaterCensus`) next to the fleet channel, and
+headless builds (`NOCT_HEADLESS_DMX_BRIDGE` / `NOCT_HEADLESS_REPEATER`)
+now boot straight into their runtime mode in `ModeMachine::begin()` —
+the Boot splash is Stick UX whose layout assumes the 240×135 panel and
+rendered mangled on the S3R's square screen for the whole Ethernet
+bring-up.
+
 ## 2026-07-03 — Fleet-review Tier 1 quick wins
 
 Three targeted robustness fixes surfaced by the 2026-07-02 Fable

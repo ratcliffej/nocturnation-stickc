@@ -151,6 +151,13 @@ private:
     // there's no such LED. `active` = DMX is flowing right now; the rest of
     // the health (W5500, link, ESP-NOW) is queried inside.
     void update_status_led(bool active);
+
+    // AtomS3R Director dashboard: health banner + IP/universe/channel/
+    // frame vitals on top, the 27-channel broadcast-block DMX preview and
+    // the fleet-colour box below. Compiles to a no-op on non-Ethernet
+    // builds; at runtime it returns immediately on Directors without a
+    // panel (the Lite keeps LED-only status).
+    void draw_screen_dashboard(bool active);
 };
 
 }  // namespace modes

@@ -7,6 +7,7 @@
 
 #include "hal/hal.h"
 #include "modes/persistence.h"
+#include "repeater_census.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -209,7 +210,7 @@ bool EspNowBroadcastDriver::start_broadcast(uint8_t channel) {
         listen_collision_heard_    = false;
         listen_attempts_remaining_ = kListenMaxAttempts;
         radio->set_recv_callback([this](const hal::ESPNowMessage& m) {
-            this->on_listen_recv(m);
+            this->on_recv(m);
         });
         if (!radio->begin(channel)) {
             radio->set_recv_callback(nullptr);
@@ -232,6 +233,13 @@ bool EspNowBroadcastDriver::start_broadcast(uint8_t channel) {
     source_id_ = derive_source_id(channel);
     active_    = radio->begin(channel);
     startup_state_ = active_ ? StartupState::Active : StartupState::Idle;
+    // No listen window on 1/6, but install the recv callback anyway so
+    // the repeater census is tallied on these channels too.
+    if (active_) {
+        radio->set_recv_callback([this](const hal::ESPNowMessage& m) {
+            this->on_recv(m);
+        });
+    }
 #ifdef ARDUINO
     if (!active_) {
         Serial.println("[espnow] broadcaster begin() failed");
@@ -479,10 +487,10 @@ void EspNowBroadcastDriver::listen_tick() {
     }
 
     // Settle: window elapsed without (further) collision, or attempts exhausted.
+    // The recv callback stays installed: on_recv() stops routing to the
+    // listen-collision path once we leave Listening, but keeps tallying
+    // headless-repeater census beacons for the whole broadcast lifetime.
     source_id_     = listen_candidate_;
-    if (auto* radio = hal::HAL::esp_now()) {
-        radio->set_recv_callback(nullptr);
-    }
     active_        = true;
     startup_state_ = StartupState::Active;
 #ifdef ARDUINO
@@ -505,6 +513,33 @@ void EspNowBroadcastDriver::on_listen_recv(const hal::ESPNowMessage& m) {
     if (hdr.source_id == listen_candidate_) {
         listen_collision_heard_ = true;
     }
+}
+
+void EspNowBroadcastDriver::on_recv(const hal::ESPNowMessage& m) {
+    // Unified recv callback for the whole broadcast lifetime. During the
+    // ch11 listen window it drives collision detection; on every channel
+    // it tallies headless-repeater census beacons for the operator count.
+    if (startup_state_ == StartupState::Listening) {
+        on_listen_recv(m);
+    }
+    feed_census(m);
+}
+
+void EspNowBroadcastDriver::feed_census(const hal::ESPNowMessage& m) {
+    using namespace transport::espnow;
+    Header hdr{};
+    if (decode_header(m.data, m.len, hdr) != DecodeResult::Ok) return;
+    if (hdr.message_type != MessageType::RepeaterHeartbeat) return;
+    // Count only direct census (hop 0) so a repeater's beacon relayed by
+    // another repeater doesn't double-count it.
+    if (hdr.hop_count != 0) return;
+    RepeaterHeartbeatPayload p{};
+    if (decode_repeater_heartbeat(hdr, m.data + kHeaderSize,
+                                  hdr.payload_len, p) != DecodeResult::Ok) {
+        return;
+    }
+    repeater_census_instance().note(p.uid, p.channel, p.relayed_count,
+                                    p.uptime_s, now_ms());
 }
 
 void EspNowBroadcastDriver::log_listen_collision_warning() const {

@@ -16,6 +16,7 @@
 
 #ifdef ARDUINO
 #include <Arduino.h>
+#include <WiFi.h>          // WiFi.macAddress() for the repeat-census uid
 #else
 extern "C" uint32_t millis();
 #endif
@@ -164,6 +165,18 @@ void LumeMode::enter() {
         });
         radio_active_ = radio->begin(current_listen_chan_);
 #ifdef ARDUINO
+        // Stable 3-byte census identity from the STA MAC (radio is up by
+        // now). Same scheme as RepeaterMode so the Director's census
+        // dedups a Lume-repeater and a headless repeater identically.
+        {
+            uint8_t mac[6] = {0};
+            WiFi.macAddress(mac);
+            census_uid_[0] = mac[3];
+            census_uid_[1] = mac[4];
+            census_uid_[2] = mac[5];
+        }
+#endif
+#ifdef ARDUINO
         if (!radio_active_) {
             Serial.println("[espnow] lume begin() failed");
         } else {
@@ -266,6 +279,11 @@ void LumeMode::loop_tick() {
 #endif
         }
     }
+
+    // Repeater talkback: keep this Lume visible in the Director's
+    // census while it's relaying. Cheap no-op unless repeat mode is
+    // on, locked, and the 1 s interval elapsed.
+    emit_repeat_census(now);
 
     // Edge into NO SIGNAL: paint the status UI immediately (the rest
     // of the screen below the strip is dead space anyway since no
@@ -839,6 +857,13 @@ void LumeMode::on_recv(const hal::ESPNowMessage& m) {
         return;
     }
 
+    // Repeater census is point-to-Director telemetry: meaningless to a
+    // Lume, and its broadcast source id would be TOFU-rejected below
+    // anyway - but that path logs an RXdrop line, which at one line per
+    // repeater per second would drown the serial console. Silently
+    // ignore it here instead (mirrors RepeaterMode::on_recv).
+    if (hdr.message_type == MessageType::RepeaterHeartbeat) return;
+
     // Spec §4.3: frames whose hop_count exceeds the mesh limit
     // (kMaxHopCount = 3) MUST be dropped before admission. Matches the
     // Tildagon Lume (nocturnation/receive.py: MAX_HOP_COUNT gate) and
@@ -1213,6 +1238,46 @@ void LumeMode::draw_status_pip() {
     // buffer because it's a separate screen region; lazy repaint on
     // count change keeps SPI traffic low even when frames stream in.
     draw_repeat_count();
+}
+
+void LumeMode::emit_repeat_census(uint32_t now) {
+    // Mirror of RepeaterMode::emit_census, gated on actually acting as
+    // a repeater: repeat mode enabled AND a Director lock held. An
+    // unlocked Lume may be mid channel-scan (the beacon would land on
+    // whatever channel the scan is dwelling on) and is relaying nothing
+    // worth reporting. The census header carries the anonymous
+    // broadcast source id, which TofuLock hard-rejects on every
+    // receiver - so this beacon can never steal a lock, refresh
+    // another Lume's liveness, or be re-relayed into an echo; only the
+    // Director's census intake reads it (dedup key = payload uid).
+    if (!lume_repeat_en_ || !radio_active_) return;
+    if (!tofu_.is_locked() || no_signal_) return;
+    if (now - last_census_ms_ < kCensusIntervalMs) return;
+    last_census_ms_ = now;
+
+    auto* radio = hal::HAL::esp_now();
+    if (radio == nullptr) return;
+
+    namespace te = transport::espnow;
+    te::Header hdr{};
+    hdr.source_id       = te::kBroadcastSourceId;
+    hdr.sequence_number = 0;   // census is unsequenced
+    hdr.hop_count       = 0;
+
+    te::RepeaterHeartbeatPayload p{};
+    p.uid[0]  = census_uid_[0];
+    p.uid[1]  = census_uid_[1];
+    p.uid[2]  = census_uid_[2];
+    p.channel = current_listen_chan_;
+    // millis() epoch is device boot, so this is genuine uptime even
+    // though the Lume may have entered/left this mode along the way.
+    const uint32_t up = now / 1000u;
+    p.uptime_s      = (up > 0xFFFFu) ? 0xFFFFu : static_cast<uint16_t>(up);
+    p.relayed_count = repeats_emitted_;
+
+    uint8_t buf[te::kHeaderSize + te::kRepeaterHeartbeatPayloadLen];
+    const size_t n = te::encode_repeater_heartbeat(buf, sizeof(buf), hdr, p);
+    if (n > 0) radio->send_broadcast(buf, n);
 }
 
 void LumeMode::draw_repeat_count() {

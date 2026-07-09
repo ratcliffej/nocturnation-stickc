@@ -1,6 +1,6 @@
 # AtomS3-PoE Ethernet DMX Director
 
-A dedicated, headless NocturNation **Director** that takes DMX from a lighting
+A dedicated NocturNation **Director** that takes DMX from a lighting
 console over **wired Ethernet** (sACN / Art-Net) and broadcasts to the fleet
 over **ESP-NOW**. Plug it into the same switch as the desk and go.
 
@@ -11,6 +11,13 @@ MagicQ / QLC+ ──┐
                                        │  → DmxChannelMapper (shared)
                                        └─ ESP-NOW broadcast → Lumes / badges
 ```
+
+Two Atom variants share this backend:
+
+| Env | Atom | Status surface |
+|---|---|---|
+| `m5stack-atoms3-poe` | **AtomS3 Lite** (headless) | onboard RGB LED |
+| `m5stack-atoms3r-poe` | **AtomS3R** (128×128 LCD) | on-screen dashboard |
 
 ## Why this board
 
@@ -25,6 +32,7 @@ DMX→mapper→broadcast back-half is the same tested code the Sticks use.
 | Item | Notes |
 |---|---|
 | **M5 AtomS3 Lite** | ESP32-S3. One RGB status LED, one button (button unused), no screen. |
+| **M5 AtomS3R** | ESP32-S3-PICO-1-N8R8. 0.85" 128×128 LCD, no RGB LED (GPIO 35 is a PSRAM line). PSRAM deliberately not enabled — nothing needs it. |
 | **M5 Atomic PoE Base** | W5500 SPI Ethernet + PoE. One cable for power + data. |
 
 ### Pins (confirmed against M5Stack docs)
@@ -38,7 +46,8 @@ DMX→mapper→broadcast back-half is the same tested code the Sticks use.
 ## Build & flash
 
 ```bash
-pio run -e m5stack-atoms3-poe -t upload
+pio run -e m5stack-atoms3-poe -t upload    # AtomS3 Lite
+pio run -e m5stack-atoms3r-poe -t upload   # AtomS3R (adds the LCD dashboard)
 ```
 
 The env already sets `upload_speed = 115200` + `upload_flags = --no-stub`:
@@ -53,17 +62,70 @@ Key build flags (in `platformio.ini`):
 - `NOCT_HEADLESS_DMX_BRIDGE` — boot straight into DMX Bridge (no menu).
 - `ARDUINO_USB_MODE=0` — **TinyUSB** CDC, not the hardware USB-Serial-JTAG, so
   connecting a laptop to the serial console can't hardware-reset the chip.
+- `NOCT_ATOMS3R` (`m5stack-atoms3r-poe` only) — declares `Capability::Display`
+  and lights up the LCD dashboard; compiles out the WS2812 status-LED path.
 
-## Status LED
+## Status LED (Lite) / dashboard health banner (S3R)
 
-Onboard RGB, updated continuously:
+Onboard RGB on the Lite; the same four states colour the banner at the top of
+the S3R's dashboard:
 
 | Colour | Meaning | Check |
 |---|---|---|
-| 🔴 red | Completely broken | W5500 not detected, or ESP-NOW radio didn't start |
-| 🟣 purple | Networking fault | W5500 OK but no Ethernet link (cable / switch) |
-| 🟠 amber | Up, but no data | Link + radio fine; no DMX (console stopped, wrong universe, nothing patched) |
-| 🟢 green | All good | Link up and DMX streaming |
+| 🔴 red / `FAULT` | Completely broken | W5500 not detected, or ESP-NOW radio didn't start |
+| 🟣 purple / `NO LINK` | Networking fault | W5500 OK but no Ethernet link (cable / switch) |
+| 🟠 amber / `NO DMX` | Up, but no data | Link + radio fine; no DMX (console stopped, wrong universe, nothing patched) |
+| 🟢 green / `LIVE` | All good | Link up and DMX streaming |
+
+## LCD dashboard (S3R)
+
+Redrawn at 10 Hz, one buffered sprite push per frame:
+
+- **Top — vitals:** health banner (state word left; online repeater count +
+  ESP-NOW fleet channel right), IP address (DHCP lease or static fallback),
+  sACN + Art-Net universes, frame counter and last-frame age.
+- **Middle — DMX preview:** the 27 broadcast-block channels (ch 1–27) as
+  vertical bars. Pulse / Wash A / Wash B / raw RGB channels are tinted
+  red/green/blue, raw-enable yellow, everything else white. Holds the last
+  frame when the console stops.
+- **Bottom — fleet box:** the colour the broadcast block currently commands
+  (raw RGB when enabled, else wash anchor A × intensity × master — the same
+  scaling `DmxChannelMapper` puts on the wire), i.e. what every Lume settles
+  on. Grey frame so "fleet dark" still reads as a live box.
+
+## Headless repeater (`m5stack-atoms3-repeater`)
+
+Same AtomS3 board + HAL, flashed as a dedicated ESP-NOW relay instead of a
+Director: no Ethernet, no console — boots straight into RepeaterMode and
+rebroadcasts every unique fleet frame with `hop_count + 1` (3-hop ceiling,
+mesh-wide dedup on `source_id`+`sequence`).
+
+```bash
+pio run -e m5stack-atoms3-repeater -t upload
+```
+
+- **Channel:** auto-scan by default (probes 1/6/11, locks to Director
+  traffic). Double-click the button to cycle auto → 1 → 6 → 11 (persists).
+  First-boot default via `-DNOCT_REPEATER_CHANNEL=<0|1|6|11>`.
+- **LED:** red = radio down · amber = scanning · dim channel colour =
+  online · cyan flash = relaying · bright channel colour = channel just
+  changed.
+
+### Census / talkback
+
+Anything relaying beacons a 1 Hz `REPEATER_HEARTBEAT` (uid = low 3 bytes of
+its MAC, channel, frames relayed, uptime) so the Director can count its
+relays:
+
+- **headless Atom repeaters** — always, once locked;
+- **Lume Sticks / Atoms with repeat mode enabled** — while they hold a
+  Director lock.
+
+The Director's census (`RepeaterCensus`, 5 s liveness window) shows up as
+`repeatrs: N online` + one line per relay in the console `show` / `mon`,
+and as `rpt N` in the S3R dashboard banner. Census frames ride the
+anonymous broadcast source id, which every receiver's TofuLock rejects —
+they can't steal locks, refresh liveness, or be re-relayed into echoes.
 
 ## Serial config console (USB-C)
 
@@ -84,6 +146,7 @@ a host is connected and never blocks the broadcast.
 | `netpass <pw\|off>` | Set / disable the **network console** password |
 | `save` | Persist config to flash (NVS) |
 | `reboot` | Restart |
+| `bootloader` | Reboot into the ROM loader — reflash over USB without touching the button |
 
 The broadcast block shows **ch1–27**: the 23 FX channels plus the raw-RGB
 direct-control set (**ch24 R / ch25 G / ch26 B / ch27 Raw Enable** — enable high

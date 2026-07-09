@@ -67,6 +67,13 @@ void             save_director_channel(uint8_t c);
 uint8_t          load_lume_channel();
 void             save_lume_channel(uint8_t c);
 
+// Headless repeater ESP-NOW channel. 0 = auto (probe 1/6/11 and lock
+// to the one with Director traffic), 1 / 6 / 11 = locked. First-boot
+// default is the NOCT_REPEATER_CHANNEL build flag; RepeaterMode's
+// button double-click cycles + persists the operator's choice.
+uint8_t          load_repeater_channel();
+void             save_repeater_channel(uint8_t c);
+
 // Lume repeater mode. When enabled, Lume rebroadcasts each unique
 // frame with hop_count + 1 (capped at spec §4.3's 3-hop limit). Off
 // by default. Receive-rebroadcast is an ESP-NOW transport concern, not

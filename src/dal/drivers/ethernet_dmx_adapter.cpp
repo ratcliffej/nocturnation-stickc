@@ -134,6 +134,14 @@ bool EthernetDmxAdapter::link_up() const {
     return Ethernet.linkStatus() != LinkOFF;
 }
 
+void EthernetDmxAdapter::local_ip(uint8_t out[4]) const {
+    const IPAddress ip = Ethernet.localIP();
+    out[0] = ip[0];
+    out[1] = ip[1];
+    out[2] = ip[2];
+    out[3] = ip[3];
+}
+
 EthernetDmxAdapter& ethernet_dmx_adapter_instance() {
     static EthernetDmxAdapter s_instance;
     return s_instance;

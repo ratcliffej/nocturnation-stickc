@@ -26,8 +26,11 @@
 #include <cstring>
 #include <cstdlib>
 
+#include "soc/rtc_cntl_reg.h"    // FORCE_DOWNLOAD_BOOT for the bootloader cmd
+
 #include "ethernet_dmx_adapter.h"
 #include "espnow_broadcast_driver.h"
+#include "repeater_census.h"     // headless-repeater online count
 #include "modes/persistence.h"   // Director source_id (DirectorID) get/set
 
 namespace nocturnation {
@@ -144,6 +147,7 @@ void print_help() {
     pln("  irtest [pin]      fire a visible IR burst on a GPIO (default 2; front camera)");
     pln("  save              persist config to flash");
     pln("  reboot            restart");
+    pln("  bootloader        reboot into the ROM loader for reflash");
 }
 
 void print_status() {
@@ -163,6 +167,27 @@ void print_status() {
                   s_cfg.wifi_channel == 1  ? "community"
                 : s_cfg.wifi_channel == 11 ? "performance"
                 :                            "mac-derived"); pln(buf);
+
+    // Headless repeaters relaying this Director's signal. Count + a line
+    // each for the ones heard within the census window (uid, channel,
+    // frames relayed, uptime).
+    {
+        RepeaterCensus& cen = repeater_census_instance();
+        const uint32_t now = millis();
+        std::snprintf(buf, sizeof(buf), "  repeatrs: %u online",
+                      (unsigned)cen.count_online(now)); pln(buf);
+        for (size_t i = 0; i < RepeaterCensus::capacity(); ++i) {
+            const RepeaterCensus::Entry& e = cen.entries()[i];
+            if (!e.used) continue;
+            if ((now - e.last_seen_ms) > RepeaterCensus::kOnlineWindowMs) continue;
+            std::snprintf(buf, sizeof(buf),
+                          "    %02X%02X%02X ch%-2u relayed %lu  up %us",
+                          e.uid[0], e.uid[1], e.uid[2], (unsigned)e.channel,
+                          (unsigned long)e.relayed, (unsigned)e.uptime_s);
+            pln(buf);
+        }
+    }
+
     std::snprintf(buf, sizeof(buf), "  sacn    : universe %u   artnet: universe %u",
                   s_cfg.sacn_universe, s_cfg.artnet_universe); pln(buf);
     std::snprintf(buf, sizeof(buf), "  frames  : %lu   bytes: %lu",
@@ -315,6 +340,19 @@ void handle(Session& s, char* line) {
     } else if (!std::strcmp(cmd, "reboot")) {
         pln("rebooting...");
         delay(100);
+        ESP.restart();
+    } else if (!std::strcmp(cmd, "bootloader")) {
+        // Reflash entry without touching the device. ARDUINO_USB_MODE=0
+        // means the host can't DTR/RTS-reset the chip (by design - a
+        // laptop opening the console must never blip the broadcast), so
+        // esptool can't reach the ROM loader on its own; the fallback is
+        // holding the physical button on a unit that may be zip-tied to
+        // a truss. Force download boot for the next reset instead: the
+        // device re-enumerates as the ROM's USB-JTAG device and
+        // `pio run -t upload` proceeds normally.
+        pln("entering bootloader (reflash me, or power-cycle to abort)...");
+        delay(100);
+        REG_WRITE(RTC_CNTL_OPTION1_REG, RTC_CNTL_FORCE_DOWNLOAD_BOOT);
         ESP.restart();
     } else {
         pln("unknown - type 'help'");

@@ -20,6 +20,7 @@
 #include "config_mode.h"
 #include "test_mode.h"
 #include "dmx_bridge_mode.h"
+#include "repeater_mode.h"
 #include "../dal/drivers/local_driver.h"   // for set_pulse_enabled gating
 #include "../dal/drivers/pixmob_ir_driver.h"   // for internal/external IR gating
 
@@ -66,6 +67,7 @@ LumeMode            s_lume;
 ConfigMode           s_config;
 TestMode             s_test;
 DmxBridgeMode        s_dmx_bridge;
+RepeaterMode         s_repeater;
 
 Mode* mode_instance(ModeId id) {
     switch (id) {
@@ -76,6 +78,7 @@ Mode* mode_instance(ModeId id) {
         case ModeId::Config:           return &s_config;
         case ModeId::Test:             return &s_test;
         case ModeId::DmxBridge:        return &s_dmx_bridge;
+        case ModeId::Repeater:         return &s_repeater;
     }
     return nullptr;
 }
@@ -177,7 +180,21 @@ void ModeMachine::begin() {
     persistence::apply_lume_group_force_defaults();
 
     s_active_mode  = nullptr;          // force enter() in enter_mode()
+#if defined(NOCT_HEADLESS_DMX_BRIDGE)
+    // Dedicated Director: skip the Boot splash and land straight in the
+    // runtime mode. The splash is Stick UX (its layout assumes the wide
+    // 240x135 panel and renders mangled on the AtomS3R's 128x128), and
+    // with no buttons there's no menu to offer anyway. Boot::enter()
+    // would otherwise paint the splash and leave it up for the whole
+    // Ethernet bring-up in DmxBridge::enter(). main.cpp's follow-up
+    // switch_to() no-ops via enter_mode's same-mode guard.
+    enter_mode(ModeId::DmxBridge);
+#elif defined(NOCT_HEADLESS_REPEATER)
+    // Same reasoning for the headless repeater (no display at all).
+    enter_mode(ModeId::Repeater);
+#else
     enter_mode(ModeId::Boot);
+#endif
 }
 
 void ModeMachine::loop_tick() {
