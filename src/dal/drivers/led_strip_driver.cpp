@@ -465,18 +465,34 @@ void LedStripDriver::render_frame() {
         const uint32_t stamp =
             pixel_pulse_started_[i].load(std::memory_order_acquire);
         if (stamp != 0 && pulse_total > 0) {
-            const float alpha = pulse_envelope_fraction(
-                stamp, now, pulse_a, pulse_s, pulse_rt);
-            if (alpha <= 0.0f) {
+            // Distinguish "past envelope tail" from "elapsed == 0 at
+            // start of attack" - both used to hit the alpha <= 0.0f
+            // branch and get the stamp cleared, which silently dropped
+            // any pulse whose send() and render_frame() happened in
+            // the same millisecond (extremely common on single-core
+            // ESP32 where the WiFi callback preempts main and returns
+            // straight to it). Diagnosed 2026-07-08 via [stripsend]
+            // beacon that showed 29/29 hits per pulse but the strip
+            // dropped ~3-in-4 visually.
+            const uint32_t elapsed = now - stamp;
+            if (elapsed >= pulse_total) {
                 // Legitimately past envelope tail. Relaxed store OK -
                 // clearing an inactive slot is idempotent; no consumer
                 // depends on a happens-before edge here.
                 pixel_pulse_started_[i].store(0,
                                                 std::memory_order_relaxed);
             } else {
-                r = lerp_u8(base_r, pulse_r, alpha);
-                g = lerp_u8(base_g, pulse_g, alpha);
-                b = lerp_u8(base_b, pulse_b, alpha);
+                const float alpha = pulse_envelope_fraction(
+                    stamp, now, pulse_a, pulse_s, pulse_rt);
+                if (alpha > 0.0f) {
+                    r = lerp_u8(base_r, pulse_r, alpha);
+                    g = lerp_u8(base_g, pulse_g, alpha);
+                    b = lerp_u8(base_b, pulse_b, alpha);
+                }
+                // alpha == 0.0f at attack start (elapsed too small for
+                // even 1/32 fraction): render base this tick, leave the
+                // stamp armed so the next render sees a non-zero alpha
+                // and paints the pulse from there.
             }
         }
 #if defined(ARDUINO) && defined(NOCT_STRIP_DIAG)
