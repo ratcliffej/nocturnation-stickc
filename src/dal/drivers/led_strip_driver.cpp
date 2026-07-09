@@ -289,22 +289,26 @@ bool LedStripDriver::send(uint8_t /*group_id*/, const RgbPulseEvent& ev) {
 }
 
 float LedStripDriver::pulse_envelope_fraction(uint32_t start_ms,
-                                                uint32_t now) const {
+                                                uint32_t now,
+                                                uint32_t attack_ms,
+                                                uint32_t sustain_ms,
+                                                uint32_t release_ms) {
     if (start_ms == 0) return 0.0f;
     const uint32_t elapsed = now - start_ms;
-    const uint32_t a = current_pulse_.attack_ms;
-    const uint32_t s = current_pulse_.sustain_ms;
-    const uint32_t r = current_pulse_.release_ms;
-    const uint32_t total = a + s + r;
+    const uint32_t total   = attack_ms + sustain_ms + release_ms;
     if (total == 0 || elapsed >= total) return 0.0f;
     // ASR shape: 0..a ramps in, a..a+s holds at 1.0, a+s..total ramps out.
-    if (elapsed < a) {
-        return a == 0 ? 1.0f : static_cast<float>(elapsed) / static_cast<float>(a);
+    if (elapsed < attack_ms) {
+        return attack_ms == 0
+            ? 1.0f
+            : static_cast<float>(elapsed) / static_cast<float>(attack_ms);
     }
-    if (elapsed < a + s) {
+    if (elapsed < attack_ms + sustain_ms) {
         return 1.0f;
     }
-    return 1.0f - static_cast<float>(elapsed - a - s) / static_cast<float>(r);
+    return 1.0f
+         - static_cast<float>(elapsed - attack_ms - sustain_ms)
+         / static_cast<float>(release_ms);
 }
 
 // =============================================================================
@@ -398,40 +402,54 @@ void LedStripDriver::render_frame() {
     // wash + pulse render down. The signal indicator overlay is
     // applied after this loop and intentionally bypasses brightness
     // (system UI stays visible at any device setting).
+    // Snapshot current_pulse_ ONCE per frame into locals. Prevents the
+    // per-pixel loop from reading mixed generations of the shared struct
+    // if a new send() lands on the WiFi task mid-loop. Same pattern as
+    // Fable fleet-review finding #10 (PixMobIRDriver compute_drift_rgb
+    // cycle_ms snapshot, stickc PR #25) - snapshot once, use locals from
+    // there. Per-field 32-bit reads are individually atomic on Xtensa
+    // (aligned uint32_t/uint8_t stores are single-instruction) so this
+    // sequence of six reads can only tear if a send() write interleaves,
+    // which the atomic acquire-load below rules out for any pixel whose
+    // stamp we observe.
+    const uint32_t pulse_a = current_pulse_.attack_ms;
+    const uint32_t pulse_s = current_pulse_.sustain_ms;
+    const uint32_t pulse_rt = current_pulse_.release_ms;
+    const uint8_t  pulse_r = current_pulse_.r;
+    const uint8_t  pulse_g = current_pulse_.g;
+    const uint8_t  pulse_b = current_pulse_.b;
+    const uint32_t pulse_total = pulse_a + pulse_s + pulse_rt;
+
     const size_t walk    = (pcount < kMaxPixels) ? pcount : kMaxPixels;
     const float  bri_mul = static_cast<float>(brightness_pct_) / 100.0f;
     for (size_t i = 0; i < walk; ++i) {
         uint8_t r = base_r, g = base_g, b = base_b;
         // Acquire-load pairs with the release-store in send(): any non-
         // zero stamp we observe implies the current_pulse_ envelope +
-        // colour writes preceding the store are visible here. Reading
-        // envelope fields ordinarily (below) is safe under that guarantee.
+        // colour writes preceding the store are visible here. Combined
+        // with the frame-start snapshot above, per-pixel envelope reads
+        // are immune to a mid-frame send() overwriting the shared struct.
         const uint32_t stamp =
             pixel_pulse_started_[i].load(std::memory_order_acquire);
-        if (stamp != 0) {
-            // Belt-and-braces defence in depth: if the envelope reads as
-            // total==0 despite a non-zero stamp, treat as an unpublished
-            // torn read (should be impossible with the acquire above)
-            // and skip render / skip clear so a subsequent tick has a
-            // chance to render properly. Cheap: one add per pixel.
-            const uint32_t total = current_pulse_.attack_ms
-                                   + current_pulse_.sustain_ms
-                                   + current_pulse_.release_ms;
-            if (total > 0) {
-                const float alpha = pulse_envelope_fraction(stamp, now);
-                if (alpha <= 0.0f) {
-                    // Legitimately past envelope tail. Relaxed store OK -
-                    // clearing an inactive slot is idempotent; no consumer
-                    // depends on a happens-before edge here.
-                    pixel_pulse_started_[i].store(0,
-                                                    std::memory_order_relaxed);
-                } else {
-                    r = lerp_u8(base_r, current_pulse_.r, alpha);
-                    g = lerp_u8(base_g, current_pulse_.g, alpha);
-                    b = lerp_u8(base_b, current_pulse_.b, alpha);
-                }
+        if (stamp != 0 && pulse_total > 0) {
+            const float alpha = pulse_envelope_fraction(
+                stamp, now, pulse_a, pulse_s, pulse_rt);
+            if (alpha <= 0.0f) {
+                // Legitimately past envelope tail. Relaxed store OK -
+                // clearing an inactive slot is idempotent; no consumer
+                // depends on a happens-before edge here.
+                pixel_pulse_started_[i].store(0,
+                                                std::memory_order_relaxed);
+            } else {
+                r = lerp_u8(base_r, pulse_r, alpha);
+                g = lerp_u8(base_g, pulse_g, alpha);
+                b = lerp_u8(base_b, pulse_b, alpha);
             }
         }
+        // Note: (stamp != 0 && pulse_total == 0) is the torn-envelope
+        // defence-in-depth case - can't happen with the acquire above but
+        // survives future refactors. We render base for this pixel and
+        // leave the stamp; a later tick renders it properly.
         strip->set_pixel(i,
                           scale_channel(r, bri_mul),
                           scale_channel(g, bri_mul),

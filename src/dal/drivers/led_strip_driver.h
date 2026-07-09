@@ -255,9 +255,15 @@ private:
                                  uint8_t& out_r, uint8_t& out_g, uint8_t& out_b);
 
     // Compute the per-pixel envelope multiplier (0..1) for a pulse that
-    // started at start_ms and is now at `now`. Returns 0 when the pulse
-    // has elapsed (caller treats as "envelope done, clear the slot").
-    float pulse_envelope_fraction(uint32_t start_ms, uint32_t now) const;
+    // started at start_ms and is now at `now`. Takes the ASR fields
+    // explicitly (rather than reading current_pulse_ inside) so the
+    // caller can pass a per-render snapshot - see render_frame() for
+    // the cross-task tearing argument. Returns 0 when the pulse has
+    // elapsed (caller treats as "envelope done, clear the slot").
+    static float pulse_envelope_fraction(uint32_t start_ms, uint32_t now,
+                                          uint32_t attack_ms,
+                                          uint32_t sustain_ms,
+                                          uint32_t release_ms);
 };
 
 LedStripDriver* led_strip_driver_instance();
