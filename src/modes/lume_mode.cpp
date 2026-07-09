@@ -507,10 +507,14 @@ void LumeMode::on_button_event(const ButtonPressEvent& ev) {
         //    10 % = ~180 mA peak. Safe on every supply. First-install
         //           default.
         //     1 % = ~18 mA peak. Ambient hint, near-darkness.
-        // 100 % retired 2026-06-23 after brownout reboots on raw RGB
-        // sliders hitting 255 - max-white at 100% draws ~1.8 A peak,
-        // far past any reasonable USB / battery supply.
-        static constexpr uint8_t kLevels[] = { 50, 25, 10, 1 };
+        // 100 % retired 2026-06-23; 50 % + 25 % retired 2026-07-08 -
+        // both caused brownouts on the StickC S3 driving a 30-pixel
+        // SK6812 under USB-C laptop power (~900 mA at 50 % past the
+        // ESP32-S3's headroom). Cycle now dead-ends at 1 % and wraps
+        // to 10 %, so the worst-case Btn1 press lands safely regardless
+        // of where in the cycle the operator was. Config > LED Strip >
+        // Brightness in config_mode.cpp mirrors this list; keep in sync.
+        static constexpr uint8_t kLevels[] = { 10, 5, 1 };
         static constexpr size_t kLevelCount = sizeof(kLevels) / sizeof(kLevels[0]);
 
         const uint8_t current_pct = persistence::load_strip_brightness();

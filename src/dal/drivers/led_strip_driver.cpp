@@ -107,11 +107,28 @@ void LedStripDriver::set_overlay_pixel_0(uint8_t r, uint8_t g, uint8_t b,
 void LedStripDriver::set_brightness_percent(uint8_t pct) {
     if (pct > 100) pct = 100;
     if (pct > max_brightness_pct_) pct = max_brightness_pct_;
+#ifdef ARDUINO
+    // Fleet-wide hard ceiling on production hardware. Belt-and-braces:
+    // set_max_brightness_percent already clamps to kAbsoluteMaxBrightness
+    // so this can only fire if a caller bypassed that path. Skipped on
+    // native test envs so existing wash/sparkle tests can drive brightness
+    // = 100 for literal RGB assertions.
+    if (pct > kAbsoluteMaxBrightness) pct = kAbsoluteMaxBrightness;
+#endif
     brightness_pct_ = pct;
 }
 
 void LedStripDriver::set_max_brightness_percent(uint8_t pct) {
     if (pct > 100) pct = 100;
+#ifdef ARDUINO
+    // Enforce the fleet-wide hard ceiling before recording. Any HAL
+    // that returns > kAbsoluteMaxBrightness (mis-authored, legacy,
+    // test) gets silently clamped so no downstream code path can see
+    // a per-host cap that would allow rendering past the fleet
+    // ceiling. See kAbsoluteMaxBrightness comment for rationale. Not
+    // enforced under native test envs (bench code paths only).
+    if (pct > kAbsoluteMaxBrightness) pct = kAbsoluteMaxBrightness;
+#endif
     max_brightness_pct_ = pct;
     // Clamp the live brightness immediately so a max-cap reduction
     // takes effect at the next render, not "eventually".

@@ -145,15 +145,27 @@ public:
     void set_brightness_percent(uint8_t pct);
     uint8_t brightness_percent() const { return brightness_pct_; }
 
+    // Fleet-wide HARD ceiling on strip brightness. Enforced on ARDUINO
+    // builds only (production hardware); native test envs bypass so
+    // existing wash / sparkle assertions can drive brightness = 100.
+    // On production, applies to every host regardless of HAL's
+    // max_strip_brightness_percent(); no code path (persistence load,
+    // Btn1 cycle, Config menu, direct API) can raise the rendered
+    // brightness above this value. Above ~10 % on a 30-pixel SK6812
+    // strip the current draw (~180 mA/pixel at peak white * 30 = ~1.8 A)
+    // exceeds every supply the fleet targets: laptop USB-CDC (~500 mA
+    // budget), Plus2 / S3 LiPo cell (~600 mA sustained), Atom Lite
+    // USB-hub (typically 500 mA). Bench-confirmed brownouts at 50 % on
+    // both S3 and Plus2 under USB-C laptop power, 2026-07-08. Change
+    // this number only in coordination with a per-host HAL cap change
+    // AND a documented external PSU expectation.
+    static constexpr uint8_t kAbsoluteMaxBrightness = 10;
+
     // Per-host maximum brightness cap. set_brightness_percent above
     // clamps to this; set via DAL::apply_persisted_strip_settings()
     // from the HAL's max_strip_brightness_percent() at mode entry.
-    //
-    // Atom Lite caps at 10 % because its power budget (200 mAh
-    // battery base + USB-hub-typical 500 mA) cannot sustain a
-    // 30-pixel SK6812 strip at 25 %+ - brownout-reboot territory.
-    // StickC Plus2 / S3 cap at 100 % (no cap) because they have a
-    // proper battery + USB-C and operator-cycle resolution is enough.
+    // Additionally clamped to kAbsoluteMaxBrightness so a mis-authored
+    // HAL returning e.g. 100 can't bypass the fleet-wide ceiling.
     void set_max_brightness_percent(uint8_t pct);
     uint8_t max_brightness_percent() const { return max_brightness_pct_; }
 
