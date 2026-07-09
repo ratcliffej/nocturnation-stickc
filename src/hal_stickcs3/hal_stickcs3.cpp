@@ -154,8 +154,13 @@ Buttons* HAL::buttons()  { return &s_buttons; }
 IMU*     HAL::imu()      { return &s_imu; }
 Battery* HAL::battery()  { return &s_battery; }
 LedStrip* HAL::led_strip() { return &s_led_strip; }
-// S3 has battery + USB-C supply. Same envelope as Plus2; no cap.
-uint8_t HAL::max_strip_brightness_percent() { return 100; }
+// S3 has battery + USB-C supply, but a laptop USB-C port typically
+// delivers only ~900 mA, and a 30-pixel SK6812 at 50 % draws ~900 mA
+// on peak white before the ESP32-S3 module's own ~300 mA - reliable
+// brownout. Cap at 10 % to match the Atom Lite so bench-flashing under
+// laptop USB is safe. Operator can raise via Config > LED Strip >
+// Chain Size context if driving from a beefier PSU. See PR #31.
+uint8_t HAL::max_strip_brightness_percent() { return 10; }
 
 }  // namespace hal
 }  // namespace nocturnation
