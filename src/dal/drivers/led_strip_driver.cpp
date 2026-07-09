@@ -293,7 +293,6 @@ bool LedStripDriver::send(uint8_t /*group_id*/, const RgbPulseEvent& ev) {
     // See the pixel_pulse_started_ member comment for the cross-core
     // race context. All stamps in this loop are release; render_frame's
     // per-pixel acquire load pairs with each individually.
-    size_t hits = 0;
     for (size_t i = 0; i < walk; i += group) {
         const bool hit = (next_random() % 100) < chance_pct;
         if (!hit) continue;
@@ -301,23 +300,8 @@ bool LedStripDriver::send(uint8_t /*group_id*/, const RgbPulseEvent& ev) {
         const uint32_t stamp = now ? now : 1;     // 0 reserved as inactive sentinel
         for (size_t p = i; p < end; ++p) {
             pixel_pulse_started_[p].store(stamp, std::memory_order_release);
-            ++hits;
         }
     }
-#if defined(ARDUINO) && defined(NOCT_STRIP_DIAG)
-    // Bench diagnostic - remove before merging. Confirms send() ran and
-    // the chance roll actually stamped pixels. If a pulse appears "dropped"
-    // but you see this line, the drop is downstream of send() (render
-    // race, atomic ordering, HAL). If you don't see the line, the drop
-    // is upstream (dispatch, decode, class/group filter).
-    Serial.printf("[stripsend r=%u g=%u b=%u a=%u s=%u rl=%u chance=%u hits=%u/%u]\n",
-                  (unsigned)ev.r, (unsigned)ev.g, (unsigned)ev.b,
-                  (unsigned)current_pulse_.attack_ms,
-                  (unsigned)current_pulse_.sustain_ms,
-                  (unsigned)current_pulse_.release_ms,
-                  (unsigned)chance_pct,
-                  (unsigned)hits, (unsigned)walk);
-#endif
     return true;
 }
 
@@ -495,17 +479,6 @@ void LedStripDriver::render_frame() {
                 // and paints the pulse from there.
             }
         }
-#if defined(ARDUINO) && defined(NOCT_STRIP_DIAG)
-        // Bench diagnostic - remove before merging. Fires if we see a
-        // stamped pixel but the snapshotted envelope reads as total==0
-        // (torn cross-core write despite acquire load) - i.e. the
-        // atomic pairing has failed and the pulse is silently vanishing.
-        // Only pixel 0 to keep serial traffic tolerable.
-        if (i == 0 && stamp != 0 && pulse_total == 0) {
-            Serial.printf("[stripzero p=0 stamp=%u now=%u]\n",
-                          (unsigned)stamp, (unsigned)now);
-        }
-#endif
         // Note: (stamp != 0 && pulse_total == 0) is the torn-envelope
         // defence-in-depth case - can't happen with the acquire above but
         // survives future refactors. We render base for this pixel and

@@ -405,18 +405,18 @@ void DAL::apply_persisted_strip_settings() {
     if (!strip_drv) return;
     // Apply the host's max-brightness cap FIRST so the subsequent
     // set_brightness_percent call clamps to it. The cap is a per-host
-    // power-budget property declared in the HAL backend (currently 5 %
-    // on every host - the LedStripDriver's kAbsoluteMaxBrightness = 5
+    // power-budget property declared in the HAL backend (currently 10 %
+    // on every host - the LedStripDriver's kAbsoluteMaxBrightness = 10
     // enforces this ceiling regardless of what a HAL claims).
     strip_drv->set_max_brightness_percent(hal::HAL::max_strip_brightness_percent());
     // Hard-wired boot brightness. NVS strip_bri is intentionally ignored
-    // so no legacy 50 / 25 / 10 value carried over from a pre-lockdown
-    // firmware can render at anything above kAbsoluteMaxBrightness = 5.
+    // so no legacy 50 / 25 / 5 value carried over from a pre-lockdown
+    // firmware can render at anything above kAbsoluteMaxBrightness = 10.
     // Config > LED Strip > Brightness and the Lume Btn1 cycle were both
     // retired 2026-07-08 in the same lockdown, so no code path exists
-    // that could change this at runtime. External PSU deployments raise
-    // the cap in a per-host HAL override + a build-flag on the driver.
-    strip_drv->set_brightness_percent(5);
+    // that could change this at runtime. USB-detected 20% and menu re-
+    // introduction are tracked as separate PRs.
+    strip_drv->set_brightness_percent(10);
     strip_drv->set_group_size       (modes::persistence::load_strip_group_size());
     strip_drv->set_pixel_count      (modes::persistence::load_strip_chain_size());
     set_driver_enabled("led-strip",  modes::persistence::load_strip_enabled());

@@ -161,7 +161,7 @@ public:
     // both S3 and Plus2 under USB-C laptop power, 2026-07-08. Change
     // this number only in coordination with a per-host HAL cap change
     // AND a documented external PSU expectation.
-    static constexpr uint8_t kAbsoluteMaxBrightness = 5;
+    static constexpr uint8_t kAbsoluteMaxBrightness = 10;
 
     // Per-host maximum brightness cap. set_brightness_percent above
     // clamps to this; set via DAL::apply_persisted_strip_settings()
