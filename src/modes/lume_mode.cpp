@@ -488,63 +488,12 @@ void LumeMode::on_button_event(const ButtonPressEvent& ev) {
     }
 #endif
 
-    // Btn1 short-press cycles the LED-strip brightness through
-    // 100 / 50 / 25 / 10 (per cent), persists to NVS, and applies
-    // to the driver immediately. Works on every host with a strip;
-    // a cheap no-op on hosts without one.
-    if (ev.id == ButtonId::Btn1
-        && (ev.kind == ButtonEvent::Clicked
-            || ev.kind == ButtonEvent::Pressed)
-        && hal::HAL::led_strip() != nullptr) {
-        // We accept both Clicked (StickC's M5Unified path) and
-        // Pressed (Atom's hand-rolled debouncer) so the gesture
-        // works uniformly across backends - the Atom button doesn't
-        // surface Clicked events, only Pressed/Released.
-        // Guard against firing twice on a StickC press by only
-        // acting on one of them per press; ButtonEvent::Pressed
-        // arrives first and we'd lose the Clicked-only contract.
-        // The safe rule is: act on Clicked when present, otherwise
-        // act on Pressed. The dispatch above gives us both - we use
-        // a static last-handled timestamp to debounce.
-        static uint32_t s_last_brightness_change_ms = 0;
-        const uint32_t now = millis();
-        if (now - s_last_brightness_change_ms < 200) return;
-        s_last_brightness_change_ms = now;
-
-        // Wide perceptual spread - LED brightness is logarithmic in
-        // human perception so the steps need to be big to read as
-        // distinct. 50/25/10/1 gives four clearly different settings,
-        // chosen so the operator can pick the right ceiling for the
-        // Stick's power source:
-        //    50 % = ~900 mA peak. Wall-powered Stick only (charger /
-        //           hub with real current). Browns out on a Plus2 S3
-        //           battery once master DMX > ~71.
-        //    25 % = ~450 mA peak. Safe on USB-CDC laptop; safe on a
-        //           healthy battery up to master ~142. Default pick
-        //           for mobile / demo work.
-        //    10 % = ~180 mA peak. Safe on every supply. First-install
-        //           default.
-        //     1 % = ~18 mA peak. Ambient hint, near-darkness.
-        // 100 % retired 2026-06-23 after brownout reboots on raw RGB
-        // sliders hitting 255 - max-white at 100% draws ~1.8 A peak,
-        // far past any reasonable USB / battery supply.
-        static constexpr uint8_t kLevels[] = { 50, 25, 10, 1 };
-        static constexpr size_t kLevelCount = sizeof(kLevels) / sizeof(kLevels[0]);
-
-        const uint8_t current_pct = persistence::load_strip_brightness();
-        size_t idx = 0;
-        for (size_t i = 0; i < kLevelCount; ++i) {
-            if (kLevels[i] == current_pct) { idx = i; break; }
-        }
-        const uint8_t next_pct = kLevels[(idx + 1) % kLevelCount];
-
-        persistence::save_strip_brightness(next_pct);
-        led_strip_driver_instance()->set_brightness_percent(next_pct);
-#ifdef ARDUINO
-        Serial.printf("[lume] strip brightness: %u%% -> %u%%\n",
-                      (unsigned)current_pct, (unsigned)next_pct);
-#endif
-    }
+    // Btn1 short-press brightness cycle was retired 2026-07-08 - the
+    // strip is now hard-wired to 5 % at DAL::begin so no runtime
+    // adjustment is meaningful, and on the Atom Lite the button is
+    // needed for GroupID cycling (long-press above). Restored via a
+    // per-host external-PSU cap raise + a build flag if a stage
+    // deployment ever needs live brightness control.
 }
 
 bool LumeMode::seen_recently(uint8_t src, uint8_t seq) const {

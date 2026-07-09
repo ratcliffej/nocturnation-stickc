@@ -3,6 +3,13 @@
 build/
 .cache/
 
+# Bench-captured serial logs (`pio device monitor > foo.log`). Named
+# for the host they came off; not shareable, may capture serial output
+# containing runtime state.
+*-director.log
+*-lume.log
+*.serial.log
+
 # Captured reference audio samples for the analyser test harness.
 # Large binaries with third-party content; reproduced from the capture
 # protocol in test/audio_samples/README.md rather than committed.

@@ -28,6 +28,8 @@
 
 #pragma once
 
+#include <atomic>
+
 #include "dal/dal.h"
 #include "hal/hal.h"
 
@@ -138,20 +140,34 @@ public:
     //
     // Does NOT scale the LumeMode-driven pixel-0 overlay - that's
     // system UI and stays at fixed brightness regardless of device
-    // setting. Operator owns the device value via Btn1 in Lume mode
-    // (cycles 100 / 50 / 25 / 10), persisted via NVS strip_bri.
+    // setting. Hard-wired to 5 % at DAL::apply_persisted_strip_settings
+    // 2026-07-08; operator-facing controls (Btn1 cycle, Config menu)
+    // retired the same day. Restore via a per-host external-PSU cap
+    // raise + a build-flag on kAbsoluteMaxBrightness.
     void set_brightness_percent(uint8_t pct);
     uint8_t brightness_percent() const { return brightness_pct_; }
+
+    // Fleet-wide HARD ceiling on strip brightness. Enforced on ARDUINO
+    // builds only (production hardware); native test envs bypass so
+    // existing wash / sparkle assertions can drive brightness = 100.
+    // On production, applies to every host regardless of HAL's
+    // max_strip_brightness_percent(); no code path (persistence load,
+    // Btn1 cycle, Config menu, direct API) can raise the rendered
+    // brightness above this value. Above ~10 % on a 30-pixel SK6812
+    // strip the current draw (~180 mA/pixel at peak white * 30 = ~1.8 A)
+    // exceeds every supply the fleet targets: laptop USB-CDC (~500 mA
+    // budget), Plus2 / S3 LiPo cell (~600 mA sustained), Atom Lite
+    // USB-hub (typically 500 mA). Bench-confirmed brownouts at 50 % on
+    // both S3 and Plus2 under USB-C laptop power, 2026-07-08. Change
+    // this number only in coordination with a per-host HAL cap change
+    // AND a documented external PSU expectation.
+    static constexpr uint8_t kAbsoluteMaxBrightness = 10;
 
     // Per-host maximum brightness cap. set_brightness_percent above
     // clamps to this; set via DAL::apply_persisted_strip_settings()
     // from the HAL's max_strip_brightness_percent() at mode entry.
-    //
-    // Atom Lite caps at 10 % because its power budget (200 mAh
-    // battery base + USB-hub-typical 500 mA) cannot sustain a
-    // 30-pixel SK6812 strip at 25 %+ - brownout-reboot territory.
-    // StickC Plus2 / S3 cap at 100 % (no cap) because they have a
-    // proper battery + USB-C and operator-cycle resolution is enough.
+    // Additionally clamped to kAbsoluteMaxBrightness so a mis-authored
+    // HAL returning e.g. 100 can't bypass the fleet-wide ceiling.
     void set_max_brightness_percent(uint8_t pct);
     uint8_t max_brightness_percent() const { return max_brightness_pct_; }
 
@@ -200,7 +216,18 @@ private:
     // currently rendering on it). On a pulse arrival, the CHANCE roll
     // sets started_ms = now for hits; render_frame walks each pixel
     // and clears the stamp when the envelope elapses.
-    uint32_t  pixel_pulse_started_[kMaxPixels] = {};
+    //
+    // Atomic to close a cross-core torn-read race on ESP32: send() runs
+    // on the WiFi task (LumeLedStripBinding declares can_render_in_
+    // callback = true) while render_frame() runs on the main loop. A
+    // release-store to this slot in send() publishes the accompanying
+    // current_pulse_ writes; the acquire-load in render_frame() sees
+    // them coherently. Before this, a bare `uint32_t` array let render
+    // observe the new stamp before the envelope writes had propagated -
+    // total==0 read → alpha==0 → pixel cleared → whole pulse silently
+    // dropped. Symptom was random ~1-in-5 pulse drops with no colour
+    // pattern, whole strip dark for that frame. Diagnosed 2026-07-08.
+    std::atomic<uint32_t> pixel_pulse_started_[kMaxPixels] = {};
 
     NowMsFn        clock_source_   = nullptr;
     hal::LedStrip* strip_override_ = nullptr;
@@ -242,9 +269,15 @@ private:
                                  uint8_t& out_r, uint8_t& out_g, uint8_t& out_b);
 
     // Compute the per-pixel envelope multiplier (0..1) for a pulse that
-    // started at start_ms and is now at `now`. Returns 0 when the pulse
-    // has elapsed (caller treats as "envelope done, clear the slot").
-    float pulse_envelope_fraction(uint32_t start_ms, uint32_t now) const;
+    // started at start_ms and is now at `now`. Takes the ASR fields
+    // explicitly (rather than reading current_pulse_ inside) so the
+    // caller can pass a per-render snapshot - see render_frame() for
+    // the cross-task tearing argument. Returns 0 when the pulse has
+    // elapsed (caller treats as "envelope done, clear the slot").
+    static float pulse_envelope_fraction(uint32_t start_ms, uint32_t now,
+                                          uint32_t attack_ms,
+                                          uint32_t sustain_ms,
+                                          uint32_t release_ms);
 };
 
 LedStripDriver* led_strip_driver_instance();

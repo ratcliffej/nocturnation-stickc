@@ -192,16 +192,17 @@ private:
     // LED Strip submenu items - all live. Btn1 toggles / cycles the
     // selected value through the table below in handle_led_strip:
     //   Enable      -> ON / OFF
-    //   Brightness  -> 100 / 10 / 1 %
     //   Group size  -> 6 / 12 / 24 pixels-per-CHANCE-roll
     //   Chain size  -> 10 cm (15) / 20 cm (29) / 50 cm (72) / 1 m (144) / 2 m (288)
+    // Brightness was retired 2026-07-08 - hard-wired to 5 % at DAL::begin
+    // to guarantee no code path can brownout the host under bench USB
+    // power. See dal.cpp::apply_persisted_strip_settings.
     enum class LedStripItem : uint8_t {
         Enable = 0,
-        Brightness,
         GroupSize,
         ChainSize,
     };
-    static constexpr size_t kLedStripItemCount = 4;
+    static constexpr size_t kLedStripItemCount = 3;
 
     size_t stub_item_count() const;
 

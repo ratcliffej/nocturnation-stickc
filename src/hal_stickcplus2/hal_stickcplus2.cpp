@@ -174,9 +174,13 @@ Buttons* HAL::buttons()  { return &s_buttons; }
 IMU*     HAL::imu()      { return &s_imu; }
 Battery* HAL::battery()  { return &s_battery; }
 LedStrip* HAL::led_strip() { return &s_led_strip; }
-// Plus2 has battery + USB-C supply. Operator-cycle resolution is
-// sufficient; no firmware cap.
-uint8_t HAL::max_strip_brightness_percent() { return 100; }
+// Plus2 has battery + USB-C supply, but a 30-pixel SK6812 at 50 %
+// peak white draws ~900 mA - past the USB-CDC 500 mA budget and past
+// what the Plus2 LiPo can sustain reliably. Bench-confirmed brownout
+// 2026-07-08 alongside the S3 cap. Cap at 10 % to match Atom Lite +
+// S3 (one number to remember). Operator can raise via a per-host
+// override if driving from a beefier PSU. See PR #31.
+uint8_t HAL::max_strip_brightness_percent() { return 10; }
 
 }  // namespace hal
 }  // namespace nocturnation

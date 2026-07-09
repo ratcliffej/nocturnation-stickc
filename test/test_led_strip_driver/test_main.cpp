@@ -441,7 +441,9 @@ static void test_brightness_does_not_scale_overlay(void) {
 }
 
 static void test_max_brightness_default_is_100(void) {
-    // Fresh driver instance defaults to no cap (100 %).
+    // Fresh driver instance defaults to no cap (100 %). Note: on ARDUINO
+    // builds a fleet-wide hard ceiling clamps to kAbsoluteMaxBrightness
+    // (10 %); this test runs native so the clamp is inert.
     auto* drv = led_strip_driver_instance();
     drv->set_max_brightness_percent(100);   // explicit (other tests may have lowered it)
     TEST_ASSERT_EQUAL_UINT8(100, drv->max_brightness_percent());
