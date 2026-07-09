@@ -111,7 +111,7 @@ LedStrip* HAL::led_strip() { return &s_led_strip; }
 // Hard ceiling, not default - the LedStripDriver clamps any
 // set_brightness_percent call above this. Operator can't push the
 // Atom into brownout by mis-cycling the Btn1 brightness levels.
-uint8_t HAL::max_strip_brightness_percent() { return 10; }
+uint8_t HAL::max_strip_brightness_percent() { return 5; }
 
 }  // namespace hal
 }  // namespace nocturnation

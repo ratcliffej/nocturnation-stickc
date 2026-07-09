@@ -160,7 +160,7 @@ LedStrip* HAL::led_strip() { return &s_led_strip; }
 // brownout. Cap at 10 % to match the Atom Lite so bench-flashing under
 // laptop USB is safe. Operator can raise via Config > LED Strip >
 // Chain Size context if driving from a beefier PSU. See PR #31.
-uint8_t HAL::max_strip_brightness_percent() { return 10; }
+uint8_t HAL::max_strip_brightness_percent() { return 5; }
 
 }  // namespace hal
 }  // namespace nocturnation

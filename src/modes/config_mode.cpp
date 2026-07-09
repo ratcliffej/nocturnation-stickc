@@ -1374,51 +1374,17 @@ void ConfigMode::draw() {
 // =============================================================================
 // LED Strip submenu (Epic 12)
 //
-// Brightness is the only live item for now; Enable / Group size / Repeat are
-// reserved labels that future B4-live wiring promotes to interactive. The
-// brightness cycle mirrors Btn1-in-Lume - same level table (10 / 5 / 1),
-// same NVS key (strip_bri), so toggling here vs Lume reaches the same
-// persisted value.
-//
-// Levels chosen for the worst-case 30-pixel SK6812 strip current
-// draw (RGB at 255,255,255, master at 255):
-//    10 % -> ~180 mA peak. Safe on every supply this firmware
-//             targets (Atom Lite USB, Plus2 / S3 battery + USB-CDC).
-//             Ceiling for all three hosts; see hal_*/max_strip_brightness_
-//             percent(). Any more needs a separate PSU.
-//     5 % -> ~ 90 mA peak. Comfortable-in-a-lit-room look, safe on
-//             any host power source.
-//     1 % -> ~ 18 mA peak. Ambient hint, near-darkness operation.
-//             DEFAULT for first-install devices - out-of-box behaviour
-//             can't brown out regardless of how the strip is powered.
-//
-// 50 % and 25 % were retired 2026-07-08 after bench-confirmed brownouts:
-// 50 % on a StickC S3 with USB-C laptop power crashed the ESP32-S3 and
-// caused chaotic ESP-NOW reconnect cascades. The old cycle also wrapped
-// 1 % -> 50 % on the next Btn1 press, which meant "cycle down to safe"
-// was one press away from browning out - the cycle now dead-ends at 1 %
-// with a wrap back to 10 %, so the worst-case press lands safely.
-//
-// 100 % was retired 2026-06-23 for the same reason. Devices with a
-// legacy value (50 / 25 / 100) stored in NVS get pushed to
-// kStripBrightnessLevels[0] (10 %) on the next Config-menu cycle press
-// via the fallback in cycle_strip_brightness().
+// Enable / Group size / Chain size are the live items. Brightness was
+// retired 2026-07-08: bench-confirmed brownouts (S3 at 50 %, Atom Lite
+// at 10 % on some USB-C ports) and pulse-drop chaos convinced us the
+// bench-safe ceiling had to be fleet-wide-hard-wired rather than
+// operator-settable. Rendered brightness is now fixed at 5 % via
+// DAL::apply_persisted_strip_settings; the driver's kAbsoluteMax
+// Brightness = 5 clamps any code path that tries to raise it. External
+// PSU deployments raise the cap in a per-host HAL override.
 // =============================================================================
 
 namespace {
-constexpr uint8_t kStripBrightnessLevels[] = { 10, 5, 1 };
-constexpr size_t  kStripBrightnessLevelCount =
-    sizeof(kStripBrightnessLevels) / sizeof(kStripBrightnessLevels[0]);
-
-uint8_t cycle_strip_brightness(uint8_t current_pct) {
-    for (size_t i = 0; i < kStripBrightnessLevelCount; ++i) {
-        if (kStripBrightnessLevels[i] == current_pct) {
-            return kStripBrightnessLevels[(i + 1) % kStripBrightnessLevelCount];
-        }
-    }
-    return kStripBrightnessLevels[0];
-}
-
 // Group sizes the operator can pick from. 1 / 6 / 12 / 24.
 //   1   - every pixel rolls its own CHANCE die (Tildagon ring-style
 //         fine-grain sparkle: each LED independent, matches the way
@@ -1492,13 +1458,6 @@ void ConfigMode::handle_led_strip(const ButtonPressEvent& ev) {
                 DAL::set_driver_enabled("led-strip", next);
                 break;
             }
-            case LedStripItem::Brightness: {
-                const uint8_t current = persistence::load_strip_brightness();
-                const uint8_t next    = cycle_strip_brightness(current);
-                persistence::save_strip_brightness(next);
-                dal::led_strip_driver_instance()->set_brightness_percent(next);
-                break;
-            }
             case LedStripItem::GroupSize: {
                 const uint8_t current = persistence::load_strip_group_size();
                 const uint8_t next    = cycle_strip_group_size(current);
@@ -1523,17 +1482,15 @@ void ConfigMode::draw_led_strip() {
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         10, 5, "LED Strip", WHITE, BLACK, 2});
 
-    char ena[28], bri[28], grp[28], chn[28];
+    char ena[28], grp[28], chn[28];
     std::snprintf(ena, sizeof(ena), "Enable: %s",
                   persistence::load_strip_enabled() ? "ON" : "OFF");
-    std::snprintf(bri, sizeof(bri), "Brightness: %u%%",
-                  (unsigned)persistence::load_strip_brightness());
     std::snprintf(grp, sizeof(grp), "Group size: %u",
                   (unsigned)persistence::load_strip_group_size());
     std::snprintf(chn, sizeof(chn), "Chain: %s",
                   strip_chain_size_label(persistence::load_strip_chain_size()));
 
-    const char* lines[kLedStripItemCount] = { ena, bri, grp, chn };
+    const char* lines[kLedStripItemCount] = { ena, grp, chn };
     for (size_t i = 0; i < kLedStripItemCount; ++i) {
         const bool sel = (i == sub_selected_);
         char buf[40];

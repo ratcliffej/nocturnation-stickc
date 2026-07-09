@@ -140,8 +140,10 @@ public:
     //
     // Does NOT scale the LumeMode-driven pixel-0 overlay - that's
     // system UI and stays at fixed brightness regardless of device
-    // setting. Operator owns the device value via Btn1 in Lume mode
-    // (cycles 100 / 50 / 25 / 10), persisted via NVS strip_bri.
+    // setting. Hard-wired to 5 % at DAL::apply_persisted_strip_settings
+    // 2026-07-08; operator-facing controls (Btn1 cycle, Config menu)
+    // retired the same day. Restore via a per-host external-PSU cap
+    // raise + a build-flag on kAbsoluteMaxBrightness.
     void set_brightness_percent(uint8_t pct);
     uint8_t brightness_percent() const { return brightness_pct_; }
 
@@ -159,7 +161,7 @@ public:
     // both S3 and Plus2 under USB-C laptop power, 2026-07-08. Change
     // this number only in coordination with a per-host HAL cap change
     // AND a documented external PSU expectation.
-    static constexpr uint8_t kAbsoluteMaxBrightness = 10;
+    static constexpr uint8_t kAbsoluteMaxBrightness = 5;
 
     // Per-host maximum brightness cap. set_brightness_percent above
     // clamps to this; set via DAL::apply_persisted_strip_settings()

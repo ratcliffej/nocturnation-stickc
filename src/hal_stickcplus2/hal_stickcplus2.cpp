@@ -180,7 +180,7 @@ LedStrip* HAL::led_strip() { return &s_led_strip; }
 // 2026-07-08 alongside the S3 cap. Cap at 10 % to match Atom Lite +
 // S3 (one number to remember). Operator can raise via a per-host
 // override if driving from a beefier PSU. See PR #31.
-uint8_t HAL::max_strip_brightness_percent() { return 10; }
+uint8_t HAL::max_strip_brightness_percent() { return 5; }
 
 }  // namespace hal
 }  // namespace nocturnation
