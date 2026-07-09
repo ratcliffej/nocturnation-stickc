@@ -28,6 +28,8 @@
 
 #pragma once
 
+#include <atomic>
+
 #include "dal/dal.h"
 #include "hal/hal.h"
 
@@ -200,7 +202,18 @@ private:
     // currently rendering on it). On a pulse arrival, the CHANCE roll
     // sets started_ms = now for hits; render_frame walks each pixel
     // and clears the stamp when the envelope elapses.
-    uint32_t  pixel_pulse_started_[kMaxPixels] = {};
+    //
+    // Atomic to close a cross-core torn-read race on ESP32: send() runs
+    // on the WiFi task (LumeLedStripBinding declares can_render_in_
+    // callback = true) while render_frame() runs on the main loop. A
+    // release-store to this slot in send() publishes the accompanying
+    // current_pulse_ writes; the acquire-load in render_frame() sees
+    // them coherently. Before this, a bare `uint32_t` array let render
+    // observe the new stamp before the envelope writes had propagated -
+    // total==0 read → alpha==0 → pixel cleared → whole pulse silently
+    // dropped. Symptom was random ~1-in-5 pulse drops with no colour
+    // pattern, whole strip dark for that frame. Diagnosed 2026-07-08.
+    std::atomic<uint32_t> pixel_pulse_started_[kMaxPixels] = {};
 
     NowMsFn        clock_source_   = nullptr;
     hal::LedStrip* strip_override_ = nullptr;

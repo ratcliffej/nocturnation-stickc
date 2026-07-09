@@ -131,8 +131,10 @@ void LedStripDriver::set_pixel_count(size_t n) {
     // invisible (the render loop only walks up to pixel_count()) but
     // we clear them defensively so a future resize doesn't surface
     // a half-finished envelope on a pixel that wasn't being driven.
+    // Relaxed store: set_pixel_count is called from the main loop
+    // (Config menu / mode enter); no cross-core publish required.
     for (size_t i = n; i < kMaxPixels; ++i) {
-        pixel_pulse_started_[i] = 0;
+        pixel_pulse_started_[i].store(0, std::memory_order_relaxed);
     }
 }
 
@@ -269,13 +271,18 @@ bool LedStripDriver::send(uint8_t /*group_id*/, const RgbPulseEvent& ev) {
     const uint32_t now        = now_ms();
     const size_t   walk       = (pcount < kMaxPixels) ? pcount : kMaxPixels;
     const size_t   group      = (group_size_ == 0) ? 1u : group_size_;
+    // Release-store publishes the current_pulse_ envelope + colour
+    // writes above to any core observing this slot via acquire-load.
+    // See the pixel_pulse_started_ member comment for the cross-core
+    // race context. All stamps in this loop are release; render_frame's
+    // per-pixel acquire load pairs with each individually.
     for (size_t i = 0; i < walk; i += group) {
         const bool hit = (next_random() % 100) < chance_pct;
         if (!hit) continue;
         const size_t end = (i + group < walk) ? (i + group) : walk;
         const uint32_t stamp = now ? now : 1;     // 0 reserved as inactive sentinel
         for (size_t p = i; p < end; ++p) {
-            pixel_pulse_started_[p] = stamp;
+            pixel_pulse_started_[p].store(stamp, std::memory_order_release);
         }
     }
     return true;
@@ -395,15 +402,34 @@ void LedStripDriver::render_frame() {
     const float  bri_mul = static_cast<float>(brightness_pct_) / 100.0f;
     for (size_t i = 0; i < walk; ++i) {
         uint8_t r = base_r, g = base_g, b = base_b;
-        if (pixel_pulse_started_[i] != 0) {
-            const float alpha = pulse_envelope_fraction(
-                pixel_pulse_started_[i], now);
-            if (alpha <= 0.0f) {
-                pixel_pulse_started_[i] = 0;
-            } else {
-                r = lerp_u8(base_r, current_pulse_.r, alpha);
-                g = lerp_u8(base_g, current_pulse_.g, alpha);
-                b = lerp_u8(base_b, current_pulse_.b, alpha);
+        // Acquire-load pairs with the release-store in send(): any non-
+        // zero stamp we observe implies the current_pulse_ envelope +
+        // colour writes preceding the store are visible here. Reading
+        // envelope fields ordinarily (below) is safe under that guarantee.
+        const uint32_t stamp =
+            pixel_pulse_started_[i].load(std::memory_order_acquire);
+        if (stamp != 0) {
+            // Belt-and-braces defence in depth: if the envelope reads as
+            // total==0 despite a non-zero stamp, treat as an unpublished
+            // torn read (should be impossible with the acquire above)
+            // and skip render / skip clear so a subsequent tick has a
+            // chance to render properly. Cheap: one add per pixel.
+            const uint32_t total = current_pulse_.attack_ms
+                                   + current_pulse_.sustain_ms
+                                   + current_pulse_.release_ms;
+            if (total > 0) {
+                const float alpha = pulse_envelope_fraction(stamp, now);
+                if (alpha <= 0.0f) {
+                    // Legitimately past envelope tail. Relaxed store OK -
+                    // clearing an inactive slot is idempotent; no consumer
+                    // depends on a happens-before edge here.
+                    pixel_pulse_started_[i].store(0,
+                                                    std::memory_order_relaxed);
+                } else {
+                    r = lerp_u8(base_r, current_pulse_.r, alpha);
+                    g = lerp_u8(base_g, current_pulse_.g, alpha);
+                    b = lerp_u8(base_b, current_pulse_.b, alpha);
+                }
             }
         }
         strip->set_pixel(i,
