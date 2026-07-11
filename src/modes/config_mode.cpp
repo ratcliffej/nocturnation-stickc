@@ -1565,14 +1565,15 @@ void ConfigMode::draw() {
 // =============================================================================
 // LED Strip submenu (Epic 12)
 //
-// Enable / Group size / Chain size are the live items. Brightness was
-// retired 2026-07-08: bench-confirmed brownouts (S3 at 50 %, Atom Lite
-// at 10 % on some USB-C ports) and pulse-drop chaos convinced us the
-// bench-safe ceiling had to be fleet-wide-hard-wired rather than
-// operator-settable. Rendered brightness is now fixed at 5 % via
-// DAL::apply_persisted_strip_settings; the driver's kAbsoluteMax
-// Brightness = 5 clamps any code path that tries to raise it. External
-// PSU deployments raise the cap in a per-host HAL override.
+// Enable / Group size / Chain size / Brightness are all live. Brightness
+// was reinstated 2026-07-11 after the M5Stack TypeC2Grove Unit (U151) Y
+// adapter landed - that splitter routes USB-C 5V directly to the
+// strip's V pin (Port 3) while data + device power feed the Stick
+// (Port 2), bypassing the device's regulator that used to be the
+// brownout bottleneck. The cycle exposes {5, 10, 25, 50} % on Plus2 /
+// S3; the 25 and 50 tiers are labelled "(Ext Grove Pwr)" because they
+// require the Y adapter. Atom Lite has no Config menu (no LCD) and
+// stays HAL-capped at 10 %.
 // =============================================================================
 
 namespace {
@@ -1633,6 +1634,33 @@ const char* strip_chain_size_label(uint16_t pixels) {
     }
     return "?";
 }
+
+// Brightness cycle: 5 -> 10 -> 25 -> 50 -> wrap. 5 % and 10 % are
+// safe on internal battery / device-USB power; 25 % and 50 % require
+// the M5Stack TypeC2Grove Unit (U151) Y adapter so the strip draws
+// current directly off USB-C, not through the device's regulator.
+constexpr uint8_t kStripBrightnessLevels[] = { 5, 10, 25, 50 };
+constexpr size_t  kStripBrightnessLevelCount =
+    sizeof(kStripBrightnessLevels) / sizeof(kStripBrightnessLevels[0]);
+
+// Whether a given brightness value requires external Grove Y USB power.
+// True for the 25 and 50 % tiers - anything above the safe internal-
+// battery envelope of ~10 %.
+bool strip_brightness_needs_ext_power(uint8_t pct) {
+    return pct > 10;
+}
+
+uint8_t cycle_strip_brightness(uint8_t current) {
+    for (size_t i = 0; i < kStripBrightnessLevelCount; ++i) {
+        if (kStripBrightnessLevels[i] == current) {
+            return kStripBrightnessLevels[(i + 1) % kStripBrightnessLevelCount];
+        }
+    }
+    // Current value isn't a canonical menu step (e.g. NVS carried
+    // over an odd number). Snap to the lowest safe step so the very
+    // next A-click enters a known cycle position.
+    return kStripBrightnessLevels[0];
+}
 }  // namespace
 
 void ConfigMode::handle_led_strip(const ButtonPressEvent& ev) {
@@ -1663,6 +1691,18 @@ void ConfigMode::handle_led_strip(const ButtonPressEvent& ev) {
                 dal::led_strip_driver_instance()->set_pixel_count(next);
                 break;
             }
+            case LedStripItem::Brightness: {
+                const uint8_t current = persistence::load_strip_brightness();
+                const uint8_t next    = cycle_strip_brightness(current);
+                persistence::save_strip_brightness(next);
+                // Push the new value through set_brightness_percent so
+                // the HAL cap + kAbsoluteMaxBrightness clamps apply.
+                // On Atom Lite this menu is unreachable (no LCD), but
+                // the belt-and-braces cap in the driver + HAL keeps
+                // Atom safe if someone reaches here via a bench route.
+                dal::led_strip_driver_instance()->set_brightness_percent(next);
+                break;
+            }
         }
         draw();
     }
@@ -1673,15 +1713,27 @@ void ConfigMode::draw_led_strip() {
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         10, 5, "LED Strip", WHITE, BLACK, 2});
 
-    char ena[28], grp[28], chn[28];
+    // Row labels. "Bright: NN %(Ext)" is deliberately compact - the
+    // 20-column limit at size 2 (240 px / 12 px per char) rules out
+    // the full "(Ext Grove Pwr)" phrasing on the row itself. The
+    // sub-line below the item list expands the abbreviation.
+    char ena[28], grp[28], chn[28], bri[28];
     std::snprintf(ena, sizeof(ena), "Enable: %s",
                   persistence::load_strip_enabled() ? "ON" : "OFF");
     std::snprintf(grp, sizeof(grp), "Group size: %u",
                   (unsigned)persistence::load_strip_group_size());
     std::snprintf(chn, sizeof(chn), "Chain: %s",
                   strip_chain_size_label(persistence::load_strip_chain_size()));
+    const uint8_t bri_pct = persistence::load_strip_brightness();
+    if (strip_brightness_needs_ext_power(bri_pct)) {
+        std::snprintf(bri, sizeof(bri), "Bright: %u%%(Ext)",
+                      (unsigned)bri_pct);
+    } else {
+        std::snprintf(bri, sizeof(bri), "Bright: %u %%",
+                      (unsigned)bri_pct);
+    }
 
-    const char* lines[kLedStripItemCount] = { ena, grp, chn };
+    const char* lines[kLedStripItemCount] = { ena, grp, chn, bri };
     for (size_t i = 0; i < kLedStripItemCount; ++i) {
         const bool sel = (i == sub_selected_);
         char buf[40];
@@ -1691,6 +1743,14 @@ void ConfigMode::draw_led_strip() {
             10, 30 + (int)i * 16, buf,
             sel ? YELLOW : WHITE, BLACK, 2});
     }
+
+    // Expansion line for the "(Ext)" tag on the Brightness row. Placed
+    // below the last menu item at size 1 so it doesn't compete with
+    // the highlighted row's colour.
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 30 + (int)kLedStripItemCount * 16,
+        "(Ext) = Ext Grove Pwr", WHITE, BLACK, 1});
+
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         10, 122, "B: cycle  A: select  B-hold: back",
         WHITE, BLACK, 1});

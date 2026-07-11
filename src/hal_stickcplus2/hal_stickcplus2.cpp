@@ -177,10 +177,13 @@ LedStrip* HAL::led_strip() { return &s_led_strip; }
 // Plus2 has battery + USB-C supply, but a 30-pixel SK6812 at 50 %
 // peak white draws ~900 mA - past the USB-CDC 500 mA budget and past
 // what the Plus2 LiPo can sustain reliably. Bench-confirmed brownout
-// 2026-07-08 alongside the S3 cap. Cap at 10 % to match Atom Lite +
-// S3 (one number to remember). Operator can raise via a per-host
-// override if driving from a beefier PSU. See PR #31.
-uint8_t HAL::max_strip_brightness_percent() { return 10; }
+// Cap at 50 % for Plus2 - matches the fleet ceiling raised on
+// 2026-07-11 once the M5Stack TypeC2Grove Unit (U151) Y adapter made
+// external Grove Y USB power for the strip a first-class option.
+// Config > Connectivity > LED Strip > Brightness exposes {5, 10, 25,
+// 50}; the 25 and 50 tiers require the Y adapter (labelled in the
+// menu). Internal-battery / device-USB power stays safe at 5-10 %.
+uint8_t HAL::max_strip_brightness_percent() { return 50; }
 
 }  // namespace hal
 }  // namespace nocturnation

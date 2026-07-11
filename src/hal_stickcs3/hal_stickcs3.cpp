@@ -157,10 +157,13 @@ LedStrip* HAL::led_strip() { return &s_led_strip; }
 // S3 has battery + USB-C supply, but a laptop USB-C port typically
 // delivers only ~900 mA, and a 30-pixel SK6812 at 50 % draws ~900 mA
 // on peak white before the ESP32-S3 module's own ~300 mA - reliable
-// brownout. Cap at 10 % to match the Atom Lite so bench-flashing under
-// laptop USB is safe. Operator can raise via Config > LED Strip >
-// Chain Size context if driving from a beefier PSU. See PR #31.
-uint8_t HAL::max_strip_brightness_percent() { return 10; }
+// Cap at 50 % for S3 - matches the fleet ceiling raised on 2026-07-11
+// once the M5Stack TypeC2Grove Unit (U151) Y adapter made external
+// Grove Y USB power for the strip a first-class option. Config >
+// Connectivity > LED Strip > Brightness exposes {5, 10, 25, 50}; the
+// 25 and 50 tiers require the Y adapter (labelled in the menu).
+// Internal-battery / device-USB power stays safe at 5-10 %.
+uint8_t HAL::max_strip_brightness_percent() { return 50; }
 
 }  // namespace hal
 }  // namespace nocturnation
