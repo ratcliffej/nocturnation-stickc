@@ -1288,12 +1288,17 @@ void ConfigMode::draw_scan_channels() {
         10, 28, status, WHITE, BLACK, 1});
 
     // Bar-chart geometry - tuned for the Plus2 landscape 240x135 LCD;
-    // fits S3 128x128 with a bit of right-margin room to spare.
-    constexpr int kBarBaseY  = 100;    // bottom of every bar
-    constexpr int kBarMaxH   =  56;    // tallest bar
-    constexpr int kBarWidth  =  14;
-    constexpr int kBarGap    =   2;
-    constexpr int kBarXStart =  16;
+    // fits S3 128x128 with a bit of right-margin room to spare. Layout
+    // top-to-bottom: title -> status -> AP-count row -> bars ->
+    // channel-number row -> footer.
+    constexpr int kBarBaseY   = 100;   // bottom of every bar
+    constexpr int kBarMaxH    =  48;   // tallest bar (reduced from 56 to
+                                       // clear the AP-count row above)
+    constexpr int kBarWidth   =  14;
+    constexpr int kBarGap     =   2;
+    constexpr int kBarXStart  =  16;
+    constexpr int kCountRowY  =  40;   // AP-count numerals above bars
+    constexpr int kLabelRowY  = kBarBaseY + 4;   // channel numbers below
 
     // Find the maximum AP count across all channels so heights can
     // scale to fill kBarMaxH. Zero-count channels draw a 1 px baseline
@@ -1309,9 +1314,7 @@ void ConfigMode::draw_scan_channels() {
         const uint8_t count = wifi_scanner_.channel(ch).ap_count;
 
         int h;
-        if (count == 0) {
-            h = 1;
-        } else if (max_count == 0) {
+        if (count == 0 || max_count == 0) {
             h = 1;
         } else {
             h = (static_cast<int>(count) * kBarMaxH) / max_count;
@@ -1326,17 +1329,25 @@ void ConfigMode::draw_scan_channels() {
 
         DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
             x, y, kBarWidth, h, colour});
-    }
 
-    // Channel-number ticks under the {1, 6, 11} anchors so the operator
-    // can orient the bar chart without rendering all 13 labels.
-    static constexpr uint8_t kAnchors[3] = {1, 6, 11};
-    for (uint8_t anchor : kAnchors) {
-        const int x = kBarXStart + (anchor - 1) * (kBarWidth + kBarGap);
-        char lbl[4];
-        std::snprintf(lbl, sizeof(lbl), "%u", static_cast<unsigned>(anchor));
+        // AP-count numeral above the bar, colour-matched so the
+        // highlighted channels' counts read at a glance. Size-1 chars
+        // are ~6 px wide; centre the label over the 14 px bar.
+        char cbuf[4];
+        std::snprintf(cbuf, sizeof(cbuf), "%u", static_cast<unsigned>(count));
+        const int cw = static_cast<int>(std::strlen(cbuf)) * 6;
+        const int cx = x + (kBarWidth - cw) / 2;
         DAL::fire_display_show_text("local", DisplayShowTextEvent{
-            x + (kBarWidth / 2) - 3, kBarBaseY + 4, lbl, WHITE, BLACK, 1});
+            cx, kCountRowY, cbuf, colour, BLACK, 1});
+
+        // Channel number below the bar, same colour so a highlighted
+        // bar's channel ID is unambiguous.
+        char lbuf[4];
+        std::snprintf(lbuf, sizeof(lbuf), "%u", static_cast<unsigned>(ch));
+        const int lw = static_cast<int>(std::strlen(lbuf)) * 6;
+        const int lx = x + (kBarWidth - lw) / 2;
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            lx, kLabelRowY, lbuf, colour, BLACK, 1});
     }
 
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
