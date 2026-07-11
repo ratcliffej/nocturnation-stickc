@@ -89,6 +89,8 @@ void ConfigMode::enter() {
     level_tuning_audio_active_ = false;
     dir_id_edit_active_ = false;
     dir_id_edit_cursor_ = DirIdCursor::HiNibble;
+    scan_phase_         = ScanPhase::Idle;
+    wifi_scanner_.reset();
     draw();
 }
 
@@ -136,6 +138,11 @@ void ConfigMode::loop_tick() {
             draw();
         }
     }
+    // Wi-Fi channel scan: two-tick lifecycle so "Scanning..." paints
+    // before the blocking scan call kicks off.
+    if (level_ == Level::Sub && active_sub_ == SubMenu::EspNow) {
+        run_scan_if_needed();
+    }
 }
 
 void ConfigMode::on_button_event(const ButtonPressEvent& ev) {
@@ -164,6 +171,17 @@ void ConfigMode::on_button_event(const ButtonPressEvent& ev) {
             // no save action is needed here.
             dir_id_edit_active_ = false;
             dir_id_edit_cursor_ = DirIdCursor::HiNibble;
+            draw();
+        } else if (level_ == Level::Sub
+                && active_sub_ == SubMenu::EspNow
+                && scan_phase_ != ScanPhase::Idle) {
+            // Wi-Fi scan drill-down exits back to the EspNow menu.
+            // B-hold is honoured in Done/Failed phases; during
+            // Requested/Running the caller can still press it but
+            // the in-flight scan will complete on the next loop_tick
+            // (WiFi.scanNetworks is blocking and non-cancellable).
+            scan_phase_ = ScanPhase::Idle;
+            wifi_scanner_.reset();
             draw();
         } else if (level_ == Level::Sub && active_picker_ != SubMenu::None) {
             // Came in via a picker - return to the picker, not Top.
@@ -962,6 +980,11 @@ void ConfigMode::handle_espnow(const ButtonPressEvent& ev) {
         handle_dir_id_edit(ev);
         return;
     }
+    // Same pattern for the Wi-Fi scan drill-down.
+    if (scan_phase_ != ScanPhase::Idle) {
+        handle_scan_channels(ev);
+        return;
+    }
 
     if (ev.id == ButtonId::Btn2) {
         sub_selected_ = (sub_selected_ + 1) % kEspNowFunctionalItemCount;
@@ -990,6 +1013,14 @@ void ConfigMode::handle_espnow(const ButtonPressEvent& ev) {
             case EspNowItem::SlaveRepeat:
                 persistence::save_lume_repeat_enabled(
                     !persistence::load_lume_repeat_enabled());
+                break;
+            case EspNowItem::ScanChannels:
+                // Kick off the scan workflow. The Requested->Running
+                // transition happens in loop_tick so the "Scanning..."
+                // splash paints one frame before WiFi.scanNetworks
+                // blocks the main task for ~5 s.
+                scan_phase_ = ScanPhase::Requested;
+                wifi_scanner_.reset();
                 break;
         }
         // New value applies on next Director / LumeMode enter().
@@ -1065,6 +1096,10 @@ void ConfigMode::draw_espnow() {
         draw_dir_id_edit();
         return;
     }
+    if (scan_phase_ != ScanPhase::Idle) {
+        draw_scan_channels();
+        return;
+    }
     DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         10, 5, "ESP-NOW", WHITE, BLACK, 2});
@@ -1073,6 +1108,7 @@ void ConfigMode::draw_espnow() {
     char id_line[28];
     char s_line[28];
     char r_line[28];
+    const char* sc_line = "Scan channels";
     std::snprintf(m_line, sizeof(m_line), "Director: %s",
                   director_channel_label(persistence::load_director_channel()));
     // DirectorID is the persisted Performance-range id (channel 11).
@@ -1086,7 +1122,7 @@ void ConfigMode::draw_espnow() {
     std::snprintf(r_line, sizeof(r_line), "Repeat:   %s",
                   persistence::load_lume_repeat_enabled() ? "ON" : "OFF");
     const char* lines[kEspNowFunctionalItemCount] = {
-        m_line, id_line, s_line, r_line };
+        m_line, id_line, s_line, r_line, sc_line };
 
     constexpr int  kRowY0      = 30;
     const size_t   max_visible = static_cast<size_t>(
@@ -1161,6 +1197,161 @@ void ConfigMode::draw_dir_id_edit() {
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         10, 122, "A: change  B: next  B-hold: back",
         WHITE, BLACK, 1});
+}
+
+// -------------------------------------------------------------------------
+// Wi-Fi channel scanner drill-down (drives dal::WifiScanner).
+//
+// UX contract:
+//   Requested -> "Scanning..." splash paints this frame; next tick calls
+//                the blocking WiFi.scanNetworks (~5 s freeze).
+//   Running   -> should be visible for at most one frame in practice;
+//                acts as the scan-in-progress phase for run_scan_if_needed.
+//   Done      -> 13 vertical bars (per-channel AP count), current ESP-NOW
+//                channel highlighted yellow, recommended channel green.
+//   Failed    -> error text with a "A: retry" hint.
+// -------------------------------------------------------------------------
+
+void ConfigMode::handle_scan_channels(const dal::ButtonPressEvent& ev) {
+    if (ev.id == ButtonId::Btn1) {
+        // Rescan only when the scan is fully idle at Done/Failed;
+        // ignore Btn1 while a scan is mid-flight so the operator
+        // can't queue a re-entry into WiFi.scanNetworks.
+        if (scan_phase_ == ScanPhase::Done
+         || scan_phase_ == ScanPhase::Failed) {
+            scan_phase_ = ScanPhase::Requested;
+            wifi_scanner_.reset();
+            draw();
+        }
+    }
+    // Btn2 has no meaning inside the workflow. B-hold is handled by
+    // on_button_event as the workflow-exit path.
+}
+
+void ConfigMode::run_scan_if_needed() {
+    // Two-tick lifecycle to guarantee "Scanning..." paints one frame
+    // before the blocking scan call kicks off.
+    switch (scan_phase_) {
+        case ScanPhase::Requested:
+            scan_phase_ = ScanPhase::Running;
+            return;
+        case ScanPhase::Running: {
+            const bool ok = wifi_scanner_.scan(300);
+            scan_phase_ = ok ? ScanPhase::Done : ScanPhase::Failed;
+            draw();
+            return;
+        }
+        default:
+            return;
+    }
+}
+
+void ConfigMode::draw_scan_channels() {
+    DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 5, "Wi-Fi Scan", WHITE, BLACK, 2});
+
+    if (scan_phase_ == ScanPhase::Requested
+     || scan_phase_ == ScanPhase::Running) {
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 40, "Scanning...", YELLOW, BLACK, 2});
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 68, "Radio offline ~5 s.", WHITE, BLACK, 1});
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 82, "Buttons unresponsive during", WHITE, BLACK, 1});
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 94, "the scan.", WHITE, BLACK, 1});
+        return;
+    }
+
+    if (scan_phase_ == ScanPhase::Failed) {
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 40, "Scan failed", YELLOW, BLACK, 2});
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 68, "WiFi driver rejected the", WHITE, BLACK, 1});
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 80, "scan request.", WHITE, BLACK, 1});
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, 122, "A: retry   B-hold: back", WHITE, BLACK, 1});
+        return;
+    }
+
+    // Done: draw the 13-channel bar chart.
+    const uint8_t now_ch = persistence::load_director_channel();
+    const uint8_t rec_ch = wifi_scanner_.recommend_channel();
+
+    char status[40];
+    std::snprintf(status, sizeof(status), "Now: ch %-3u REC: ch %u",
+                  static_cast<unsigned>(now_ch),
+                  static_cast<unsigned>(rec_ch));
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 28, status, WHITE, BLACK, 1});
+
+    // Bar-chart geometry - tuned for the Plus2 landscape 240x135 LCD;
+    // fits S3 128x128 with a bit of right-margin room to spare. Layout
+    // top-to-bottom: title -> status -> AP-count row -> bars ->
+    // channel-number row -> footer.
+    constexpr int kBarBaseY   = 100;   // bottom of every bar
+    constexpr int kBarMaxH    =  48;   // tallest bar (reduced from 56 to
+                                       // clear the AP-count row above)
+    constexpr int kBarWidth   =  14;
+    constexpr int kBarGap     =   2;
+    constexpr int kBarXStart  =  16;
+    constexpr int kCountRowY  =  40;   // AP-count numerals above bars
+    constexpr int kLabelRowY  = kBarBaseY + 4;   // channel numbers below
+
+    // Find the maximum AP count across all channels so heights can
+    // scale to fill kBarMaxH. Zero-count channels draw a 1 px baseline
+    // so the bar area doesn't look empty when a channel is unseen.
+    uint8_t max_count = 0;
+    for (uint8_t ch = 1; ch <= 13; ++ch) {
+        const uint8_t c = wifi_scanner_.channel(ch).ap_count;
+        if (c > max_count) max_count = c;
+    }
+
+    for (uint8_t ch = 1; ch <= 13; ++ch) {
+        const int x = kBarXStart + (ch - 1) * (kBarWidth + kBarGap);
+        const uint8_t count = wifi_scanner_.channel(ch).ap_count;
+
+        int h;
+        if (count == 0 || max_count == 0) {
+            h = 1;
+        } else {
+            h = (static_cast<int>(count) * kBarMaxH) / max_count;
+            if (h < 2) h = 2;
+        }
+        const int y = kBarBaseY - h;
+
+        uint16_t colour;
+        if (ch == rec_ch)      colour = GREEN;
+        else if (ch == now_ch) colour = YELLOW;
+        else                   colour = WHITE;
+
+        DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
+            x, y, kBarWidth, h, colour});
+
+        // AP-count numeral above the bar, colour-matched so the
+        // highlighted channels' counts read at a glance. Size-1 chars
+        // are ~6 px wide; centre the label over the 14 px bar.
+        char cbuf[4];
+        std::snprintf(cbuf, sizeof(cbuf), "%u", static_cast<unsigned>(count));
+        const int cw = static_cast<int>(std::strlen(cbuf)) * 6;
+        const int cx = x + (kBarWidth - cw) / 2;
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            cx, kCountRowY, cbuf, colour, BLACK, 1});
+
+        // Channel number below the bar, same colour so a highlighted
+        // bar's channel ID is unambiguous.
+        char lbuf[4];
+        std::snprintf(lbuf, sizeof(lbuf), "%u", static_cast<unsigned>(ch));
+        const int lw = static_cast<int>(std::strlen(lbuf)) * 6;
+        const int lx = x + (kBarWidth - lw) / 2;
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            lx, kLabelRowY, lbuf, colour, BLACK, 1});
+    }
+
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 122, "A: rescan  B-hold: back", WHITE, BLACK, 1});
 }
 
 // -------------------------------------------------------------------------

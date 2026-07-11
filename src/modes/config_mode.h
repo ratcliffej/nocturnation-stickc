@@ -29,6 +29,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "dal/drivers/wifi_scanner.h"
 #include "modes/mode_machine.h"
 
 namespace nocturnation {
@@ -315,8 +316,31 @@ private:
         DirectorId,
         SlaveChannel,
         SlaveRepeat,
+        ScanChannels,
     };
-    static constexpr size_t kEspNowFunctionalItemCount = 4;
+    static constexpr size_t kEspNowFunctionalItemCount = 5;
+
+    // Wi-Fi channel scanner workflow, entered from EspNow > Scan
+    // channels. Blocks the radio for ~5 s while WiFi.scanNetworks runs
+    // across 13 channels. Two-tick lifecycle so the "Scanning..."
+    // message paints BEFORE the blocking call starts:
+    //   Requested  -> next loop_tick draws "Scanning..." then flips to Running
+    //   Running    -> next loop_tick calls scan(), transitions to Done/Failed
+    //   Done       -> bars visible; Btn1 restarts scan (back to Requested)
+    //   Failed     -> error message; Btn1 retries
+    enum class ScanPhase : uint8_t {
+        Idle = 0,
+        Requested,
+        Running,
+        Done,
+        Failed,
+    };
+    ScanPhase       scan_phase_ = ScanPhase::Idle;
+    dal::WifiScanner wifi_scanner_;
+
+    void handle_scan_channels(const dal::ButtonPressEvent& ev);
+    void draw_scan_channels();
+    void run_scan_if_needed();
 
     // DirectorId hex-edit sub-state (entered from EspNow menu by
     // A-click on the DirectorId row). Three cursor positions cycled
