@@ -140,10 +140,13 @@ public:
     //
     // Does NOT scale the LumeMode-driven pixel-0 overlay - that's
     // system UI and stays at fixed brightness regardless of device
-    // setting. Hard-wired to 5 % at DAL::apply_persisted_strip_settings
-    // 2026-07-08; operator-facing controls (Btn1 cycle, Config menu)
-    // retired the same day. Restore via a per-host external-PSU cap
-    // raise + a build-flag on kAbsoluteMaxBrightness.
+    // setting. NVS-persisted via persistence::load_strip_brightness();
+    // applied at mode entry through DAL::apply_persisted_strip_settings.
+    // Config > Connectivity > LED Strip > Brightness cycles the
+    // operator-visible values {5, 10, 25, 50} on Plus2 / S3; the 25 and
+    // 50 tiers require external Grove Y power (M5Stack TypeC2Grove Unit
+    // U151) so the strip's V-rail comes off USB-C rather than the
+    // device's regulator. Atom Lite has no menu and is HAL-capped at 10.
     void set_brightness_percent(uint8_t pct);
     uint8_t brightness_percent() const { return brightness_pct_; }
 
@@ -153,15 +156,24 @@ public:
     // On production, applies to every host regardless of HAL's
     // max_strip_brightness_percent(); no code path (persistence load,
     // Btn1 cycle, Config menu, direct API) can raise the rendered
-    // brightness above this value. Above ~10 % on a 30-pixel SK6812
-    // strip the current draw (~180 mA/pixel at peak white * 30 = ~1.8 A)
-    // exceeds every supply the fleet targets: laptop USB-CDC (~500 mA
-    // budget), Plus2 / S3 LiPo cell (~600 mA sustained), Atom Lite
-    // USB-hub (typically 500 mA). Bench-confirmed brownouts at 50 % on
-    // both S3 and Plus2 under USB-C laptop power, 2026-07-08. Change
-    // this number only in coordination with a per-host HAL cap change
-    // AND a documented external PSU expectation.
-    static constexpr uint8_t kAbsoluteMaxBrightness = 10;
+    // brightness above this value.
+    //
+    // Raised 10 -> 50 on 2026-07-11 once the M5Stack TypeC2Grove Unit
+    // (U151) landed - that Y adapter takes USB-C 5V straight to the
+    // strip's V pin, bypassing the device's regulator, so the 10 %
+    // brownout ceiling on internal-battery / device-USB power no
+    // longer bounds the strip. Per-host HAL caps still enforce the
+    // per-device envelope: Plus2 + S3 raise to 50 (matches this new
+    // ceiling), Atom Lite stays at 10 (no Config menu to reach
+    // higher values, safest default for standalone deployments).
+    //
+    // The 25 and 50 tiers on the Config menu are labelled "(Ext Grove
+    // Pwr)" because they require the Y adapter; internal-battery /
+    // direct-USB-to-device power will brown out at those levels on
+    // a 29-pixel SK6812 chain. Bench evidence 2026-07-08 to 2026-07-11.
+    // Change this number only in coordination with a per-host HAL cap
+    // change AND a documented external-power expectation.
+    static constexpr uint8_t kAbsoluteMaxBrightness = 50;
 
     // Per-host maximum brightness cap. set_brightness_percent above
     // clamps to this; set via DAL::apply_persisted_strip_settings()

@@ -195,15 +195,22 @@ private:
     //   Enable      -> ON / OFF
     //   Group size  -> 6 / 12 / 24 pixels-per-CHANCE-roll
     //   Chain size  -> 10 cm (15) / 20 cm (29) / 50 cm (72) / 1 m (144) / 2 m (288)
-    // Brightness was retired 2026-07-08 - hard-wired to 5 % at DAL::begin
-    // to guarantee no code path can brownout the host under bench USB
-    // power. See dal.cpp::apply_persisted_strip_settings.
+    //   Brightness  -> 5 / 10 / 25 (Ext) / 50 (Ext) %
+    // Brightness was reinstated 2026-07-11 after the M5Stack TypeC2
+    // Grove Unit (U151) Y adapter landed, letting the strip's V rail
+    // come off USB-C directly rather than the device's regulator. The
+    // 25 and 50 tiers are labelled "(Ext)" to remind the operator they
+    // need the Y adapter fitted; internal-battery / device-USB power
+    // brownouts at those levels. Persisted via NVS; boot-applied by
+    // DAL::apply_persisted_strip_settings with the HAL cap enforcing
+    // per-host limits (Plus2 / S3 up to 50, Atom Lite fixed at 10).
     enum class LedStripItem : uint8_t {
         Enable = 0,
         GroupSize,
         ChainSize,
+        Brightness,
     };
-    static constexpr size_t kLedStripItemCount = 3;
+    static constexpr size_t kLedStripItemCount = 4;
 
     size_t stub_item_count() const;
 

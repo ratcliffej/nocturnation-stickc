@@ -405,18 +405,19 @@ void DAL::apply_persisted_strip_settings() {
     if (!strip_drv) return;
     // Apply the host's max-brightness cap FIRST so the subsequent
     // set_brightness_percent call clamps to it. The cap is a per-host
-    // power-budget property declared in the HAL backend (currently 10 %
-    // on every host - the LedStripDriver's kAbsoluteMaxBrightness = 10
-    // enforces this ceiling regardless of what a HAL claims).
+    // power-budget property declared in the HAL backend (Plus2 / S3
+    // return 50, Atom Lite returns 10). The driver's kAbsoluteMax
+    // Brightness = 50 backstops this regardless of what a HAL claims.
     strip_drv->set_max_brightness_percent(hal::HAL::max_strip_brightness_percent());
-    // Hard-wired boot brightness. NVS strip_bri is intentionally ignored
-    // so no legacy 50 / 25 / 5 value carried over from a pre-lockdown
-    // firmware can render at anything above kAbsoluteMaxBrightness = 10.
-    // Config > LED Strip > Brightness and the Lume Btn1 cycle were both
-    // retired 2026-07-08 in the same lockdown, so no code path exists
-    // that could change this at runtime. USB-detected 20% and menu re-
-    // introduction are tracked as separate PRs.
-    strip_drv->set_brightness_percent(10);
+    // Load the operator's persisted brightness. set_brightness_percent
+    // clamps against the max-cap set above, so Atom Lite (no menu)
+    // silently caps at 10 even if its NVS somehow held a higher value;
+    // Plus2 / S3 accept 5-50 via Config > Connectivity > LED Strip >
+    // Brightness. Values 25 and 50 require external Grove Y USB power
+    // per the menu label - that's an operator responsibility, not
+    // something the firmware auto-detects (M5.Power.isCharging()
+    // proved unreliable across USB port types at 2026-07-08 bench).
+    strip_drv->set_brightness_percent(modes::persistence::load_strip_brightness());
     strip_drv->set_group_size       (modes::persistence::load_strip_group_size());
     strip_drv->set_pixel_count      (modes::persistence::load_strip_chain_size());
     set_driver_enabled("led-strip",  modes::persistence::load_strip_enabled());

@@ -109,8 +109,14 @@ LedStrip* HAL::led_strip() { return &s_led_strip; }
 // battery base.
 //
 // Hard ceiling, not default - the LedStripDriver clamps any
-// set_brightness_percent call above this. Operator can't push the
-// Atom into brownout by mis-cycling the Btn1 brightness levels.
+// set_brightness_percent call above this. Atom Lite stays at 10 %
+// even after the 2026-07-11 fleet ceiling raise to 50 % (Plus2 / S3):
+// the Atom has no LCD and therefore no Config > LED Strip > Brightness
+// menu to expose the higher tiers, and its typical deployment is
+// standalone wearable running off an Atom battery base (200 mAh).
+// The external Grove Y USB path (M5Stack TypeC2Grove Unit U151) works
+// on the Atom too, but until someone builds a menu-less mechanism to
+// select higher tiers we keep the ceiling at the safe default.
 uint8_t HAL::max_strip_brightness_percent() { return 10; }
 
 }  // namespace hal
