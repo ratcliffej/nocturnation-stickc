@@ -129,6 +129,23 @@ private:
     uint8_t   last_msg_type_      = 0xFF;
     bool      no_signal_          = false;   // sticky once threshold crossed
 
+    // Director-clock offset tracking (v0.6, Phase 1 of §4.3 tick
+    // anchor). Each admitted HEARTBEAT frame carries the Director's
+    // millisecond `tick`; we compute (tick - local_ms) and smooth it
+    // exponentially. Reserved for envelope math in Phase 2 (each
+    // OutputBinding rewires its ASR clock from local `millis()` to
+    // `director_now_ms() = local_ms + director_tick_offset_ms_`), so
+    // envelopes stay aligned across the fleet regardless of per-Lume
+    // millis() drift and relay-path arrival jitter. Phase 1 tracks
+    // the offset only; no envelope behaviour change.
+    // director_offset_valid_: false until the first HEARTBEAT with a
+    // decoded payload lands. Reset to false when TOFU relocks to a
+    // different source (offset is per-Director; a new Director's
+    // clock has no relation to the old one's).
+    bool      director_offset_valid_     = false;
+    int32_t   director_tick_offset_ms_    = 0;
+    uint8_t   director_offset_source_id_  = 0;   // detects TOFU relock
+
     // Fallback wash state. fallback_active_ is set when we crossed the
     // kFallbackEnterMs threshold and emitted the synthetic blue/purple
     // LIGHT_WASH; fallback_faded_ is set when we crossed kFallbackFadeStartMs

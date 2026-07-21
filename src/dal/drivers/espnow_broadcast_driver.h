@@ -247,6 +247,13 @@ private:
     uint8_t   source_id_   = 1;
     uint8_t   seq_num_     = 1;
     uint32_t  last_tx_ms_  = 0;
+    // Heartbeat cadence gate. Bumped only after a HEARTBEAT actually
+    // fires - independent of general TX traffic. Pre-v0.6 the gate was
+    // last_tx_ms_ (skip-if-recent), which suppressed heartbeats under
+    // continuous DMX-bridge traffic and left Lumes without a stable
+    // 1 Hz anchor. Now heartbeat fires every kHeartbeatPeriodMs
+    // regardless of other TX activity (§4.3 tick anchor guarantee).
+    uint32_t  last_hb_ms_  = 0;
 
     // Listen-window state. Only meaningful while startup_state_ == Listening;
     // listen_attempts_remaining_ counts down per re-roll.

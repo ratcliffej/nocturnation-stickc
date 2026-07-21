@@ -926,6 +926,45 @@ void LumeMode::on_recv(const hal::ESPNowMessage& m) {
 
     if (is_dup) return;
 
+    // Director-clock offset tracking (Phase 1 of §4.3 tick anchor).
+    // Every unique HEARTBEAT carries the Director's millisecond tick;
+    // maintain a smoothed offset between Director-time and our local
+    // millis(). Reserved for Phase 2 envelope-math rewire; today it's
+    // logged only. Duplicates carry the same tick as their originating
+    // send, so post-dedup is the right gate. First-value (fresh source
+    // OR fresh session) = seed the smoother directly to avoid the
+    // exponential-smoothing "climb from zero" transient.
+    if (hdr.message_type == MessageType::Heartbeat
+        && (m.len - kHeaderSize) >= kHeartbeatPayloadLen) {
+        HeartbeatPayload hb{};
+        if (decode_heartbeat(hdr, m.data + kHeaderSize,
+                             m.len - kHeaderSize, hb)
+            == DecodeResult::Ok) {
+            // TOFU relock to a different Director invalidates the
+            // stored offset - the new Director's boot-relative clock
+            // has no relation to the old one's. Reseed on next frame.
+            if (director_offset_valid_
+                && hdr.source_id != director_offset_source_id_) {
+                director_offset_valid_ = false;
+            }
+            const int32_t raw_offset =
+                static_cast<int32_t>(hb.tick)
+              - static_cast<int32_t>(last_rx_ms_);
+            if (!director_offset_valid_) {
+                director_tick_offset_ms_    = raw_offset;
+                director_offset_source_id_  = hdr.source_id;
+                director_offset_valid_      = true;
+            } else {
+                // 90/10 smoothing. Handles the typical ~1 ms/s local
+                // millis() drift smoothly and rejects one-off outliers
+                // (relay-path arrivals with abnormal latency). Integer
+                // arithmetic to avoid float on the hot RX path.
+                director_tick_offset_ms_ =
+                    (director_tick_offset_ms_ * 9 + raw_offset) / 10;
+            }
+        }
+    }
+
     // Repeater mode (spec §4.3): rebroadcast each unique frame with
     // hop_count incremented by 1, up to a 3-hop ceiling. Preserves
     // source_id + sequence_number so dedup works mesh-wide. Defer

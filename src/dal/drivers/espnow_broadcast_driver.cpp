@@ -436,14 +436,21 @@ void EspNowBroadcastDriver::send_heartbeat() {
 bool EspNowBroadcastDriver::maybe_send_heartbeat() {
     if (!active_) return false;
     const uint32_t now = now_ms();
-    const uint32_t gap = now - last_tx_ms_;
+    // Unconditional 1 Hz cadence. Gate on last_hb_ms_ (heartbeat-only)
+    // rather than last_tx_ms_ (any-TX) so continuous DMX-bridge or
+    // sparkle-rate traffic no longer suppresses the heartbeat. §4.3
+    // tick anchor guarantee: Lumes see a HEARTBEAT with a fresh
+    // `tick` at least every kHeartbeatPeriodMs regardless of other
+    // frame traffic.
+    const uint32_t gap = now - last_hb_ms_;
     if (gap < kHeartbeatPeriodMs) return false;
     // Suppressed on the AtomS3-PoE Director (Serial is its config console).
 #if defined(ARDUINO) && !defined(NOCT_DMX_ETHERNET)
-    Serial.printf("[HBEAT] firing after %lu ms gap since last TX\n",
+    Serial.printf("[HBEAT] firing after %lu ms gap since last HB\n",
                   static_cast<unsigned long>(gap));
 #endif
     send_heartbeat();
+    last_hb_ms_ = now;
     return true;
 }
 
