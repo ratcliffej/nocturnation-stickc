@@ -1,4 +1,4 @@
-// NocturNation ESP-NOW frame format (v3)
+// NocturNation ESP-NOW frame format (v2)
 //
 // Wire format per the protocol manual §3.1 (nocturnation-docs repo). Pure logic; no ESP32
 // / radio dependencies, so this layer compiles and tests on native (laptop).
@@ -6,25 +6,17 @@
 // The radio transport (Block 3+ of Epic 4) consumes these encoders to fill
 // ESP-NOW packets, and feeds received bytes through the decoders.
 //
-// Frame layout (v3 - protocol_version == 0x03):
+// Frame layout (v2 - protocol_version == 0x02):
 //   Offset  Field             Size  Notes
 //   0       magic[0]          1     0x4E ('N')
 //   1       magic[1]          1     0x4E ('N')
-//   2       protocol_version  1     0x03 for v3
+//   2       protocol_version  1     0x02 for v2
 //   3       source_id         1     1-254; 0xFF = broadcast
 //   4       sequence_number   1     1-255 wraps; 0 = sequencing disabled
 //   5       hop_count         1     0 = original; cap at kMaxHopCount
 //   6       message_type      1     See MessageType enum
 //   7       payload_len       1     Bytes of payload following header
 //   8+      payload           N     Type-specific (little-endian)
-//
-// v0x02 → v0x03 payload delta: LightPulsePayload, LightWashPayload, and
-// LightWashPulsePayload each gain a 4-byte little-endian `send_tick`
-// (Director's now_ms() at emit) so Lumes can render at a common
-// director-time regardless of hop-path arrival variance. Full spec:
-// nocturnation-docs `wire-spec-v0x03-pulse-sync-design.md`. Fleet-wide
-// upgrade required; a v0x02 receiver rejects v0x03 frames at header
-// validation and vice versa.
 //
 // The 2-byte magic prefix is the cheapest discriminator against other
 // ESP-NOW users sharing the channel (a real concern at events like
@@ -46,7 +38,7 @@ namespace espnow {
 // Header constants (spec §3.1)
 constexpr uint8_t kMagic0            = 0x4E;  // 'N' - NocturNation discriminator byte 0
 constexpr uint8_t kMagic1            = 0x4E;  // 'N' - NocturNation discriminator byte 1
-constexpr uint8_t kProtocolVersion   = 0x03;  // bumped from 0x02: send_tick on Light* payloads (see wire-spec-v0x03-pulse-sync-design.md)
+constexpr uint8_t kProtocolVersion   = 0x02;  // bumped from 0x01 for the magic-prefix wire change
 constexpr uint8_t kBroadcastSourceId = 0xFF;
 
 // Source-id partitioning per protocol manual §3.4. Channel 1 uses the
@@ -216,15 +208,8 @@ struct LightPulsePayload {
     uint8_t sustain;               // pixmob::Time index
     uint8_t release;               // pixmob::Time index
     uint8_t chance;                // pixmob::Chance index
-    uint32_t send_tick;            // v0x03: Director's now_ms() at emit; little-endian.
-                                   // Lume renders at (send_tick + kFleetRenderDelayMs)
-                                   // in director-time so every badge (direct or via
-                                   // relay) converges on the same wall-clock fire
-                                   // instant. Set to 0 on legacy senders that don't
-                                   // yet stamp; Lumes fall back to immediate render
-                                   // when send_tick==0 OR their offset is unknown.
 };
-constexpr uint8_t kLightPulsePayloadLen = 13;   // 9 + 4 (send_tick)
+constexpr uint8_t kLightPulsePayloadLen = 9;
 
 // LIGHT_WASH payload (Epic 6C Phase D). A persistent background wash on
 // capable Lumes - the §1.2 lighting-design baseline that PULSE punctuates.
@@ -244,17 +229,12 @@ struct LightWashPayload {
     uint16_t cycle_ms;             // little-endian; one full A<->B<->A oscillation; 0 = no cycle (hold r1g1b1)
     uint16_t ttl_seconds;          // little-endian; 0 = infinite
     uint8_t  pulse_response;       // 0 = ignore PULSE while washing; 1 = accept PULSE as additive overlay
-    uint32_t send_tick;            // v0x03: Director's now_ms() at emit; little-endian.
-                                   // Covers the attack=0 (instant switch) case where
-                                   // cue authors want cross-fleet wash change synced.
-                                   // Attack>0 wash starts naturally mask desync via
-                                   // the fade-in, so the field is field-tolerant of
-                                   // being ignored on those cues.
 };
-// Wire layout (20 bytes): class(1) + group(1) + r1g1b1(3) + r2g2b2(3)
+// Wire layout (16 bytes): class(1) + group(1) + r1g1b1(3) + r2g2b2(3)
 // + attack(1) + release(1) + intensity(1) + cycle_ms(2 LE) + ttl_seconds(2 LE)
-// + pulse_response(1) + send_tick(4 LE).
-constexpr uint8_t kLightWashPayloadLen = 20;   // 16 + 4 (send_tick)
+// + pulse_response(1). (The Notion source-prompt v0.3 mis-stated this as
+// 17 - arithmetic error; corrected here and in the design doc.)
+constexpr uint8_t kLightWashPayloadLen = 16;
 
 // LIGHT_WASH_END payload (Epic 6C Phase D). Explicit cancel of an active
 // wash on the addressed target(s). release_time (100 ms units) overrides
@@ -282,9 +262,8 @@ struct LightWashPulsePayload {
     uint8_t sustain;
     uint8_t release;
     uint8_t chance;
-    uint32_t send_tick;            // v0x03: see LightPulsePayload::send_tick.
 };
-constexpr uint8_t kLightWashPulsePayloadLen = 13;   // 9 + 4 (send_tick)
+constexpr uint8_t kLightWashPulsePayloadLen = 9;
 
 // =============================================================================
 // Epic 13: display-content payloads (TEXT_DISPLAY, BITMAP_HEADER,

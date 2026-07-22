@@ -232,17 +232,9 @@ void LumeMode::loop_tick() {
         }
     }
 
-    // v0x03 sync-scheduling: drain expired entries from the pending-
-    // pulse queues. Each entry fires when now >= fire_at_ms. Runs
-    // BEFORE the legacy pending_light_ drain so the sync-scheduled
-    // pulse also arms the deferred pixmob-ir path via that flag.
-    drain_sync_queues(now);
-
-    // Drain any LIGHT_PULSE queued by the ESP-NOW callback (legacy
-    // one-slot buffer used by the sync-scheduler's drain path to
-    // hand off to blocking bindings like PixMob IR). Doing this here
-    // (main task context) keeps IRsend::sendRaw off the WiFi task
-    // where it would crash the S3.
+    // Drain any LIGHT_PULSE queued by the ESP-NOW callback. Doing
+    // this here (main task context) keeps IRsend::sendRaw off the
+    // WiFi task where it would crash the S3.
     if (pending_light_) {
         pending_light_ = false;
         fan_out_light_pulse(pending_light_payload_);
@@ -1009,22 +1001,22 @@ void LumeMode::on_recv(const hal::ESPNowMessage& m) {
         if (decode_light_pulse(hdr, m.data + kHeaderSize,
                                  m.len - kHeaderSize, p)
             == DecodeResult::Ok) {
-            // v0x03 sync-scheduling: try to defer this pulse to a
-            // common director-time fire instant so all Lumes render
-            // in unison regardless of hop-path arrival variance.
-            // enqueue_sync_pulse returns false when the fallback
-            // conditions apply (no offset yet, send_tick==0 legacy
-            // sender, arrival past deadline, or queue full) - in
-            // which case we fire immediately as pre-v0x03.
-            if (!enqueue_sync_pulse(p, admit_now_ms)) {
-                // Fallback: same behaviour as pre-v0x03. Fast
-                // bindings (LED strip, LCD) render inline in WiFi-
-                // task context; blocking bindings (PixMob IR) get
-                // queued for loop_tick drain.
-                fan_out_light_pulse_inline(p);
-                pending_light_payload_ = p;
-                pending_light_ = true;
-            }
+            // Epic 13 sync fix: stamp callback-safe renderers (LED
+            // strip, LCD) IMMEDIATELY in WiFi-task context. All
+            // Lumes anchor their pulse envelope to broadcast-receipt
+            // time, which is ~µs synchronised across the fleet.
+            // Inter-Lume render unison for sparkle-on-beat goes from
+            // up-to-50 ms loop-tick variance to ~µs radio-propagation
+            // variance.
+            fan_out_light_pulse_inline(p);
+
+            // Blocking renderers (PixMobIrBinding → IRsend::sendRaw,
+            // ~30 ms cli/sei GPIO bit-bang) stay on the deferred
+            // path: queue here, drain in loop_tick on the main task.
+            // fan_out_light_pulse() filters out can_render_in_callback
+            // bindings so they aren't double-fired.
+            pending_light_payload_ = p;
+            pending_light_ = true;
         }
     }
 
@@ -1054,11 +1046,7 @@ void LumeMode::on_recv(const hal::ESPNowMessage& m) {
         LightWashPulsePayload p{};
         if (decode_light_wash_pulse(hdr, m.data + kHeaderSize,
                                     m.len - kHeaderSize, p) == DecodeResult::Ok) {
-            // v0x03 sync-scheduling: same defer-or-fallback pattern
-            // as LIGHT_PULSE above.
-            if (!enqueue_sync_wash_pulse(p, admit_now_ms)) {
-                fan_out_light_wash_pulse(p);
-            }
+            fan_out_light_wash_pulse(p);
         }
     }
 
@@ -1363,152 +1351,6 @@ void LumeMode::draw_no_signal_body() {
     // what the gesture does.
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         kDiagX, 122, "B-hold: menu", WHITE, BLACK, 1});
-}
-
-// -----------------------------------------------------------------------------
-// v0x03 sync-scheduling helpers (wire-spec-v0x03-pulse-sync-design.md)
-// -----------------------------------------------------------------------------
-
-uint32_t LumeMode::local_fire_ms_for(uint32_t send_tick) const {
-    // Convert director-time send_tick to local wall-clock via the
-    // Phase 1 tracked offset, then add the fleet render delay so all
-    // Lumes converge on a common director-time fire instant.
-    // director_now_ms = local_ms + director_tick_offset_ms_ (with sign).
-    // Therefore local_fire_ms = send_tick + kFleetRenderDelayMs - offset.
-    // Returns UINT32_MAX as a "cannot compute" sentinel when the offset
-    // isn't valid yet.
-    if (!director_offset_valid_) return UINT32_MAX;
-    // Signed arithmetic to handle offset < 0 (Lume booted before Director).
-    const int64_t local_fire =
-        static_cast<int64_t>(send_tick)
-      + static_cast<int64_t>(kFleetRenderDelayMs)
-      - static_cast<int64_t>(director_tick_offset_ms_);
-    // millis() wraps at u32, so we mod to keep in-range. The comparison
-    // in loop_tick (now >= fire_at_ms) handles the wrap via unsigned
-    // subtraction magic - as long as fire_at_ms is within one wrap
-    // window of now, the arithmetic works. A negative send_tick
-    // (Lume-clock-ahead-of-director) shouldn't happen post-first-HB,
-    // but clamp to 0 defensively.
-    if (local_fire < 0) return 0;
-    return static_cast<uint32_t>(local_fire & 0xFFFFFFFFu);
-}
-
-bool LumeMode::enqueue_sync_pulse(
-        const transport::espnow::LightPulsePayload& p,
-        uint32_t now_ms) {
-    // Fallback conditions (all cause immediate-fire, no queue):
-    //   1. Legacy sender: send_tick == 0. Nothing to schedule against.
-    //   2. No director offset yet (fresh boot, no HB heard).
-    //   3. Arrival past our computed fire deadline (deep-mesh path took
-    //      longer than kFleetRenderDelayMs). Rate-limited log.
-    //   4. Queue full (unlikely; kPendingSyncCap=8 is generous vs. peak
-    //      sparkle rate).
-    if (p.send_tick == 0) return false;
-    const uint32_t local_fire = local_fire_ms_for(p.send_tick);
-    if (local_fire == UINT32_MAX) return false;   // offset invalid
-    // Wrap-safe "already past" test: signed 32-bit delta.
-    const int32_t delta = static_cast<int32_t>(local_fire - now_ms);
-    if (delta <= 0) {
-        // Late arrival - fire immediately. Log every 8th occurrence
-        // so bench logs surface deep-mesh deployments busting budget
-        // without flooding when a whole show is over.
-        if ((sync_fallback_count_ & 0x07) == 0) {
-#ifdef ARDUINO
-            Serial.printf("[SYNC LATE] send_tick=%lu offset=%ld now=%lu fire=%lu\n",
-                          (unsigned long)p.send_tick,
-                          (long)director_tick_offset_ms_,
-                          (unsigned long)now_ms,
-                          (unsigned long)local_fire);
-#endif
-        }
-        ++sync_fallback_count_;
-        return false;
-    }
-    if (pending_sync_pulses_count_ >= kPendingSyncCap) {
-#ifdef ARDUINO
-        Serial.println("[SYNC QUEUE FULL] pulse falling back to immediate");
-#endif
-        return false;
-    }
-    pending_sync_pulses_[pending_sync_pulses_count_] = {local_fire, p};
-    ++pending_sync_pulses_count_;
-    return true;
-}
-
-bool LumeMode::enqueue_sync_wash_pulse(
-        const transport::espnow::LightWashPulsePayload& p,
-        uint32_t now_ms) {
-    if (p.send_tick == 0) return false;
-    const uint32_t local_fire = local_fire_ms_for(p.send_tick);
-    if (local_fire == UINT32_MAX) return false;
-    const int32_t delta = static_cast<int32_t>(local_fire - now_ms);
-    if (delta <= 0) {
-        if ((sync_fallback_count_ & 0x07) == 0) {
-#ifdef ARDUINO
-            Serial.printf("[SYNC LATE WP] send_tick=%lu offset=%ld now=%lu fire=%lu\n",
-                          (unsigned long)p.send_tick,
-                          (long)director_tick_offset_ms_,
-                          (unsigned long)now_ms,
-                          (unsigned long)local_fire);
-#endif
-        }
-        ++sync_fallback_count_;
-        return false;
-    }
-    if (pending_sync_wash_pulses_count_ >= kPendingSyncCap) {
-#ifdef ARDUINO
-        Serial.println("[SYNC QUEUE FULL] wash_pulse falling back to immediate");
-#endif
-        return false;
-    }
-    pending_sync_wash_pulses_[pending_sync_wash_pulses_count_] = {local_fire, p};
-    ++pending_sync_wash_pulses_count_;
-    return true;
-}
-
-void LumeMode::drain_sync_queues(uint32_t now_ms) {
-    // Pulse queue drain. Iterate front-to-back; entries are in
-    // arrival order but fire times can be out-of-arrival-order if
-    // an offset jump between frames yielded slightly different
-    // fire_at_ms deltas. We handle out-of-order by walking the whole
-    // array each tick and firing any that are due, then compacting
-    // the remaining unfired entries.
-    if (pending_sync_pulses_count_ > 0) {
-        size_t keep = 0;
-        for (size_t i = 0; i < pending_sync_pulses_count_; ++i) {
-            const auto& entry = pending_sync_pulses_[i];
-            if (static_cast<int32_t>(entry.fire_at_ms - now_ms) <= 0) {
-                // Due - fire it. Same shape as the pre-v0x03 inline
-                // path: fast bindings get inline dispatch here, then
-                // set pending_light_ so the blocking-binding drain
-                // below picks up on the next loop_tick iteration.
-                fan_out_light_pulse_inline(entry.payload);
-                pending_light_payload_ = entry.payload;
-                pending_light_ = true;
-            } else {
-                // Not yet - keep in the queue.
-                if (keep != i) pending_sync_pulses_[keep] = entry;
-                ++keep;
-            }
-        }
-        pending_sync_pulses_count_ = keep;
-    }
-    // Wash-pulse queue drain. Same pattern; the fan_out here
-    // dispatches to every wash-capable binding directly (there's no
-    // deferred-blocking variant for wash pulses on our fleet).
-    if (pending_sync_wash_pulses_count_ > 0) {
-        size_t keep = 0;
-        for (size_t i = 0; i < pending_sync_wash_pulses_count_; ++i) {
-            const auto& entry = pending_sync_wash_pulses_[i];
-            if (static_cast<int32_t>(entry.fire_at_ms - now_ms) <= 0) {
-                fan_out_light_wash_pulse(entry.payload);
-            } else {
-                if (keep != i) pending_sync_wash_pulses_[keep] = entry;
-                ++keep;
-            }
-        }
-        pending_sync_wash_pulses_count_ = keep;
-    }
 }
 
 }  // namespace modes

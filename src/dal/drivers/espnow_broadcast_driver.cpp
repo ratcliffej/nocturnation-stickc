@@ -100,7 +100,6 @@ bool EspNowBroadcastDriver::send(uint8_t target_class,
     p.sustain = static_cast<uint8_t>(ev.sustain);
     p.release = static_cast<uint8_t>(ev.release);
     p.chance  = static_cast<uint8_t>(ev.chance);
-    p.send_tick = now_ms();   // v0x03: Lumes render at send_tick + kFleetRenderDelayMs
     uint8_t buf[kHeaderSize + kLightPulsePayloadLen];
     const size_t n = encode_light_pulse(buf, sizeof(buf), h, p);
     if (n == 0) return false;
@@ -132,7 +131,6 @@ bool EspNowBroadcastDriver::send_wash(uint8_t target_class,
     p.cycle_ms       = ev.cycle_ms;
     p.ttl_seconds    = ev.ttl_seconds;
     p.pulse_response = ev.pulse_response;
-    p.send_tick      = now_ms();   // v0x03: only meaningful for attack=0 cues but always stamped for consistency
     uint8_t buf[kHeaderSize + kLightWashPayloadLen];
     const size_t n = encode_light_wash(buf, sizeof(buf), h, p);
     if (n == 0) return false;
@@ -177,7 +175,6 @@ bool EspNowBroadcastDriver::send_wash_pulse(uint8_t target_class,
     p.sustain = static_cast<uint8_t>(ev.sustain);
     p.release = static_cast<uint8_t>(ev.release);
     p.chance  = static_cast<uint8_t>(ev.chance);
-    p.send_tick = now_ms();   // v0x03: sync anchor for cross-Lume render unison
     uint8_t buf[kHeaderSize + kLightWashPulsePayloadLen];
     const size_t n = encode_light_wash_pulse(buf, sizeof(buf), h, p);
     if (n == 0) return false;

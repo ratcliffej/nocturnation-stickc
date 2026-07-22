@@ -518,7 +518,7 @@ static void test_heartbeat_wire_format_byte_for_byte(void) {
     const uint8_t expected[kHeaderSize + kHeartbeatPayloadLen] = {
         0x4E,  // magic byte 0 ('N')
         0x4E,  // magic byte 1 ('N')
-        0x03,  // protocol_version (v0x03, bumped from v0x02 for send_tick on Light* payloads)
+        0x02,  // protocol_version
         0x21,  // source_id
         0x07,  // sequence_number
         0x02,  // hop_count
@@ -919,105 +919,6 @@ static void test_set_hop_count_no_op_on_short_buffer(void) {
 }
 
 // ---------------------------------------------------------------------------
-// v0x03: send_tick round-trip on Light* payloads
-// ---------------------------------------------------------------------------
-
-static void test_light_pulse_send_tick_round_trip(void) {
-    // v0x03 delta: LightPulsePayload gained a u32 LE send_tick field
-    // stamped by the Director at emit-time. Confirm the encoder writes
-    // it at offset 9 (LE) and the decoder reads it back losslessly.
-    uint8_t buf[kMaxFrameSize] = {};
-    const Header in = make_header();
-    LightPulsePayload p_in{
-        /*target_class=*/1, /*target_group=*/0,
-        /*r=*/1, /*g=*/2, /*b=*/3,
-        /*attack=*/0, /*sustain=*/1, /*release=*/2, /*chance=*/3,
-    };
-    p_in.send_tick = 0xDEADBEEFu;
-
-    const size_t n = encode_light_pulse(buf, sizeof(buf), in, p_in);
-    TEST_ASSERT_EQUAL_size_t(kHeaderSize + kLightPulsePayloadLen, n);
-    // Wire-order LE check for the four new bytes at offset 9.
-    TEST_ASSERT_EQUAL_UINT8(0xEF, buf[kHeaderSize +  9]);
-    TEST_ASSERT_EQUAL_UINT8(0xBE, buf[kHeaderSize + 10]);
-    TEST_ASSERT_EQUAL_UINT8(0xAD, buf[kHeaderSize + 11]);
-    TEST_ASSERT_EQUAL_UINT8(0xDE, buf[kHeaderSize + 12]);
-
-    Header decoded{};
-    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
-                      static_cast<int>(decode_header(buf, n, decoded)));
-    LightPulsePayload p_out{};
-    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
-                      static_cast<int>(decode_light_pulse(decoded,
-                                                            buf + kHeaderSize,
-                                                            decoded.payload_len,
-                                                            p_out)));
-    TEST_ASSERT_EQUAL_UINT32(p_in.send_tick, p_out.send_tick);
-}
-
-static void test_light_wash_pulse_send_tick_round_trip(void) {
-    uint8_t buf[kMaxFrameSize] = {};
-    const Header in = make_header();
-    LightWashPulsePayload p_in{
-        /*target_class=*/1, /*target_group=*/0,
-        /*r=*/10, /*g=*/20, /*b=*/30,
-        /*attack=*/0, /*sustain=*/1, /*release=*/2, /*chance=*/3,
-    };
-    p_in.send_tick = 0x12345678u;
-
-    const size_t n = encode_light_wash_pulse(buf, sizeof(buf), in, p_in);
-    TEST_ASSERT_EQUAL_size_t(kHeaderSize + kLightWashPulsePayloadLen, n);
-    TEST_ASSERT_EQUAL_UINT8(0x78, buf[kHeaderSize +  9]);
-    TEST_ASSERT_EQUAL_UINT8(0x56, buf[kHeaderSize + 10]);
-    TEST_ASSERT_EQUAL_UINT8(0x34, buf[kHeaderSize + 11]);
-    TEST_ASSERT_EQUAL_UINT8(0x12, buf[kHeaderSize + 12]);
-
-    Header decoded{};
-    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
-                      static_cast<int>(decode_header(buf, n, decoded)));
-    LightWashPulsePayload p_out{};
-    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
-                      static_cast<int>(decode_light_wash_pulse(decoded,
-                                                                 buf + kHeaderSize,
-                                                                 decoded.payload_len,
-                                                                 p_out)));
-    TEST_ASSERT_EQUAL_UINT32(p_in.send_tick, p_out.send_tick);
-}
-
-static void test_light_wash_send_tick_round_trip(void) {
-    uint8_t buf[kMaxFrameSize] = {};
-    const Header in = make_header();
-    LightWashPayload p_in{
-        /*target_class=*/0, /*target_group=*/0,
-        /*r1=*/10, /*g1=*/20, /*b1=*/30,
-        /*r2=*/40, /*g2=*/50, /*b2=*/60,
-        /*attack=*/1, /*release=*/2, /*intensity=*/200,
-        /*cycle_ms=*/8000, /*ttl_seconds=*/0,
-        /*pulse_response=*/1,
-    };
-    p_in.send_tick = 0xCAFEF00Du;
-
-    const size_t n = encode_light_wash(buf, sizeof(buf), in, p_in);
-    TEST_ASSERT_EQUAL_size_t(kHeaderSize + kLightWashPayloadLen, n);
-    // send_tick lives at offset 16 (LE) after the 16-byte v0x02 body.
-    TEST_ASSERT_EQUAL_UINT8(0x0D, buf[kHeaderSize + 16]);
-    TEST_ASSERT_EQUAL_UINT8(0xF0, buf[kHeaderSize + 17]);
-    TEST_ASSERT_EQUAL_UINT8(0xFE, buf[kHeaderSize + 18]);
-    TEST_ASSERT_EQUAL_UINT8(0xCA, buf[kHeaderSize + 19]);
-
-    Header decoded{};
-    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
-                      static_cast<int>(decode_header(buf, n, decoded)));
-    LightWashPayload p_out{};
-    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
-                      static_cast<int>(decode_light_wash(decoded,
-                                                           buf + kHeaderSize,
-                                                           decoded.payload_len,
-                                                           p_out)));
-    TEST_ASSERT_EQUAL_UINT32(p_in.send_tick, p_out.send_tick);
-}
-
-// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
@@ -1033,9 +934,6 @@ int main(int, char**) {
     RUN_TEST(test_light_wash_round_trip_cycle_ms_zero);
     RUN_TEST(test_light_wash_end_round_trip);
     RUN_TEST(test_light_wash_pulse_round_trip);
-    RUN_TEST(test_light_pulse_send_tick_round_trip);
-    RUN_TEST(test_light_wash_pulse_send_tick_round_trip);
-    RUN_TEST(test_light_wash_send_tick_round_trip);
     RUN_TEST(test_encode_buffer_too_small);
     RUN_TEST(test_decode_header_buffer_too_short);
     RUN_TEST(test_decode_header_invalid_magic_rejects_non_nocturnation_frame);
