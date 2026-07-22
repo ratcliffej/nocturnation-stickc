@@ -356,13 +356,18 @@ void TestMode::tick_rainbow(uint32_t now) {
     uint8_t r, g, b;
     effects::hsv_to_rgb(rainbow_hue_, 1.0f, kRainbowBrightness, r, g, b);
 
-    // Envelope: attack=0, sustain=96, release=0 - matches the original
-    // effects::Rainbow tuning. Each step's command lands during the
-    // previous step's sustain so the bracelet stays at full brightness
-    // for the whole hue cycle (no fade-to-dark gaps).
+    // Envelope: attack=0, sustain=192, release=0. 100 ms step + 192 ms
+    // sustain = 92 ms overlap - well above the Tildagon perimeter's
+    // ~85 ms MicroPython poll baseline (with occasional ~160 ms
+    // outliers). Without this overlap, envelope 1 expires ~96 ms into
+    // its life, and if the next Tildagon render tick catches that
+    // window before pulse 2 has been drained from the espnow queue,
+    // the perimeter clears the envelope and paints black (visible as
+    // a strobe gap in the rainbow sweep). Bracelet + Atom LED strip
+    // effect unchanged - both handled fast pulses fine before.
     const RgbPulseEvent ev{
         r, g, b,
-        pixmob::T_0_MS, pixmob::T_96_MS, pixmob::T_0_MS,
+        pixmob::T_0_MS, pixmob::T_192_MS, pixmob::T_0_MS,
         pixmob::CHANCE_100};
     DAL::render_fx("00:00", ev);
 }
