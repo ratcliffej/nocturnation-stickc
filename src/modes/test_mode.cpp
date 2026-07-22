@@ -48,7 +48,7 @@ constexpr size_t kTestPaletteCount = sizeof(kTestPalette) / sizeof(kTestPalette[
 // felt too busy; white sparkle reads as crowd-shimmer).
 constexpr PaletteColour kSparkleColour = { 0xFF, 0xFF, 0xFF, "WHITE" };
 
-constexpr uint32_t kPulseStepMs       = 1000;   // 1 Hz colour cycle
+constexpr uint32_t kPulseStepMs       = 500;    // 2 Hz colour cycle
 constexpr uint32_t kFadeStepMs        = 1000;
 constexpr uint32_t kRainbowDurationMs = 6000;
 constexpr uint32_t kSparkleDurationMs = 10000;
@@ -323,8 +323,9 @@ void TestMode::draw_cycle_screen(const char* title) {
                   kTestPalette[step_index_].name);
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         10, 50, buf, WHITE, BLACK, 2});
+    const bool is_fade = title && title[0] == 'F';
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
-        10, 100, "1 Hz auto", WHITE, BLACK, 2});
+        10, 100, is_fade ? "1 Hz auto" : "2 Hz auto", WHITE, BLACK, 2});
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         10, 128, "B-hold: back", WHITE, BLACK, 1});
 }

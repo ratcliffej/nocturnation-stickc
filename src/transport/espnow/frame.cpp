@@ -138,7 +138,6 @@ size_t encode_light_pulse(uint8_t* buf, size_t buf_len, const Header& hdr,
     buf[kHeaderSize + 6] = p.sustain;
     buf[kHeaderSize + 7] = p.release;
     buf[kHeaderSize + 8] = p.chance;
-    write_u32_le(buf + kHeaderSize + 9, p.send_tick);   // v0x03
     return total;
 }
 
@@ -161,7 +160,6 @@ size_t encode_light_wash(uint8_t* buf, size_t buf_len, const Header& hdr,
     write_u16_le(buf + kHeaderSize + 11, p.cycle_ms);
     write_u16_le(buf + kHeaderSize + 13, p.ttl_seconds);
     buf[kHeaderSize + 15] = p.pulse_response;
-    write_u32_le(buf + kHeaderSize + 16, p.send_tick);   // v0x03
     return total;
 }
 
@@ -190,7 +188,6 @@ size_t encode_light_wash_pulse(uint8_t* buf, size_t buf_len, const Header& hdr,
     buf[kHeaderSize + 6] = p.sustain;
     buf[kHeaderSize + 7] = p.release;
     buf[kHeaderSize + 8] = p.chance;
-    write_u32_le(buf + kHeaderSize + 9, p.send_tick);   // v0x03
     return total;
 }
 
@@ -372,7 +369,6 @@ DecodeResult decode_light_pulse(const Header& hdr,
     out.sustain      = payload[6];
     out.release      = payload[7];
     out.chance       = payload[8];
-    out.send_tick    = read_u32_le(payload + 9);   // v0x03
     return DecodeResult::Ok;
 }
 
@@ -400,7 +396,6 @@ DecodeResult decode_light_wash(const Header& hdr,
     out.cycle_ms       = read_u16_le(payload + 11);
     out.ttl_seconds    = read_u16_le(payload + 13);
     out.pulse_response = payload[15];
-    out.send_tick      = read_u32_le(payload + 16);   // v0x03
     return DecodeResult::Ok;
 }
 
@@ -439,7 +434,6 @@ DecodeResult decode_light_wash_pulse(const Header& hdr,
     out.sustain      = payload[6];
     out.release      = payload[7];
     out.chance       = payload[8];
-    out.send_tick    = read_u32_le(payload + 9);   // v0x03
     return DecodeResult::Ok;
 }
 
