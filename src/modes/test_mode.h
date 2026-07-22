@@ -114,7 +114,13 @@ private:
     // Rainbow Test inline hue cycling state.
     static constexpr float    kRainbowCycleHz       = 0.5f;
     static constexpr float    kRainbowBrightness    = 1.0f;
-    static constexpr uint16_t kRainbowStepIntervalMs = 50;
+    // Step interval bumped from 50 -> 100 ms so the 20 Hz burst clears
+    // Tildagon perimeter's Full-mode Harding cap (~60 ms) with headroom.
+    // At 0.5 Hz hue cycle that's still 20 samples per full cycle -
+    // smooth colour rotation on the Atom LED strip and now visible on
+    // the Tildagons too. Sustain stays at T_96 so envelopes overlap
+    // (100 ms step, 96 ms sustain -> 4 ms gap, imperceptible).
+    static constexpr uint16_t kRainbowStepIntervalMs = 100;
     float    rainbow_hue_         = 0.0f;
     uint32_t rainbow_last_step_ms_ = 0;
 
