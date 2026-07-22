@@ -262,6 +262,66 @@ private:
     volatile bool                            pending_light_ = false;
     transport::espnow::LightPulsePayload   pending_light_payload_{};
 
+    // v0x03 sync-scheduling queues (wire-spec-v0x03-pulse-sync-design.md).
+    // On admittable LIGHT_PULSE / LIGHT_WASH_PULSE arrival we compute
+    // local_fire_ms = send_tick + kFleetRenderDelayMs - director_tick_offset_ms_
+    // and hold the payload here until loop_tick sees fire_at_ms <= now.
+    // Every badge in the fleet computes the same local_fire_ms (modulo
+    // per-badge offset drift, ~1 ms) so they converge on a common
+    // wall-clock render instant regardless of hop-path arrival variance.
+    //
+    // Fallback: fires immediately (bypass queue) when send_tick == 0
+    // (legacy Director) or director_offset_valid_ == false (haven't
+    // heard a HEARTBEAT yet). Also fires immediately if the arrival
+    // is past the fire deadline (deep-mesh path took longer than the
+    // render-delay budget) - preserves "pulse still fires, just not
+    // in sync" over silent drops.
+    //
+    // Queue capacity 8 slots per type: at peak sparkle rate (~8 Hz)
+    // and 30 ms render delay, at most 1 pulse pending on average; 8
+    // is comfortable headroom for the burst edge case.
+    #ifndef NOCT_FLEET_RENDER_DELAY_MS
+    #define NOCT_FLEET_RENDER_DELAY_MS 30
+    #endif
+    static constexpr uint32_t kFleetRenderDelayMs = NOCT_FLEET_RENDER_DELAY_MS;
+    static constexpr size_t   kPendingSyncCap     = 8;
+
+    struct PendingLightPulse {
+        uint32_t fire_at_ms;
+        transport::espnow::LightPulsePayload payload;
+    };
+    struct PendingLightWashPulse {
+        uint32_t fire_at_ms;
+        transport::espnow::LightWashPulsePayload payload;
+    };
+    PendingLightPulse       pending_sync_pulses_[kPendingSyncCap]      = {};
+    size_t                  pending_sync_pulses_count_                 = 0;
+    PendingLightWashPulse   pending_sync_wash_pulses_[kPendingSyncCap] = {};
+    size_t                  pending_sync_wash_pulses_count_            = 0;
+
+    // v0x03 diagnostic: count fallback fires (send_tick=0, no offset,
+    // late arrival). Rate-limited serial output every 8th occurrence.
+    uint32_t                sync_fallback_count_                        = 0;
+
+    // Push into the sync queue. Returns true if queued (fire deferred
+    // to loop_tick), false if the caller should fire immediately
+    // (queue full, or fallback conditions met). ring_count is the
+    // queue's current count field (advanced by push).
+    bool enqueue_sync_pulse(const transport::espnow::LightPulsePayload& p,
+                            uint32_t now_ms);
+    bool enqueue_sync_wash_pulse(
+        const transport::espnow::LightWashPulsePayload& p,
+        uint32_t now_ms);
+
+    // Drain expired entries from both sync queues. Called from
+    // loop_tick.
+    void drain_sync_queues(uint32_t now_ms);
+
+    // Convert a send_tick to the local time we should render at, per
+    // the design doc §6. Returns UINT32_MAX if the offset is invalid
+    // (caller should fire immediately).
+    uint32_t local_fire_ms_for(uint32_t send_tick) const;
+
     // Repeater mode (per spec §4.3, configurable per-Lume via
     // Config > ESP-NOW > Repeat). When enabled, each unique inbound
     // frame is rebroadcast once with hop_count incremented by 1, up
