@@ -292,7 +292,7 @@ void RepeaterMode::update_led(uint32_t now) {
 #endif
 }
 
-bool RepeaterMode::seen_recently(uint8_t src, uint8_t seq) const {
+bool RepeaterMode::seen_recently(uint16_t src, uint8_t seq) const {
     if (seq == 0) return false;   // seq 0 = sequencing disabled, never dedup
     for (size_t i = 0; i < kDedupRingSize; ++i) {
         if (dedup_ring_[i].source_id == src &&
@@ -303,7 +303,7 @@ bool RepeaterMode::seen_recently(uint8_t src, uint8_t seq) const {
     return false;
 }
 
-void RepeaterMode::mark_seen(uint8_t src, uint8_t seq) {
+void RepeaterMode::mark_seen(uint16_t src, uint8_t seq) {
     if (seq == 0) return;
     dedup_ring_[dedup_head_] = DedupEntry{src, seq};
     dedup_head_ = (dedup_head_ + 1) % kDedupRingSize;

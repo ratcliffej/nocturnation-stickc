@@ -53,19 +53,20 @@ inline uint32_t read_u32_le(const uint8_t* src) {
            (static_cast<uint32_t>(src[3]) << 24);
 }
 
-// Serialise the fixed 8-byte header (spec v2). Forces magic + protocol_version
+// Serialise the fixed 9-byte header (spec v3). Forces magic + protocol_version
 // and writes message_type / payload_len chosen by the caller (the per-type
-// encoder).
+// encoder). v3 widens source_id to a 2-byte LE field at offset 3-4; every
+// field after it shifted by 1.
 void write_header(uint8_t* buf, const Header& hdr,
                   MessageType message_type, uint8_t payload_len) {
     buf[0] = kMagic0;
     buf[1] = kMagic1;
     buf[2] = kProtocolVersion;
-    buf[3] = hdr.source_id;
-    buf[4] = hdr.sequence_number;
-    buf[5] = hdr.hop_count;
-    buf[6] = static_cast<uint8_t>(message_type);
-    buf[7] = payload_len;
+    write_u16_le(buf + 3, hdr.source_id);
+    buf[5] = hdr.sequence_number;
+    buf[6] = hdr.hop_count;
+    buf[7] = static_cast<uint8_t>(message_type);
+    buf[8] = payload_len;
 }
 
 bool is_known_message_type(uint8_t raw) {
@@ -130,14 +131,14 @@ size_t encode_light_pulse(uint8_t* buf, size_t buf_len, const Header& hdr,
     if (buf_len < total) return 0;
     write_header(buf, hdr, MessageType::LightPulse, kLightPulsePayloadLen);
     buf[kHeaderSize + 0] = p.target_class;
-    buf[kHeaderSize + 1] = p.target_group;
-    buf[kHeaderSize + 2] = p.r;
-    buf[kHeaderSize + 3] = p.g;
-    buf[kHeaderSize + 4] = p.b;
-    buf[kHeaderSize + 5] = p.attack;
-    buf[kHeaderSize + 6] = p.sustain;
-    buf[kHeaderSize + 7] = p.release;
-    buf[kHeaderSize + 8] = p.chance;
+    write_u16_le(buf + kHeaderSize + 1, p.target_group);   // v3: 2 bytes
+    buf[kHeaderSize + 3] = p.r;
+    buf[kHeaderSize + 4] = p.g;
+    buf[kHeaderSize + 5] = p.b;
+    buf[kHeaderSize + 6] = p.attack;
+    buf[kHeaderSize + 7] = p.sustain;
+    buf[kHeaderSize + 8] = p.release;
+    buf[kHeaderSize + 9] = p.chance;
     return total;
 }
 
@@ -147,19 +148,19 @@ size_t encode_light_wash(uint8_t* buf, size_t buf_len, const Header& hdr,
     if (buf_len < total) return 0;
     write_header(buf, hdr, MessageType::LightWash, kLightWashPayloadLen);
     buf[kHeaderSize +  0] = p.target_class;
-    buf[kHeaderSize +  1] = p.target_group;
-    buf[kHeaderSize +  2] = p.r1;
-    buf[kHeaderSize +  3] = p.g1;
-    buf[kHeaderSize +  4] = p.b1;
-    buf[kHeaderSize +  5] = p.r2;
-    buf[kHeaderSize +  6] = p.g2;
-    buf[kHeaderSize +  7] = p.b2;
-    buf[kHeaderSize +  8] = p.attack;
-    buf[kHeaderSize +  9] = p.release;
-    buf[kHeaderSize + 10] = p.intensity;
-    write_u16_le(buf + kHeaderSize + 11, p.cycle_ms);
-    write_u16_le(buf + kHeaderSize + 13, p.ttl_seconds);
-    buf[kHeaderSize + 15] = p.pulse_response;
+    write_u16_le(buf + kHeaderSize + 1, p.target_group);   // v3: 2 bytes
+    buf[kHeaderSize +  3] = p.r1;
+    buf[kHeaderSize +  4] = p.g1;
+    buf[kHeaderSize +  5] = p.b1;
+    buf[kHeaderSize +  6] = p.r2;
+    buf[kHeaderSize +  7] = p.g2;
+    buf[kHeaderSize +  8] = p.b2;
+    buf[kHeaderSize +  9] = p.attack;
+    buf[kHeaderSize + 10] = p.release;
+    buf[kHeaderSize + 11] = p.intensity;
+    write_u16_le(buf + kHeaderSize + 12, p.cycle_ms);
+    write_u16_le(buf + kHeaderSize + 14, p.ttl_seconds);
+    buf[kHeaderSize + 16] = p.pulse_response;
     return total;
 }
 
@@ -169,8 +170,8 @@ size_t encode_light_wash_end(uint8_t* buf, size_t buf_len, const Header& hdr,
     if (buf_len < total) return 0;
     write_header(buf, hdr, MessageType::LightWashEnd, kLightWashEndPayloadLen);
     buf[kHeaderSize + 0] = p.target_class;
-    buf[kHeaderSize + 1] = p.target_group;
-    buf[kHeaderSize + 2] = p.release_time;
+    write_u16_le(buf + kHeaderSize + 1, p.target_group);   // v3: 2 bytes
+    buf[kHeaderSize + 3] = p.release_time;
     return total;
 }
 
@@ -180,14 +181,14 @@ size_t encode_light_wash_pulse(uint8_t* buf, size_t buf_len, const Header& hdr,
     if (buf_len < total) return 0;
     write_header(buf, hdr, MessageType::LightWashPulse, kLightWashPulsePayloadLen);
     buf[kHeaderSize + 0] = p.target_class;
-    buf[kHeaderSize + 1] = p.target_group;
-    buf[kHeaderSize + 2] = p.r;
-    buf[kHeaderSize + 3] = p.g;
-    buf[kHeaderSize + 4] = p.b;
-    buf[kHeaderSize + 5] = p.attack;
-    buf[kHeaderSize + 6] = p.sustain;
-    buf[kHeaderSize + 7] = p.release;
-    buf[kHeaderSize + 8] = p.chance;
+    write_u16_le(buf + kHeaderSize + 1, p.target_group);   // v3: 2 bytes
+    buf[kHeaderSize + 3] = p.r;
+    buf[kHeaderSize + 4] = p.g;
+    buf[kHeaderSize + 5] = p.b;
+    buf[kHeaderSize + 6] = p.attack;
+    buf[kHeaderSize + 7] = p.sustain;
+    buf[kHeaderSize + 8] = p.release;
+    buf[kHeaderSize + 9] = p.chance;
     return total;
 }
 
@@ -207,7 +208,7 @@ size_t encode_text_display(uint8_t* buf, size_t buf_len, const Header& hdr,
     write_header(buf, hdr, MessageType::TextDisplay,
                  static_cast<uint8_t>(payload_len));
     size_t o = kHeaderSize;
-    buf[o++] = p.target_group;
+    write_u16_le(buf + o, p.target_group); o += 2;   // v3: 2 bytes
     buf[o++] = p.r;
     buf[o++] = p.g;
     buf[o++] = p.b;
@@ -230,7 +231,7 @@ size_t encode_bitmap_header(uint8_t* buf, size_t buf_len, const Header& hdr,
     if (buf_len < total) return 0;
     write_header(buf, hdr, MessageType::BitmapHeader, kBitmapHeaderPayloadLen);
     size_t o = kHeaderSize;
-    buf[o++] = p.target_group;
+    write_u16_le(buf + o, p.target_group); o += 2;   // v3: 2 bytes
     buf[o++] = p.width;
     buf[o++] = p.height;
     buf[o++] = p.plane_count;
@@ -257,7 +258,7 @@ size_t encode_bitmap_plane(uint8_t* buf, size_t buf_len, const Header& hdr,
     write_header(buf, hdr, MessageType::BitmapPlane,
                  static_cast<uint8_t>(payload_len));
     size_t o = kHeaderSize;
-    buf[o++] = p.target_group;
+    write_u16_le(buf + o, p.target_group); o += 2;   // v3: 2 bytes
     buf[o++] = p.plane_index;
     write_u16_le(buf + o, p.byte_offset); o += 2;
     buf[o++] = p.data_len;
@@ -271,9 +272,9 @@ size_t encode_clear_screen(uint8_t* buf, size_t buf_len, const Header& hdr,
     constexpr size_t total = kHeaderSize + kClearScreenPayloadLen;
     if (buf_len < total) return 0;
     write_header(buf, hdr, MessageType::ClearScreen, kClearScreenPayloadLen);
-    buf[kHeaderSize + 0] = p.target_group;
-    buf[kHeaderSize + 1] = p.clear_text ? 1 : 0;
-    buf[kHeaderSize + 2] = p.clear_bitmap ? 1 : 0;
+    write_u16_le(buf + kHeaderSize + 0, p.target_group);   // v3: 2 bytes
+    buf[kHeaderSize + 2] = p.clear_text ? 1 : 0;
+    buf[kHeaderSize + 3] = p.clear_bitmap ? 1 : 0;
     return total;
 }
 
@@ -293,19 +294,19 @@ DecodeResult decode_header(const uint8_t* buf, size_t buf_len, Header& out_hdr) 
     if (buf[2] != kProtocolVersion) {
         return DecodeResult::InvalidProtocolVersion;
     }
-    if (!is_known_message_type(buf[6])) {
+    if (!is_known_message_type(buf[7])) {
         return DecodeResult::InvalidMessageType;
     }
-    const uint8_t payload_len = buf[7];
+    const uint8_t payload_len = buf[8];
     if (static_cast<size_t>(kHeaderSize) + payload_len > buf_len) {
         return DecodeResult::BufferTooShort;
     }
 
     out_hdr.protocol_version = buf[2];
-    out_hdr.source_id        = buf[3];
-    out_hdr.sequence_number  = buf[4];
-    out_hdr.hop_count        = buf[5];
-    out_hdr.message_type     = static_cast<MessageType>(buf[6]);
+    out_hdr.source_id        = read_u16_le(buf + 3);
+    out_hdr.sequence_number  = buf[5];
+    out_hdr.hop_count        = buf[6];
+    out_hdr.message_type     = static_cast<MessageType>(buf[7]);
     out_hdr.payload_len      = payload_len;
     return DecodeResult::Ok;
 }
@@ -361,14 +362,14 @@ DecodeResult decode_light_pulse(const Header& hdr,
         return DecodeResult::PayloadLenMismatch;
     }
     out.target_class = payload[0];
-    out.target_group = payload[1];
-    out.r            = payload[2];
-    out.g            = payload[3];
-    out.b            = payload[4];
-    out.attack       = payload[5];
-    out.sustain      = payload[6];
-    out.release      = payload[7];
-    out.chance       = payload[8];
+    out.target_group = read_u16_le(payload + 1);   // v3: 2 bytes
+    out.r            = payload[3];
+    out.g            = payload[4];
+    out.b            = payload[5];
+    out.attack       = payload[6];
+    out.sustain      = payload[7];
+    out.release      = payload[8];
+    out.chance       = payload[9];
     return DecodeResult::Ok;
 }
 
@@ -383,19 +384,19 @@ DecodeResult decode_light_wash(const Header& hdr,
         return DecodeResult::PayloadLenMismatch;
     }
     out.target_class   = payload[ 0];
-    out.target_group   = payload[ 1];
-    out.r1             = payload[ 2];
-    out.g1             = payload[ 3];
-    out.b1             = payload[ 4];
-    out.r2             = payload[ 5];
-    out.g2             = payload[ 6];
-    out.b2             = payload[ 7];
-    out.attack         = payload[ 8];
-    out.release        = payload[ 9];
-    out.intensity      = payload[10];
-    out.cycle_ms       = read_u16_le(payload + 11);
-    out.ttl_seconds    = read_u16_le(payload + 13);
-    out.pulse_response = payload[15];
+    out.target_group   = read_u16_le(payload + 1);   // v3: 2 bytes
+    out.r1             = payload[ 3];
+    out.g1             = payload[ 4];
+    out.b1             = payload[ 5];
+    out.r2             = payload[ 6];
+    out.g2             = payload[ 7];
+    out.b2             = payload[ 8];
+    out.attack         = payload[ 9];
+    out.release        = payload[10];
+    out.intensity      = payload[11];
+    out.cycle_ms       = read_u16_le(payload + 12);
+    out.ttl_seconds    = read_u16_le(payload + 14);
+    out.pulse_response = payload[16];
     return DecodeResult::Ok;
 }
 
@@ -410,8 +411,8 @@ DecodeResult decode_light_wash_end(const Header& hdr,
         return DecodeResult::PayloadLenMismatch;
     }
     out.target_class = payload[0];
-    out.target_group = payload[1];
-    out.release_time = payload[2];
+    out.target_group = read_u16_le(payload + 1);   // v3: 2 bytes
+    out.release_time = payload[3];
     return DecodeResult::Ok;
 }
 
@@ -426,14 +427,14 @@ DecodeResult decode_light_wash_pulse(const Header& hdr,
         return DecodeResult::PayloadLenMismatch;
     }
     out.target_class = payload[0];
-    out.target_group = payload[1];
-    out.r            = payload[2];
-    out.g            = payload[3];
-    out.b            = payload[4];
-    out.attack       = payload[5];
-    out.sustain      = payload[6];
-    out.release      = payload[7];
-    out.chance       = payload[8];
+    out.target_group = read_u16_le(payload + 1);   // v3: 2 bytes
+    out.r            = payload[3];
+    out.g            = payload[4];
+    out.b            = payload[5];
+    out.attack       = payload[6];
+    out.sustain      = payload[7];
+    out.release      = payload[8];
+    out.chance       = payload[9];
     return DecodeResult::Ok;
 }
 
@@ -451,27 +452,27 @@ DecodeResult decode_text_display(const Header& hdr,
     if (hdr.payload_len != payload_len) {
         return DecodeResult::PayloadLenMismatch;
     }
-    // Minimum is "both strings empty" (kTextDisplayMinPayloadLen = 8).
+    // Minimum is "both strings empty" (kTextDisplayMinPayloadLen = 9 in v3).
     if (payload_len < kTextDisplayMinPayloadLen) {
         return DecodeResult::PayloadLenMismatch;
     }
-    out.target_group = payload[0];
-    out.r            = payload[1];
-    out.g            = payload[2];
-    out.b            = payload[3];
-    out.ttl_ms       = read_u16_le(payload + 4);
+    out.target_group = read_u16_le(payload + 0);   // v3: 2 bytes
+    out.r            = payload[2];
+    out.g            = payload[3];
+    out.b            = payload[4];
+    out.ttl_ms       = read_u16_le(payload + 5);
 
-    const uint8_t header_len = payload[6];
+    const uint8_t header_len = payload[7];
     if (header_len > kTextDisplayMaxHeaderLen) {
         return DecodeResult::PayloadLenMismatch;
     }
     // After header_len we need room for header_bytes + body_len byte.
-    const size_t body_len_offset = 7 + header_len;
+    const size_t body_len_offset = 8 + header_len;
     if (payload_len < body_len_offset + 1) {
         return DecodeResult::PayloadLenMismatch;
     }
     out.header_len = header_len;
-    if (header_len) std::memcpy(out.header, payload + 7, header_len);
+    if (header_len) std::memcpy(out.header, payload + 8, header_len);
 
     const uint8_t body_len = payload[body_len_offset];
     if (body_len > kTextDisplayMaxBodyLen) {
@@ -497,7 +498,7 @@ DecodeResult decode_bitmap_header(const Header& hdr,
         return DecodeResult::PayloadLenMismatch;
     }
     size_t o = 0;
-    out.target_group = payload[o++];
+    out.target_group = read_u16_le(payload + o); o += 2;   // v3: 2 bytes
     out.width        = payload[o++];
     out.height       = payload[o++];
     out.plane_count  = payload[o++];
@@ -533,10 +534,10 @@ DecodeResult decode_bitmap_plane(const Header& hdr,
     if (payload_len < kBitmapPlaneMinPayloadLen) {
         return DecodeResult::PayloadLenMismatch;
     }
-    out.target_group = payload[0];
-    out.plane_index  = payload[1];
-    out.byte_offset  = read_u16_le(payload + 2);
-    const uint8_t data_len = payload[4];
+    out.target_group = read_u16_le(payload + 0);   // v3: 2 bytes
+    out.plane_index  = payload[2];
+    out.byte_offset  = read_u16_le(payload + 3);
+    const uint8_t data_len = payload[5];
     if (data_len > kBitmapPlaneMaxDataLen) {
         return DecodeResult::PayloadLenMismatch;
     }
@@ -544,7 +545,7 @@ DecodeResult decode_bitmap_plane(const Header& hdr,
         return DecodeResult::PayloadLenMismatch;
     }
     out.data_len = data_len;
-    if (data_len) std::memcpy(out.data, payload + 5, data_len);
+    if (data_len) std::memcpy(out.data, payload + 6, data_len);
     return DecodeResult::Ok;
 }
 
@@ -558,9 +559,9 @@ DecodeResult decode_clear_screen(const Header& hdr,
         payload_len    != kClearScreenPayloadLen) {
         return DecodeResult::PayloadLenMismatch;
     }
-    out.target_group = payload[0];
-    out.clear_text   = payload[1];
-    out.clear_bitmap = payload[2];
+    out.target_group = read_u16_le(payload + 0);   // v3: 2 bytes
+    out.clear_text   = payload[2];
+    out.clear_bitmap = payload[3];
     return DecodeResult::Ok;
 }
 

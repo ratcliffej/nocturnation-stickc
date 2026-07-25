@@ -70,11 +70,12 @@ private:
     void on_recv(const hal::ESPNowMessage& m);
 
     // Dedup ring on (source_id, sequence_number), FIFO, seq 0 bypasses.
-    struct DedupEntry { uint8_t source_id; uint8_t sequence_number; };
+    // v3: source_id widened to u16 to match the wire.
+    struct DedupEntry { uint16_t source_id; uint8_t sequence_number; };
     DedupEntry dedup_ring_[kDedupRingSize] = {};
     size_t     dedup_head_ = 0;
-    bool seen_recently(uint8_t src, uint8_t seq) const;
-    void mark_seen(uint8_t src, uint8_t seq);
+    bool seen_recently(uint16_t src, uint8_t seq) const;
+    void mark_seen(uint16_t src, uint8_t seq);
 
     // Staged relay handed WiFi-task -> main-task, single-buffer (newest
     // wins under burst, same as Lume repeat).
