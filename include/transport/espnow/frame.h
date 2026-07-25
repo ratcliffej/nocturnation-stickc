@@ -1,4 +1,4 @@
-// NocturNation ESP-NOW frame format (v2)
+// NocturNation ESP-NOW frame format (v3)
 //
 // Wire format per the protocol manual §3.1 (nocturnation-docs repo). Pure logic; no ESP32
 // / radio dependencies, so this layer compiles and tests on native (laptop).
@@ -6,23 +6,33 @@
 // The radio transport (Block 3+ of Epic 4) consumes these encoders to fill
 // ESP-NOW packets, and feeds received bytes through the decoders.
 //
-// Frame layout (v2 - protocol_version == 0x02):
+// Frame layout (v3 - protocol_version == 0x03):
 //   Offset  Field             Size  Notes
 //   0       magic[0]          1     0x4E ('N')
 //   1       magic[1]          1     0x4E ('N')
-//   2       protocol_version  1     0x02 for v2
-//   3       source_id         1     1-254; 0xFF = broadcast
-//   4       sequence_number   1     1-255 wraps; 0 = sequencing disabled
-//   5       hop_count         1     0 = original; cap at kMaxHopCount
-//   6       message_type      1     See MessageType enum
-//   7       payload_len       1     Bytes of payload following header
-//   8+      payload           N     Type-specific (little-endian)
+//   2       protocol_version  1     0x03 for v3
+//   3       source_id         2     LE u16; 0x0001..0xFFFE; 0xFFFF = broadcast
+//   5       sequence_number   1     1-255 wraps; 0 = sequencing disabled
+//   6       hop_count         1     0 = original; cap at kMaxHopCount
+//   7       message_type      1     See MessageType enum
+//   8       payload_len       1     Bytes of payload following header
+//   9+      payload           N     Type-specific (little-endian)
 //
 // The 2-byte magic prefix is the cheapest discriminator against other
 // ESP-NOW users sharing the channel (a real concern at events like
 // EMF where many devices broadcast on the same band). A receiver
 // rejects any inbound frame whose first two bytes are not "NN"
 // before doing any further header validation.
+//
+// v2 -> v3 change: source_id and target_group both widened from
+// 1 byte to 2 bytes (LE). Motivation is futureproofing headroom -
+// stadium-scale addressing for target_group, birthday-paradox safety
+// for source_id (191 slots -> 65534 slots). NVS storage + config UI
+// stay at u8; the top byte of source_id and target_group is zero for
+// current-generation Directors, and the wider space becomes usable
+// the day the UI is widened to expose it. Old-firmware devices
+// reject v3 frames at the version check; v3 is a hard cutover, not
+// a compatible extension.
 
 #pragma once
 
@@ -36,39 +46,42 @@ namespace transport {
 namespace espnow {
 
 // Header constants (spec §3.1)
-constexpr uint8_t kMagic0            = 0x4E;  // 'N' - NocturNation discriminator byte 0
-constexpr uint8_t kMagic1            = 0x4E;  // 'N' - NocturNation discriminator byte 1
-constexpr uint8_t kProtocolVersion   = 0x02;  // bumped from 0x01 for the magic-prefix wire change
-constexpr uint8_t kBroadcastSourceId = 0xFF;
+constexpr uint8_t  kMagic0            = 0x4E;  // 'N' - NocturNation discriminator byte 0
+constexpr uint8_t  kMagic1            = 0x4E;  // 'N' - NocturNation discriminator byte 1
+constexpr uint8_t  kProtocolVersion   = 0x03;  // bumped from 0x02 for the u16 source_id / target_group widening
+constexpr uint16_t kBroadcastSourceId = 0xFFFF;
 
 // Source-id partitioning per protocol manual §3.4. Channel 1 uses the
 // community range (stable per device, persisted to NVS). Channel 11 uses
 // the Performance range (random per boot, listen-before-broadcast).
-// 0xFF (kBroadcastSourceId, above) is reserved for broadcast / anonymous.
-constexpr uint8_t kSourceIdCommunityMin   = 0x00;
-constexpr uint8_t kSourceIdCommunityMax   = 0x3F;  // 64 slots
-constexpr uint8_t kSourceIdPerformanceMin = 0x40;
-constexpr uint8_t kSourceIdPerformanceMax = 0xFE;  // 191 slots
+// 0xFFFF (kBroadcastSourceId, above) is reserved for broadcast / anonymous.
+// Partition boundaries stay at u8-natural values in v3 to preserve the
+// existing hex-editor UI and NVS-persisted values; the extended range
+// (0x0100..0xFFFE) is future headroom carried on the wire so a later NVS/UI
+// widening can populate it without another wire break.
+constexpr uint16_t kSourceIdCommunityMin   = 0x0000;
+constexpr uint16_t kSourceIdCommunityMax   = 0x003F;  // 64 slots
+constexpr uint16_t kSourceIdPerformanceMin = 0x0040;
+constexpr uint16_t kSourceIdPerformanceMax = 0x00FE;  // 191 slots
 
-constexpr bool is_community_range(uint8_t source_id) {
+constexpr bool is_community_range(uint16_t source_id) {
     return source_id <= kSourceIdCommunityMax;
 }
-constexpr bool is_performance_range(uint8_t source_id) {
+constexpr bool is_performance_range(uint16_t source_id) {
     return source_id >= kSourceIdPerformanceMin &&
            source_id <= kSourceIdPerformanceMax;
 }
 
-constexpr uint8_t kHeaderSize        = 8;     // 2 magic + 1 version + 5 metadata
+constexpr uint8_t kHeaderSize        = 9;     // 2 magic + 1 version + 6 metadata (source_id widened to 2 bytes)
 constexpr uint8_t kMaxHopCount       = 3;
 
-// Wire byte offset of hop_count within the v2 header (see write_header /
+// Wire byte offset of hop_count within the v3 header (see write_header /
 // decode_header). Exposed so a repeater can bump hop_count in place
 // without re-encoding the whole frame, and so the offset lives next to
-// the layout it depends on. The v1 -> v2 magic-prefix change shifted
-// every header field by 2 bytes (v1 hop_count was byte 3, v2 is byte 5);
-// keep this in lock-step with write_header() / decode_header() if the
-// layout ever changes again.
-constexpr size_t kHopCountOffset = 5;
+// the layout it depends on. v3 shifted this by 1 (was 5 in v2) as
+// source_id widened from 1 to 2 bytes; keep this in lock-step with
+// write_header() / decode_header() if the layout ever changes again.
+constexpr size_t kHopCountOffset = 6;
 
 // ESP-NOW supports up to 250-byte payloads. Pre-Epic-13 the firmware
 // capped frames at 32 bytes because no message type exceeded 16 bytes
@@ -160,7 +173,7 @@ constexpr hal::Capability message_type_required_capability(MessageType t) {
 
 struct Header {
     uint8_t     protocol_version;  // forced to kProtocolVersion by encoders
-    uint8_t     source_id;         // 1-254; 0xFF = broadcast
+    uint16_t    source_id;         // 0x0001..0xFFFE; 0xFFFF = broadcast (LE on wire)
     uint8_t     sequence_number;   // 1-255 wrapping; 0 = sequencing disabled
     uint8_t     hop_count;         // 0 = original; cap at kMaxHopCount
     MessageType message_type;      // set by encoders, read by callers
@@ -199,17 +212,17 @@ struct RepeaterHeartbeatPayload {
 constexpr uint8_t kRepeaterHeartbeatPayloadLen = 10;   // 3 + 1 + 2 + 4
 
 struct LightPulsePayload {
-    uint8_t target_class;          // 0 = all classes; see hal::DeviceClass enum (Epic 4.65)
-    uint8_t target_group;          // 0 = all groups; 1-255 specific (PixMob enforces its own 0-31 cap)
-    uint8_t r;
-    uint8_t g;
-    uint8_t b;
-    uint8_t attack;                // pixmob::Time index
-    uint8_t sustain;               // pixmob::Time index
-    uint8_t release;               // pixmob::Time index
-    uint8_t chance;                // pixmob::Chance index
+    uint8_t  target_class;         // 0 = all classes; see hal::DeviceClass enum (Epic 4.65)
+    uint16_t target_group;         // 0 = all groups; 1-65534 specific (LE on wire; PixMob enforces its own 0-31 cap)
+    uint8_t  r;
+    uint8_t  g;
+    uint8_t  b;
+    uint8_t  attack;               // pixmob::Time index
+    uint8_t  sustain;              // pixmob::Time index
+    uint8_t  release;              // pixmob::Time index
+    uint8_t  chance;               // pixmob::Chance index
 };
-constexpr uint8_t kLightPulsePayloadLen = 9;
+constexpr uint8_t kLightPulsePayloadLen = 10;   // v3: +1 byte for u16 target_group
 
 // LIGHT_WASH payload (Epic 6C Phase D). A persistent background wash on
 // capable Lumes - the §1.2 lighting-design baseline that PULSE punctuates.
@@ -220,7 +233,7 @@ constexpr uint8_t kLightPulsePayloadLen = 9;
 // §4.1 for the renderer contract.
 struct LightWashPayload {
     uint8_t  target_class;
-    uint8_t  target_group;
+    uint16_t target_group;         // LE on wire (v3)
     uint8_t  r1, g1, b1;           // start colour
     uint8_t  r2, g2, b2;           // end colour (ignored when cycle_ms == 0)
     uint8_t  attack;               // 100 ms units; ramp from current to wash baseline
@@ -230,21 +243,20 @@ struct LightWashPayload {
     uint16_t ttl_seconds;          // little-endian; 0 = infinite
     uint8_t  pulse_response;       // 0 = ignore PULSE while washing; 1 = accept PULSE as additive overlay
 };
-// Wire layout (16 bytes): class(1) + group(1) + r1g1b1(3) + r2g2b2(3)
+// Wire layout (17 bytes): class(1) + group(2 LE) + r1g1b1(3) + r2g2b2(3)
 // + attack(1) + release(1) + intensity(1) + cycle_ms(2 LE) + ttl_seconds(2 LE)
-// + pulse_response(1). (The Notion source-prompt v0.3 mis-stated this as
-// 17 - arithmetic error; corrected here and in the design doc.)
-constexpr uint8_t kLightWashPayloadLen = 16;
+// + pulse_response(1). v3: +1 byte for the u16 target_group widening.
+constexpr uint8_t kLightWashPayloadLen = 17;
 
 // LIGHT_WASH_END payload (Epic 6C Phase D). Explicit cancel of an active
 // wash on the addressed target(s). release_time (100 ms units) overrides
 // the active wash's own release field.
 struct LightWashEndPayload {
-    uint8_t target_class;
-    uint8_t target_group;
-    uint8_t release_time;          // 100 ms units; fade from instantaneous wash to black over this duration
+    uint8_t  target_class;
+    uint16_t target_group;         // LE on wire (v3)
+    uint8_t  release_time;         // 100 ms units; fade from instantaneous wash to black over this duration
 };
-constexpr uint8_t kLightWashEndPayloadLen = 3;
+constexpr uint8_t kLightWashEndPayloadLen = 4;   // v3: +1 byte for u16 target_group
 
 // LIGHT_WASH_PULSE payload (Epic 6C Phase D). Identical to LightPulsePayload
 // on the wire; differs only in dispatch semantics - it fires only on Lumes
@@ -253,17 +265,17 @@ constexpr uint8_t kLightWashEndPayloadLen = 3;
 // type-distinguishable; the byte layout is intentionally the same so the
 // encoder can share format with light_pulse if desirable later.
 struct LightWashPulsePayload {
-    uint8_t target_class;
-    uint8_t target_group;
-    uint8_t r;
-    uint8_t g;
-    uint8_t b;
-    uint8_t attack;
-    uint8_t sustain;
-    uint8_t release;
-    uint8_t chance;
+    uint8_t  target_class;
+    uint16_t target_group;         // LE on wire (v3)
+    uint8_t  r;
+    uint8_t  g;
+    uint8_t  b;
+    uint8_t  attack;
+    uint8_t  sustain;
+    uint8_t  release;
+    uint8_t  chance;
 };
-constexpr uint8_t kLightWashPulsePayloadLen = 9;
+constexpr uint8_t kLightWashPulsePayloadLen = 10;   // v3: +1 byte for u16 target_group
 
 // =============================================================================
 // Epic 13: display-content payloads (TEXT_DISPLAY, BITMAP_HEADER,
@@ -289,8 +301,8 @@ constexpr uint8_t kLightWashPulsePayloadLen = 9;
 // "no body text". Empty both is legal (acts as a no-op on a surface
 // that has no current content).
 //
-// Wire layout (variable, 8..200 bytes):
-//   target_group(1) + r(1) + g(1) + b(1)
+// Wire layout (variable, 9..201 bytes):
+//   target_group(2 LE) + r(1) + g(1) + b(1)
 //   + ttl_ms(2 LE) + header_len(1) + header_bytes(header_len)
 //   + body_len(1) + body_bytes(body_len)
 //
@@ -298,14 +310,14 @@ constexpr uint8_t kLightWashPulsePayloadLen = 9;
 // auto-clear after that many milliseconds (Lume side).
 constexpr uint8_t kTextDisplayMaxHeaderLen = 64;
 constexpr uint8_t kTextDisplayMaxBodyLen   = 128;
-constexpr uint16_t kTextDisplayFixedPrefixLen = 6;  // group+r+g+b+ttl_ms_LE
+constexpr uint16_t kTextDisplayFixedPrefixLen = 7;  // group(2 LE)+r+g+b+ttl_ms_LE (v3)
 constexpr uint16_t kTextDisplayMinPayloadLen  =     // both strings empty
     kTextDisplayFixedPrefixLen + 1 /*header_len*/ + 1 /*body_len*/;
 constexpr uint16_t kTextDisplayMaxPayloadLen  =
     kTextDisplayMinPayloadLen + kTextDisplayMaxHeaderLen + kTextDisplayMaxBodyLen;
 
 struct TextDisplayPayload {
-    uint8_t  target_group;
+    uint16_t target_group;    // LE on wire (v3)
     uint8_t  r;
     uint8_t  g;
     uint8_t  b;
@@ -327,8 +339,8 @@ struct TextDisplayPayload {
 // As with TEXT_DISPLAY, the message type denotes the surface
 // (Capability::DisplayBitmap) - no target_class byte.
 //
-// Wire layout (37 bytes):
-//   target_group(1) + width(1) + height(1)
+// Wire layout (38 bytes, v3):
+//   target_group(2 LE) + width(1) + height(1)
 //   + plane_count(1) + colours[8] (24, three bytes each)
 //   + fit(1) + zoom_pct(1) + overwrite(1)
 //   + checksum(4 LE) + ttl_ms(2 LE)
@@ -343,10 +355,10 @@ struct TextDisplayPayload {
 //   1 = REPLACE  (clear surface at plane 0 of this header set)
 constexpr uint8_t  kBitmapMaxPlanes       = 8;
 constexpr uint8_t  kBitmapMaxDimension    = 64;   // hard cap to keep wire airtime sane
-constexpr uint8_t  kBitmapHeaderPayloadLen = 37;
+constexpr uint8_t  kBitmapHeaderPayloadLen = 38;  // v3: +1 byte for u16 target_group
 
 struct BitmapHeaderPayload {
-    uint8_t  target_group;
+    uint16_t target_group;      // LE on wire (v3)
     uint8_t  width;             // 1..kBitmapMaxDimension
     uint8_t  height;            // 1..kBitmapMaxDimension
     uint8_t  plane_count;       // 1..kBitmapMaxPlanes
@@ -363,16 +375,16 @@ struct BitmapHeaderPayload {
 // allowed and distinguished by byte_offset; the receiver assembles them
 // into the staging buffer at the plane's base offset + byte_offset.
 //
-// Wire layout (variable, 5..242 bytes):
-//   target_group(1) + plane_index(1)
+// Wire layout (variable, 6..241 bytes, v3):
+//   target_group(2 LE) + plane_index(1)
 //   + byte_offset(2 LE) + data_len(1) + data_bytes(data_len)
-constexpr uint16_t kBitmapPlaneFixedPrefixLen = 5;
+constexpr uint16_t kBitmapPlaneFixedPrefixLen = 6;  // v3: +1 byte for u16 target_group
 constexpr uint16_t kBitmapPlaneMinPayloadLen  = kBitmapPlaneFixedPrefixLen;
 constexpr uint16_t kBitmapPlaneMaxDataLen     =
-    kMaxPayloadSize - kBitmapPlaneFixedPrefixLen;   // = 237
+    kMaxPayloadSize - kBitmapPlaneFixedPrefixLen;   // v3: = kMaxPayloadSize - 6
 
 struct BitmapPlanePayload {
-    uint8_t  target_group;
+    uint16_t target_group;      // LE on wire (v3)
     uint8_t  plane_index;       // 0..plane_count-1 (per the preceding BITMAP_HEADER)
     uint16_t byte_offset;       // offset into this plane's pixel-byte stream
     uint8_t  data_len;          // 0..kBitmapPlaneMaxDataLen
@@ -384,14 +396,14 @@ struct BitmapPlanePayload {
 // one without disturbing the other (e.g. drop the song title but keep
 // the band logo visible underneath).
 //
-// Wire layout (3 bytes):
-//   target_group(1) + clear_text(1) + clear_bitmap(1)
-constexpr uint8_t kClearScreenPayloadLen = 3;
+// Wire layout (4 bytes, v3):
+//   target_group(2 LE) + clear_text(1) + clear_bitmap(1)
+constexpr uint8_t kClearScreenPayloadLen = 4;   // v3: +1 byte for u16 target_group
 
 struct ClearScreenPayload {
-    uint8_t target_group;
-    uint8_t clear_text;         // 0 = leave text alone, 1 = clear text layer
-    uint8_t clear_bitmap;       // 0 = leave bitmap alone, 1 = clear bitmap layer
+    uint16_t target_group;      // LE on wire (v3)
+    uint8_t  clear_text;        // 0 = leave text alone, 1 = clear text layer
+    uint8_t  clear_bitmap;      // 0 = leave bitmap alone, 1 = clear bitmap layer
 };
 
 // =============================================================================

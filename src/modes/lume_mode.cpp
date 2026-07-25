@@ -378,7 +378,7 @@ void LumeMode::on_button_event(const ButtonPressEvent& ev) {
 #endif
 }
 
-bool LumeMode::seen_recently(uint8_t src, uint8_t seq) const {
+bool LumeMode::seen_recently(uint16_t src, uint8_t seq) const {
     if (seq == 0) return false;
     for (size_t i = 0; i < kDedupRingSize; ++i) {
         if (dedup_ring_[i].source_id == src
@@ -389,7 +389,7 @@ bool LumeMode::seen_recently(uint8_t src, uint8_t seq) const {
     return false;
 }
 
-void LumeMode::mark_seen(uint8_t src, uint8_t seq) {
+void LumeMode::mark_seen(uint16_t src, uint8_t seq) {
     if (seq == 0) return;
     dedup_ring_[dedup_head_] = DedupEntry{src, seq};
     dedup_head_ = (dedup_head_ + 1) % kDedupRingSize;
@@ -430,7 +430,10 @@ void LumeMode::fan_out_light_pulse(const transport::espnow::LightPulsePayload& p
             if (p.target_group != 0 && p.target_group != lume_group_) continue;
         }
 
-        slot.ctx->set_current_target(p.target_class, p.target_group);
+        // v3: u16 -> u8 narrowing is safe here - after the filter above,
+        // p.target_group is either 0 or equal to lume_group_ (which is u8).
+        slot.ctx->set_current_target(p.target_class,
+                                     static_cast<uint8_t>(p.target_group));
         slot.binding->on_light_pulse(*slot.ctx, ev);
     }
 }
@@ -461,7 +464,10 @@ void LumeMode::fan_out_light_pulse_inline(
             if (p.target_group != 0 && p.target_group != lume_group_) continue;
         }
 
-        slot.ctx->set_current_target(p.target_class, p.target_group);
+        // v3: u16 -> u8 narrowing is safe here - after the filter above,
+        // p.target_group is either 0 or equal to lume_group_ (which is u8).
+        slot.ctx->set_current_target(p.target_class,
+                                     static_cast<uint8_t>(p.target_group));
         slot.binding->on_light_pulse(*slot.ctx, ev);
     }
 }
@@ -483,7 +489,10 @@ void LumeMode::fan_out_light_wash(const transport::espnow::LightWashPayload& p) 
             if (p.target_group != 0 && p.target_group != lume_group_) continue;
         }
 
-        slot.ctx->set_current_target(p.target_class, p.target_group);
+        // v3: u16 -> u8 narrowing is safe here - after the filter above,
+        // p.target_group is either 0 or equal to lume_group_ (which is u8).
+        slot.ctx->set_current_target(p.target_class,
+                                     static_cast<uint8_t>(p.target_group));
         slot.binding->on_light_wash(*slot.ctx, p);
     }
 }
@@ -501,7 +510,10 @@ void LumeMode::fan_out_light_wash_end(const transport::espnow::LightWashEndPaylo
             if (p.target_group != 0 && p.target_group != lume_group_) continue;
         }
 
-        slot.ctx->set_current_target(p.target_class, p.target_group);
+        // v3: u16 -> u8 narrowing is safe here - after the filter above,
+        // p.target_group is either 0 or equal to lume_group_ (which is u8).
+        slot.ctx->set_current_target(p.target_class,
+                                     static_cast<uint8_t>(p.target_group));
         slot.binding->on_light_wash_end(*slot.ctx, p.release_time);
     }
 }
@@ -528,7 +540,10 @@ void LumeMode::fan_out_light_wash_pulse(const transport::espnow::LightWashPulseP
             if (p.target_group != 0 && p.target_group != lume_group_) continue;
         }
 
-        slot.ctx->set_current_target(p.target_class, p.target_group);
+        // v3: u16 -> u8 narrowing is safe here - after the filter above,
+        // p.target_group is either 0 or equal to lume_group_ (which is u8).
+        slot.ctx->set_current_target(p.target_class,
+                                     static_cast<uint8_t>(p.target_group));
         slot.binding->on_light_wash_pulse(*slot.ctx, ev);
     }
 }
@@ -589,7 +604,8 @@ void LumeMode::fan_out_text_display(const transport::espnow::TextDisplayPayload&
         if (slot.binding->device_class() != hal::DeviceClass::Display) continue;
         if (p.target_group != 0 && p.target_group != lume_group_) continue;
         slot.ctx->set_current_target(
-            static_cast<uint8_t>(hal::DeviceClass::Display), p.target_group);
+            static_cast<uint8_t>(hal::DeviceClass::Display),
+            static_cast<uint8_t>(p.target_group));   // v3: safe narrow post-filter
         slot.binding->on_text_display(*slot.ctx, p);
     }
 }
@@ -601,7 +617,8 @@ void LumeMode::fan_out_bitmap_header(const transport::espnow::BitmapHeaderPayloa
         if (slot.binding->device_class() != hal::DeviceClass::Display) continue;
         if (p.target_group != 0 && p.target_group != lume_group_) continue;
         slot.ctx->set_current_target(
-            static_cast<uint8_t>(hal::DeviceClass::Display), p.target_group);
+            static_cast<uint8_t>(hal::DeviceClass::Display),
+            static_cast<uint8_t>(p.target_group));   // v3: safe narrow post-filter
         slot.binding->on_bitmap_header(*slot.ctx, p);
     }
 }
@@ -613,7 +630,8 @@ void LumeMode::fan_out_bitmap_plane(const transport::espnow::BitmapPlanePayload&
         if (slot.binding->device_class() != hal::DeviceClass::Display) continue;
         if (p.target_group != 0 && p.target_group != lume_group_) continue;
         slot.ctx->set_current_target(
-            static_cast<uint8_t>(hal::DeviceClass::Display), p.target_group);
+            static_cast<uint8_t>(hal::DeviceClass::Display),
+            static_cast<uint8_t>(p.target_group));   // v3: safe narrow post-filter
         slot.binding->on_bitmap_plane(*slot.ctx, p);
     }
 }
@@ -625,7 +643,8 @@ void LumeMode::fan_out_clear_screen(const transport::espnow::ClearScreenPayload&
         if (slot.binding->device_class() != hal::DeviceClass::Display) continue;
         if (p.target_group != 0 && p.target_group != lume_group_) continue;
         slot.ctx->set_current_target(
-            static_cast<uint8_t>(hal::DeviceClass::Display), p.target_group);
+            static_cast<uint8_t>(hal::DeviceClass::Display),
+            static_cast<uint8_t>(p.target_group));   // v3: safe narrow post-filter
         slot.binding->on_clear_screen(*slot.ctx, p);
     }
 }

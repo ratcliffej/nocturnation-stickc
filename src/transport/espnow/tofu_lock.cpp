@@ -9,7 +9,7 @@ namespace espnow {
 TofuLock::TofuLock() = default;
 
 bool TofuLock::admit(MessageType msg_type,
-                     uint8_t     source_id,
+                     uint16_t    source_id,          // v3: widened to u16
                      uint8_t     channel,
                      uint32_t    now_ms) {
     (void)msg_type;   // display-family no longer needs special handling
@@ -77,10 +77,10 @@ void TofuLock::clear() {
     last_frame_ms_ = 0;
 }
 
-size_t format_tofu_lock_label(bool    is_locked,
-                              uint8_t locked_id_value,
-                              char*   buf,
-                              size_t  buflen) {
+size_t format_tofu_lock_label(bool     is_locked,
+                              uint16_t locked_id_value,   // v3: widened to u16
+                              char*    buf,
+                              size_t   buflen) {
     if (!buf || buflen == 0) return 0;
     if (!is_locked) {
         buf[0] = '\0';
@@ -92,8 +92,11 @@ size_t format_tofu_lock_label(bool    is_locked,
     } else if (is_community_range(locked_id_value)) {
         prefix = "C";
     } else {
-        prefix = "?";   // defensive - shouldn't happen for a conforming Director
+        prefix = "?";   // defensive - extended range (>0xFF) unused by current UI
     }
+    // v3: format keeps the two-hex-digit convention for backwards visual
+    // parity with v2 - current UI never generates values beyond 0xFF.
+    // A future NVS/UI widening should extend to "%s:%04X".
     const int n = std::snprintf(buf, buflen, "%s:%02X",
                                 prefix, static_cast<unsigned>(locked_id_value));
     if (n < 0) {

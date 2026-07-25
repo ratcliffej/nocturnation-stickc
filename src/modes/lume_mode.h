@@ -81,7 +81,7 @@ private:
     uint32_t  last_rx_ms_         = 0;
     uint32_t  last_draw_ms_       = 0;
     uint32_t  last_pip_draw_ms_   = 0;
-    uint8_t   last_source_id_     = 0;
+    uint16_t  last_source_id_     = 0;   // v3: widened to u16
     uint8_t   last_msg_type_      = 0xFF;
     bool      no_signal_          = false;   // sticky once threshold crossed
 
@@ -93,7 +93,7 @@ private:
     // the old one's). See docs/stickc-history.md.
     bool      director_offset_valid_     = false;
     int32_t   director_tick_offset_ms_    = 0;
-    uint8_t   director_offset_source_id_  = 0;   // detects TOFU relock
+    uint16_t  director_offset_source_id_  = 0;   // v3: widened to u16; detects TOFU relock
 
     // fallback_active_ set when we synthesised the LIGHT_WASH;
     // fallback_faded_ set when we emitted the LIGHT_WASH_END. Both
@@ -198,13 +198,14 @@ private:
     // IR fires / double paints per beat. Sequence number 0 is reserved
     // ("sequencing disabled") and treated as always fresh.
     // WiFi-task-owned - loop_tick only reads pending_light_*.
-    struct DedupEntry { uint8_t source_id; uint8_t sequence_number; };
+    // v3: source_id widened to u16 to match the wire.
+    struct DedupEntry { uint16_t source_id; uint8_t sequence_number; };
     static constexpr size_t kDedupRingSize = 16;
     DedupEntry dedup_ring_[kDedupRingSize] = {};
     size_t     dedup_head_ = 0;
 
-    bool seen_recently(uint8_t src, uint8_t seq) const;
-    void mark_seen(uint8_t src, uint8_t seq);
+    bool seen_recently(uint16_t src, uint8_t seq) const;
+    void mark_seen(uint16_t src, uint8_t seq);
 
     // Deferred (main-task) fan-out for LIGHT_PULSE. Handles bindings
     // that block (PixMobIrBinding -> IRsend::sendRaw).

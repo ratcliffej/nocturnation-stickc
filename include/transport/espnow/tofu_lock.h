@@ -68,7 +68,7 @@ public:
     //     NOT update the liveness timer (they're orchestrator-
     //     origin content, not Director identity).
     bool admit(MessageType msg_type,
-               uint8_t     source_id,
+               uint16_t    source_id,          // v3: widened to u16
                uint8_t     channel,
                uint32_t    now_ms);
 
@@ -85,12 +85,12 @@ public:
     void clear();
 
     // Observers.
-    bool    is_locked() const { return has_lock_; }
-    uint8_t locked_id() const { return locked_id_; }   // undefined when !is_locked()
+    bool     is_locked() const { return has_lock_; }
+    uint16_t locked_id() const { return locked_id_; }   // undefined when !is_locked()
 
 private:
     bool     has_lock_       = false;
-    uint8_t  locked_id_      = 0;
+    uint16_t locked_id_      = 0;                       // v3: widened to u16
     uint32_t last_frame_ms_  = 0;
 };
 
@@ -106,7 +106,7 @@ private:
 // Returns the number of characters written (excluding the trailing
 // NUL), or 0 if nothing was written.
 size_t format_tofu_lock_label(bool     is_locked,
-                              uint8_t  locked_id_value,
+                              uint16_t locked_id_value,   // v3: widened to u16
                               char*    buf,
                               size_t   buflen);
 

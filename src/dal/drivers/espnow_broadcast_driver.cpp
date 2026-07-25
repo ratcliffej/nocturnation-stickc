@@ -301,16 +301,23 @@ void EspNowBroadcastDriver::send_passthrough(const uint8_t* buf, size_t n) {
     if (!active_) return;
 
     // Re-stamp source_id and sequence_number when upstream used the
-    // broadcast id (0xFF): joins this Director's single monotonic seq
+    // broadcast id (0xFFFF): joins this Director's single monotonic seq
     // stream so receivers dedup correctly. See docs/stickc-history.md
     // for why the seq re-stamp is load-bearing. A frame with its own
-    // source_id keeps its own seq (preserved-identity case).
+    // source_id keeps its own seq (preserved-identity case). v3 layout:
+    //   offset 3-4: source_id LE u16
+    //   offset 5:   sequence_number
     uint8_t patched[transport::espnow::kMaxFrameSize];
     if (n > sizeof(patched)) return;
     std::memcpy(patched, buf, n);
-    if (patched[3] == transport::espnow::kBroadcastSourceId) {
-        patched[3] = source_id_;         // header offset 3 = source_id
-        patched[4] = next_seq();         // header offset 4 = sequence_number
+    const uint16_t inbound_src =
+        static_cast<uint16_t>(patched[3]) |
+        (static_cast<uint16_t>(patched[4]) << 8);
+    if (inbound_src == transport::espnow::kBroadcastSourceId) {
+        const uint16_t src = source_id_;
+        patched[3] = static_cast<uint8_t>(src        & 0xFF);   // src LSB
+        patched[4] = static_cast<uint8_t>((src >> 8) & 0xFF);   // src MSB
+        patched[5] = next_seq();                                // seq (v3 offset)
     }
     send_frame_bytes(patched, n, "PASS");
 }
