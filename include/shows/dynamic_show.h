@@ -2,10 +2,11 @@
 // Block 3-4 analyser primitives and routes effects to different
 // device groups via the Epic 4.65 class+group target format.
 //
-// Routing:
-//   kick  (on_beat_detected)  -> render_fx("01:01", ev)  Light, group 1
-//   snare (on_snare_detected) -> render_fx("01:02", ev)  Light, group 2
-//   hi-hat (on_hihat_detected)-> render_fx("01:03", ev)  Light, group 3
+// Routing (PixMob-oriented; targets follow the operator-workflow.md
+// deployment convention that PixMobs live in groups 10..12):
+//   kick  (on_beat_detected)  -> render_fx("01:0a", ev)  Light, group 10
+//   snare (on_snare_detected) -> render_fx("01:0b", ev)  Light, group 11
+//   hi-hat (on_hihat_detected)-> render_fx("01:0c", ev)  Light, group 12
 //
 // Colour:
 //   centroid -> hue   (low = cool blue, high = warm red)
@@ -27,11 +28,16 @@
 //                1 -> all events broadcast to group 0 (every bracelet
 //                     responds regardless of its programmed group).
 //                     Default - works out of the box on any deployment.
-//                2 -> kick to group 1, snare + hi-hat both to group 2.
+//                2 -> kick to group 10, snare + hi-hat both to group 11.
 //                     Pair-of-groups split for two-tier deployments.
-//                3 -> kick to group 1, snare to group 2, hi-hat to
-//                     group 3. Requires bracelets pre-programmed into
-//                     the three groups; full per-drum separation.
+//                3 -> kick to group 10, snare to group 11, hi-hat to
+//                     group 12. Requires bracelets pre-programmed into
+//                     these three groups; full per-drum separation.
+//
+// The property is a mode selector (1, 2, or 3 groups active), NOT a
+// target group value. Target group values are fixed at 10, 11, 12 to
+// keep PixMob traffic out of the 1..9 range reserved for capability-
+// rich devices (Tildagons, LED strips). See operator-workflow.md.
 //
 // Power profile: needs_audio_frames=true (drives the spectrum widget +
 // BPM tracking via IBI buffer). Capability requirements: Mic.

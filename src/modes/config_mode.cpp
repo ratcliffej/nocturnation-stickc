@@ -1380,7 +1380,7 @@ void ConfigMode::handle_pixmob(const ButtonPressEvent& ev) {
             break;
         case PixMobState::SetGroupId:
             if (ev.id == ButtonId::Btn2) {
-                pixmob_target_group_ = (pixmob_target_group_ % 5) + 1;
+                pixmob_target_group_ = (pixmob_target_group_ % 16) + 1;
                 draw();
             } else if (ev.id == ButtonId::Btn1) {
                 // Target name is irrelevant - the AssignDeviceGroup
@@ -1402,7 +1402,7 @@ void ConfigMode::handle_pixmob(const ButtonPressEvent& ev) {
                     0xFF, 0xFF, 0xFF,
                     pixmob::T_32_MS, pixmob::T_96_MS, pixmob::T_96_MS,
                     pixmob::CHANCE_100});
-                pixmob_target_group_ = (pixmob_target_group_ % 5) + 1;
+                pixmob_target_group_ = (pixmob_target_group_ % 16) + 1;
                 draw();
             }
             break;

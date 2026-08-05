@@ -224,7 +224,9 @@ static void test_groups_1_broadcasts_kick_to_group_0(void) {
     TEST_ASSERT_EQUAL_UINT8(0, g_espnow_driver.last_group());
 }
 
-static void test_groups_3_kick_routes_to_group_1(void) {
+static void test_groups_3_kick_routes_to_group_10(void) {
+    // PixMob-oriented routing per the operator-workflow deployment
+    // convention: groups 10..12 are the PixMob fleet.
     DynamicShow* d = dynamic_show_instance();
     auto& ctx = dynamic_show_context();
     set_groups(3);
@@ -234,10 +236,10 @@ static void test_groups_3_kick_routes_to_group_1(void) {
     d->on_beat_detected(ctx, 200);
 
     TEST_ASSERT_EQUAL_INT(1, g_espnow_driver.count());
-    TEST_ASSERT_EQUAL_UINT8(1, g_espnow_driver.last_group());
+    TEST_ASSERT_EQUAL_UINT8(10, g_espnow_driver.last_group());
 }
 
-static void test_groups_3_snare_routes_to_group_2(void) {
+static void test_groups_3_snare_routes_to_group_11(void) {
     DynamicShow* d = dynamic_show_instance();
     auto& ctx = dynamic_show_context();
     set_groups(3);
@@ -247,10 +249,10 @@ static void test_groups_3_snare_routes_to_group_2(void) {
     d->on_snare_detected(ctx, 200);
 
     TEST_ASSERT_EQUAL_INT(1, g_espnow_driver.count());
-    TEST_ASSERT_EQUAL_UINT8(2, g_espnow_driver.last_group());
+    TEST_ASSERT_EQUAL_UINT8(11, g_espnow_driver.last_group());
 }
 
-static void test_groups_3_hihat_routes_to_group_3(void) {
+static void test_groups_3_hihat_routes_to_group_12(void) {
     DynamicShow* d = dynamic_show_instance();
     auto& ctx = dynamic_show_context();
     set_groups(3);
@@ -260,7 +262,7 @@ static void test_groups_3_hihat_routes_to_group_3(void) {
     d->on_hihat_detected(ctx, 200);
 
     TEST_ASSERT_EQUAL_INT(1, g_espnow_driver.count());
-    TEST_ASSERT_EQUAL_UINT8(3, g_espnow_driver.last_group());
+    TEST_ASSERT_EQUAL_UINT8(12, g_espnow_driver.last_group());
 }
 
 static void test_groups_2_merges_snare_and_hihat(void) {
@@ -271,15 +273,18 @@ static void test_groups_2_merges_snare_and_hihat(void) {
 
     set_test_millis(100);
     d->on_beat_detected(ctx, 200);
-    TEST_ASSERT_EQUAL_UINT8(1, g_espnow_driver.last_group());
+    // kick -> PixMob group 10
+    TEST_ASSERT_EQUAL_UINT8(10, g_espnow_driver.last_group());
 
     g_espnow_driver.reset();
     d->on_snare_detected(ctx, 200);
-    TEST_ASSERT_EQUAL_UINT8(2, g_espnow_driver.last_group());
+    // snare -> PixMob group 11
+    TEST_ASSERT_EQUAL_UINT8(11, g_espnow_driver.last_group());
 
     g_espnow_driver.reset();
     d->on_hihat_detected(ctx, 200);
-    TEST_ASSERT_EQUAL_UINT8(2, g_espnow_driver.last_group());
+    // hi-hat merges into snare's group when only 2 groups active
+    TEST_ASSERT_EQUAL_UINT8(11, g_espnow_driver.last_group());
 }
 
 // Director-IR loopback: the dispatch_output_class_group helper fires the
@@ -457,9 +462,9 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_required_capabilities_includes_mic);
     RUN_TEST(test_default_groups_property_is_1);
     RUN_TEST(test_groups_1_broadcasts_kick_to_group_0);
-    RUN_TEST(test_groups_3_kick_routes_to_group_1);
-    RUN_TEST(test_groups_3_snare_routes_to_group_2);
-    RUN_TEST(test_groups_3_hihat_routes_to_group_3);
+    RUN_TEST(test_groups_3_kick_routes_to_group_10);
+    RUN_TEST(test_groups_3_snare_routes_to_group_11);
+    RUN_TEST(test_groups_3_hihat_routes_to_group_12);
     RUN_TEST(test_groups_2_merges_snare_and_hihat);
     RUN_TEST(test_kick_fires_director_ir_via_loopback);
     RUN_TEST(test_low_centroid_fires_cool_colour);
