@@ -160,7 +160,14 @@ private:
 
     PixMobState pixmob_state_       = PixMobState::Menu;
     size_t      pixmob_selected_    = 0;
-    uint8_t     pixmob_target_group_ = 1;
+    // PixMob group cycle wraps 1..16 per config_mode.cpp (SetGroupId
+    // / GroupTarget states). Starting at 10 puts the initial value
+    // in the PixMob range (10..12) per the operator-workflow deployment
+    // convention (2026-07-27); operators can cycle up to 12 for the
+    // second/third bracelet group or down past 10 into the 1..9 range
+    // if they want to test PixMob response to capability-rich device
+    // targeting for some reason.
+    uint8_t     pixmob_target_group_ = 10;
     static constexpr size_t kPixMobItemCount = 2;
     static constexpr uint32_t kConfirmFlashMs = 800;     // "Sent!" linger
 

@@ -63,17 +63,24 @@ constexpr size_t kPropCount = sizeof(kProps) / sizeof(kProps[0]);
 
 // Map (drum, group_count) to a render_fx target string. Static
 // constants so we don't construct strings every fire.
+//
+// Groups 10..12 are the deployment convention for the PixMob legacy
+// fleet (see operator-workflow.md "Group addressing conventions",
+// adopted 2026-07-27). This show is PixMob-oriented so its per-drum
+// routing lands in that range. Groups 1..9 are reserved for
+// capability-rich devices (Tildagons, LED strips) and would not
+// respond to these emissions.
 const char* kick_target_for(uint8_t group_count) {
-    if (group_count >= 2) return "01:01";
+    if (group_count >= 2) return "01:0a";   // PixMob group 10
     return "00:00";
 }
 const char* snare_target_for(uint8_t group_count) {
-    if (group_count >= 2) return "01:02";
+    if (group_count >= 2) return "01:0b";   // PixMob group 11
     return "00:00";
 }
 const char* hihat_target_for(uint8_t group_count) {
-    if (group_count >= 3) return "01:03";
-    if (group_count >= 2) return "01:02";
+    if (group_count >= 3) return "01:0c";   // PixMob group 12
+    if (group_count >= 2) return "01:0b";   // PixMob group 11
     return "00:00";
 }
 
