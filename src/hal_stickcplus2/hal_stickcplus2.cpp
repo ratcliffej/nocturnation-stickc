@@ -77,7 +77,7 @@ static constexpr Capability kCapabilities[] = {
     // whether a strip is plugged in (the data line just radiates to
     // a dead pin). A future Config "LED Strip -> Enable" toggle can
     // gate the driver at runtime once that wiring lands.
-    Capability::LedStrip,
+    Capability::AddressableLeds,
 
     // Epic 13: the Stick's LCD can render orchestrator-pushed text
     // and bitmap content. Both surfaces share the same M5Unified

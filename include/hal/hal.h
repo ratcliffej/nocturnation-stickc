@@ -112,16 +112,22 @@ enum class Capability : uint8_t {
     // Addressable LED strip (Epic 12)
     // -------------------------------------------------------------------------
     //
-    // Host can drive a one-wire addressable LED strip (SK6812 / WS2812
-    // family). One logical strip per host - if the backend has both an
-    // onboard LED and an external Grove strip, they are exposed as one
-    // contiguous pixel array (onboard pixel first, then external pixels)
-    // so the driver doesn't need to know the physical topology.
+    // Host has multiple independently-addressable pixels — either a
+    // one-wire strip (SK6812 / WS2812 family, driven by class LedStrip
+    // below) or another multi-pixel surface. Renamed from LedStrip
+    // (Epic 18) so the capability names the cross-firmware contract
+    // rather than one specific driver interface: Tildagon claims this
+    // for its 12-pixel perimeter ring without implementing class LedStrip.
     //
     // Host examples: M5Atom Lite (1 onboard + Grove), StickC Plus2/S3
-    // (Grove only, when enabled in Config). Tildagon is not a LedStrip
-    // host - its perimeter ring is driven by the MicroPython renderer.
-    LedStrip,
+    // (Grove only, when enabled in Config). Also declared cross-firmware
+    // by the Tildagon MicroPython codebase (equivalent gate, no C++
+    // enum in that codebase — see Epic 18).
+    //
+    // Single-pixel Lumes (PixMob) do NOT declare this capability, so
+    // LED-mode-1+ (single-LED / RepeatPattern) frames are dropped at
+    // the capability gate before any renderer sees them.
+    AddressableLeds,
 
     // -------------------------------------------------------------------------
     // Display content (Epic 13)
@@ -522,8 +528,11 @@ public:
     static Buttons*  buttons();
     static IMU*      imu();
     static Battery*  battery();
-    // Returns nullptr on backends without a Capability::LedStrip
-    // declaration. See class LedStrip above for the contract.
+    // Returns nullptr on backends without a Capability::AddressableLeds
+    // declaration. See class LedStrip above for the driver contract
+    // (the enum names the cross-firmware property; the class names
+    // the one-wire strip driver interface — Tildagon claims the
+    // former without implementing the latter).
     static LedStrip* led_strip();
 
     // Maximum allowed strip brightness percent for this host. Per-host

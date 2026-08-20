@@ -14,7 +14,7 @@ using namespace nocturnation::dal;
 using nocturnation::plugins::PropertyBag;
 
 hal::CapabilityMask LumeLedStripBinding::required_capabilities() const {
-    return hal::make_capability_mask(hal::Capability::LedStrip);
+    return hal::make_capability_mask(hal::Capability::AddressableLeds);
 }
 
 void LumeLedStripBinding::on_light_pulse(OutputBindingContext& ctx,
