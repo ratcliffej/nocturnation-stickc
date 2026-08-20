@@ -43,7 +43,7 @@ namespace nocturnation {
 namespace hal {
 
 static constexpr Capability kCapabilities[] = {
-    Capability::LedStrip,
+    Capability::AddressableLeds,
 };
 static constexpr size_t kCapabilityCount =
     sizeof(kCapabilities) / sizeof(kCapabilities[0]);
