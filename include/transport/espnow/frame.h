@@ -1,4 +1,4 @@
-// NocturNation ESP-NOW frame format (v3)
+// NocturNation ESP-NOW frame format (v4)
 //
 // Wire format per the protocol manual §3.1 (nocturnation-docs repo). Pure logic; no ESP32
 // / radio dependencies, so this layer compiles and tests on native (laptop).
@@ -6,11 +6,11 @@
 // The radio transport (Block 3+ of Epic 4) consumes these encoders to fill
 // ESP-NOW packets, and feeds received bytes through the decoders.
 //
-// Frame layout (v3 - protocol_version == 0x03):
+// Frame layout (v4 - protocol_version == 0x04):
 //   Offset  Field             Size  Notes
 //   0       magic[0]          1     0x4E ('N')
 //   1       magic[1]          1     0x4E ('N')
-//   2       protocol_version  1     0x03 for v3
+//   2       protocol_version  1     0x04 for v4
 //   3       source_id         2     LE u16; 0x0001..0xFFFE; 0xFFFF = broadcast
 //   5       sequence_number   1     1-255 wraps; 0 = sequencing disabled
 //   6       hop_count         1     0 = original; cap at kMaxHopCount
@@ -24,15 +24,20 @@
 // rejects any inbound frame whose first two bytes are not "NN"
 // before doing any further header validation.
 //
+// v3 -> v4 change: LIGHT_PULSE, LIGHT_WASH, LIGHT_WASH_END, LIGHT_WASH_PULSE
+// each gain 3 trailing bytes for LED-level addressing (Epic 18):
+//     led_mode      (1 byte)  - 0=all pixels, 1=single LED, 2=RepeatPattern
+//     led_modifier1 (1 byte)  - mode 1: chain ID (0=all chains); mode 2: mask low
+//     led_modifier2 (1 byte)  - mode 1: LED index within chain; mode 2: mask high
+// Header layout unchanged. HOP_COUNT_OFFSET stays at 6. v3 receivers
+// reject at the version check; v4 is a hard cutover, not a compatible
+// extension. See docs/epics/epic-18-led-level-addressing.md for the
+// renderer contract; single-pixel Lumes ignore modes 1+ by capability
+// gate (Capability::AddressableLeds), so PixMob stays unaffected.
+//
 // v2 -> v3 change: source_id and target_group both widened from
-// 1 byte to 2 bytes (LE). Motivation is futureproofing headroom -
-// stadium-scale addressing for target_group, birthday-paradox safety
-// for source_id (191 slots -> 65534 slots). NVS storage + config UI
-// stay at u8; the top byte of source_id and target_group is zero for
-// current-generation Directors, and the wider space becomes usable
-// the day the UI is widened to expose it. Old-firmware devices
-// reject v3 frames at the version check; v3 is a hard cutover, not
-// a compatible extension.
+// 1 byte to 2 bytes (LE). See docs/stickc-history.md for the full
+// rationale.
 
 #pragma once
 
@@ -48,7 +53,7 @@ namespace espnow {
 // Header constants (spec §3.1)
 constexpr uint8_t  kMagic0            = 0x4E;  // 'N' - NocturNation discriminator byte 0
 constexpr uint8_t  kMagic1            = 0x4E;  // 'N' - NocturNation discriminator byte 1
-constexpr uint8_t  kProtocolVersion   = 0x03;  // bumped from 0x02 for the u16 source_id / target_group widening
+constexpr uint8_t  kProtocolVersion   = 0x04;  // bumped from 0x03 for LED-level addressing (Epic 18)
 constexpr uint16_t kBroadcastSourceId = 0xFFFF;
 
 // Source-id partitioning per protocol manual §3.4. Channel 1 uses the
@@ -181,6 +186,39 @@ struct Header {
 };
 
 // =============================================================================
+// LED-level addressing (Epic 18, v4). Trailing 3 bytes on LIGHT_PULSE /
+// LIGHT_WASH / LIGHT_WASH_END / LIGHT_WASH_PULSE. Renderer contract lives
+// in docs/epics/epic-18-led-level-addressing.md.
+//
+// Single-pixel Lumes (PixMob) drop modes 1+ at the AddressableLeds
+// capability gate; multi-pixel Lumes (Atom-driven strip, Tildagon ring)
+// honour all modes. LedMode=0 is the default and reproduces v3-era
+// whole-strip behaviour; encoders emit 0/0/0 unless the caller sets
+// otherwise, so unchanged shows keep painting identically.
+// =============================================================================
+enum class LedMode : uint8_t {
+    All            = 0x00,   // whole strip; both modifier bytes reserved (encoders emit 0)
+    SingleLed      = 0x01,   // modifier1 = chain ID (0 = all chains, echoing index); modifier2 = LED index 0..255
+    RepeatPattern  = 0x02,   // modifier1 = mask low byte; modifier2 = mask high nibble (upper 4 bits reserved); tile repeats across chain
+};
+
+// 12-bit RepeatPattern mask packed across the two modifier bytes.
+// LSB (bit 0) is position 0 in the tile; upper 4 bits of modifier2
+// are reserved (encoders MUST emit 0, decoders MUST NOT read them).
+constexpr uint16_t kLedRepeatMaskWidth = 12;
+constexpr uint16_t kLedRepeatMaskMax   = (1u << kLedRepeatMaskWidth) - 1u;  // 0x0FFF
+
+inline uint16_t pack_repeat_mask(uint8_t modifier1, uint8_t modifier2) {
+    return static_cast<uint16_t>(modifier1) |
+           (static_cast<uint16_t>(modifier2 & 0x0F) << 8);
+}
+inline void unpack_repeat_mask(uint16_t mask,
+                               uint8_t& out_modifier1, uint8_t& out_modifier2) {
+    out_modifier1 = static_cast<uint8_t>(mask & 0xFF);
+    out_modifier2 = static_cast<uint8_t>((mask >> 8) & 0x0F);
+}
+
+// =============================================================================
 // Per-message-type payload structs
 // =============================================================================
 
@@ -221,8 +259,11 @@ struct LightPulsePayload {
     uint8_t  sustain;              // pixmob::Time index
     uint8_t  release;              // pixmob::Time index
     uint8_t  chance;               // pixmob::Chance index
+    uint8_t  led_mode;             // Epic 18 (v4). See LedMode enum. Default 0 = All pixels.
+    uint8_t  led_modifier1;        // Epic 18 (v4). Mode-specific; encoders default 0.
+    uint8_t  led_modifier2;        // Epic 18 (v4). Mode-specific; encoders default 0.
 };
-constexpr uint8_t kLightPulsePayloadLen = 10;   // v3: +1 byte for u16 target_group
+constexpr uint8_t kLightPulsePayloadLen = 13;   // v4: +3 bytes for LED addressing
 
 // LIGHT_WASH payload (Epic 6C Phase D). A persistent background wash on
 // capable Lumes - the §1.2 lighting-design baseline that PULSE punctuates.
@@ -242,11 +283,15 @@ struct LightWashPayload {
     uint16_t cycle_ms;             // little-endian; one full A<->B<->A oscillation; 0 = no cycle (hold r1g1b1)
     uint16_t ttl_seconds;          // little-endian; 0 = infinite
     uint8_t  pulse_response;       // 0 = ignore PULSE while washing; 1 = accept PULSE as additive overlay
+    uint8_t  led_mode;             // Epic 18 (v4). See LedMode enum. Default 0 = All pixels.
+    uint8_t  led_modifier1;        // Epic 18 (v4). Mode-specific; encoders default 0.
+    uint8_t  led_modifier2;        // Epic 18 (v4). Mode-specific; encoders default 0.
 };
-// Wire layout (17 bytes): class(1) + group(2 LE) + r1g1b1(3) + r2g2b2(3)
+// Wire layout (20 bytes, v4): class(1) + group(2 LE) + r1g1b1(3) + r2g2b2(3)
 // + attack(1) + release(1) + intensity(1) + cycle_ms(2 LE) + ttl_seconds(2 LE)
-// + pulse_response(1). v3: +1 byte for the u16 target_group widening.
-constexpr uint8_t kLightWashPayloadLen = 17;
+// + pulse_response(1) + led_mode(1) + led_modifier1(1) + led_modifier2(1).
+// v4: +3 bytes for LED addressing. v3: +1 byte for u16 target_group.
+constexpr uint8_t kLightWashPayloadLen = 20;
 
 // LIGHT_WASH_END payload (Epic 6C Phase D). Explicit cancel of an active
 // wash on the addressed target(s). release_time (100 ms units) overrides
@@ -255,8 +300,11 @@ struct LightWashEndPayload {
     uint8_t  target_class;
     uint16_t target_group;         // LE on wire (v3)
     uint8_t  release_time;         // 100 ms units; fade from instantaneous wash to black over this duration
+    uint8_t  led_mode;             // Epic 18 (v4). Mode-0 ends the whole strip's wash; mode-1 ends one pixel; mode-2 ends masked pixels.
+    uint8_t  led_modifier1;        // Epic 18 (v4). Mode-specific; encoders default 0.
+    uint8_t  led_modifier2;        // Epic 18 (v4). Mode-specific; encoders default 0.
 };
-constexpr uint8_t kLightWashEndPayloadLen = 4;   // v3: +1 byte for u16 target_group
+constexpr uint8_t kLightWashEndPayloadLen = 7;   // v4: +3 bytes for LED addressing
 
 // LIGHT_WASH_PULSE payload (Epic 6C Phase D). Identical to LightPulsePayload
 // on the wire; differs only in dispatch semantics - it fires only on Lumes
@@ -274,8 +322,11 @@ struct LightWashPulsePayload {
     uint8_t  sustain;
     uint8_t  release;
     uint8_t  chance;
+    uint8_t  led_mode;             // Epic 18 (v4). See LedMode enum. Default 0 = All pixels.
+    uint8_t  led_modifier1;        // Epic 18 (v4). Mode-specific; encoders default 0.
+    uint8_t  led_modifier2;        // Epic 18 (v4). Mode-specific; encoders default 0.
 };
-constexpr uint8_t kLightWashPulsePayloadLen = 10;   // v3: +1 byte for u16 target_group
+constexpr uint8_t kLightWashPulsePayloadLen = 13;   // v4: +3 bytes for LED addressing
 
 // =============================================================================
 // Epic 13: display-content payloads (TEXT_DISPLAY, BITMAP_HEADER,
