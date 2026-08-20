@@ -43,7 +43,7 @@ namespace hal {
 
 static constexpr Capability kCapabilities[] = {
     Capability::Buttons,
-    Capability::LedStrip,
+    Capability::AddressableLeds,
     Capability::ESPNow,
 };
 static constexpr size_t kCapabilityCount =

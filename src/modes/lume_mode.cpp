@@ -102,7 +102,7 @@ void LumeMode::enter() {
     // IRsend::sendRaw is a ~30 ms cli/sei blocking bit-bang that
     // breaks inter-Lume sparkle unison. Operator wanting a
     // Stick-as-PixMob-satellite disables the strip via Config.
-    const bool strip_active = hal::HAL::has(hal::Capability::LedStrip)
+    const bool strip_active = hal::HAL::has(hal::Capability::AddressableLeds)
                               && persistence::load_strip_enabled();
     active_binding_count_ = 0;
     auto& reg = output_binding_registry();

@@ -2,7 +2,7 @@
 // onto an addressable LED strip (SK6812 / WS2812 family). Epic 12 B3.
 //
 // One binding instance per host. Registered automatically when the host
-// declares Capability::LedStrip - the binding's required_capabilities()
+// declares Capability::AddressableLeds - the binding's required_capabilities()
 // guards activation, so a StickC with no Grove strip wired in (Config
 // "LED Strip" disabled) silently skips registration.
 //

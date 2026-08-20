@@ -106,7 +106,7 @@ void setup() {
     nocturnation::output_bindings::output_binding_registry().register_plugin(
         nocturnation::output_bindings::pixmob_ir_instance());
     // Epic 12: addressable LED strip binding. Activates only on hosts that
-    // declare Capability::LedStrip (Atom Lite ships with it; StickC Plus2 /
+    // declare Capability::AddressableLeds (Atom Lite ships with it; StickC Plus2 /
     // S3 gain it via Config "LED Strip" in B4). LumeMode reads
     // required_capabilities() and skips this binding on hosts without one.
     nocturnation::output_bindings::output_binding_registry().register_plugin(

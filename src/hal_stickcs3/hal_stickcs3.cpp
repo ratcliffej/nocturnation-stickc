@@ -73,7 +73,7 @@ static constexpr Capability kCapabilities[] = {
     // Epic 12 live B4: Grove-connected SK6812 flex strip on GPIO 10.
     // Always declared - the LedStripDriver writes bits regardless of
     // whether a strip is plugged in.
-    Capability::LedStrip,
+    Capability::AddressableLeds,
 
     // Epic 13: the Stick's LCD can render orchestrator-pushed text
     // and bitmap content. Both surfaces share the same M5Unified
