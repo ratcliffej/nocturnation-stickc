@@ -82,6 +82,12 @@ bool EspNowBroadcastDriver::send(uint8_t target_class,
     p.sustain = static_cast<uint8_t>(ev.sustain);
     p.release = static_cast<uint8_t>(ev.release);
     p.chance  = static_cast<uint8_t>(ev.chance);
+    // Epic 18 (v4) LED addressing. Default 0/0/0 (LedMode::All) matches
+    // v3-era behaviour; test-mode / show-side callers set explicit
+    // targeted modes.
+    p.led_mode      = ev.led_mode;
+    p.led_modifier1 = ev.led_modifier1;
+    p.led_modifier2 = ev.led_modifier2;
     uint8_t buf[kHeaderSize + kLightPulsePayloadLen];
     const size_t n = encode_light_pulse(buf, sizeof(buf), h, p);
     if (n == 0) return false;
@@ -113,6 +119,9 @@ bool EspNowBroadcastDriver::send_wash(uint8_t target_class,
     p.cycle_ms       = ev.cycle_ms;
     p.ttl_seconds    = ev.ttl_seconds;
     p.pulse_response = ev.pulse_response;
+    p.led_mode       = ev.led_mode;         // Epic 18 (v4)
+    p.led_modifier1  = ev.led_modifier1;    // Epic 18 (v4)
+    p.led_modifier2  = ev.led_modifier2;    // Epic 18 (v4)
     uint8_t buf[kHeaderSize + kLightWashPayloadLen];
     const size_t n = encode_light_wash(buf, sizeof(buf), h, p);
     if (n == 0) return false;
@@ -157,6 +166,9 @@ bool EspNowBroadcastDriver::send_wash_pulse(uint8_t target_class,
     p.sustain = static_cast<uint8_t>(ev.sustain);
     p.release = static_cast<uint8_t>(ev.release);
     p.chance  = static_cast<uint8_t>(ev.chance);
+    p.led_mode      = ev.led_mode;         // Epic 18 (v4)
+    p.led_modifier1 = ev.led_modifier1;    // Epic 18 (v4)
+    p.led_modifier2 = ev.led_modifier2;    // Epic 18 (v4)
     uint8_t buf[kHeaderSize + kLightWashPulsePayloadLen];
     const size_t n = encode_light_wash_pulse(buf, sizeof(buf), h, p);
     if (n == 0) return false;
