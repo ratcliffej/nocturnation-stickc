@@ -417,6 +417,11 @@ void LumeMode::fan_out_light_pulse(const transport::espnow::LightPulsePayload& p
     ev.sustain = static_cast<pixmob::Time>(p.sustain);
     ev.release = static_cast<pixmob::Time>(p.release);
     ev.chance  = static_cast<pixmob::Chance>(p.chance);
+    // v4 LED addressing (Epic 18): thread through to the driver so the
+    // per-pixel router can honour SingleLed / RepeatPattern targeting.
+    ev.led_mode      = p.led_mode;
+    ev.led_modifier1 = p.led_modifier1;
+    ev.led_modifier2 = p.led_modifier2;
 
     for (size_t i = 0; i < active_binding_count_; ++i) {
         const auto& slot = active_bindings_[i];
@@ -451,6 +456,11 @@ void LumeMode::fan_out_light_pulse_inline(
     ev.sustain = static_cast<pixmob::Time>(p.sustain);
     ev.release = static_cast<pixmob::Time>(p.release);
     ev.chance  = static_cast<pixmob::Chance>(p.chance);
+    // v4 LED addressing (Epic 18): thread through to the driver so the
+    // per-pixel router can honour SingleLed / RepeatPattern targeting.
+    ev.led_mode      = p.led_mode;
+    ev.led_modifier1 = p.led_modifier1;
+    ev.led_modifier2 = p.led_modifier2;
 
     for (size_t i = 0; i < active_binding_count_; ++i) {
         const auto& slot = active_bindings_[i];
@@ -514,7 +524,8 @@ void LumeMode::fan_out_light_wash_end(const transport::espnow::LightWashEndPaylo
         // p.target_group is either 0 or equal to lume_group_ (which is u8).
         slot.ctx->set_current_target(p.target_class,
                                      static_cast<uint8_t>(p.target_group));
-        slot.binding->on_light_wash_end(*slot.ctx, p.release_time);
+        slot.binding->on_light_wash_end(*slot.ctx, p.release_time,
+                                        p.led_mode, p.led_modifier1, p.led_modifier2);
     }
 }
 
@@ -527,6 +538,11 @@ void LumeMode::fan_out_light_wash_pulse(const transport::espnow::LightWashPulseP
     ev.sustain = static_cast<pixmob::Time>(p.sustain);
     ev.release = static_cast<pixmob::Time>(p.release);
     ev.chance  = static_cast<pixmob::Chance>(p.chance);
+    // v4 LED addressing (Epic 18): thread through to the driver so the
+    // per-pixel router can honour SingleLed / RepeatPattern targeting.
+    ev.led_mode      = p.led_mode;
+    ev.led_modifier1 = p.led_modifier1;
+    ev.led_modifier2 = p.led_modifier2;
 
     for (size_t i = 0; i < active_binding_count_; ++i) {
         const auto& slot = active_bindings_[i];

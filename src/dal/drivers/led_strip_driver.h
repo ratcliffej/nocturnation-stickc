@@ -64,7 +64,16 @@ public:
     // group_id is accepted-but-ignored for API symmetry with
     // PixMobIRDriver / EspNowBroadcastDriver.
     bool send_wash      (uint8_t target_group, const LightWashEvent&);
-    bool send_wash_end  (uint8_t target_group, uint8_t release_time);
+    // v4 LED addressing (Epic 18): led_mode / led_modifier1 / led_modifier2
+    // default to 0 (LedMode::All) so callers that pre-date the wire bump
+    // continue to end the whole strip's wash. Mode-1 / mode-2 end
+    // behaviour is deferred to the wash follow-up (per-pixel wash
+    // state); for MVP the driver treats non-zero modes as end-whole-strip
+    // and logs on native builds.
+    bool send_wash_end  (uint8_t target_group, uint8_t release_time,
+                          uint8_t led_mode = 0,
+                          uint8_t led_modifier1 = 0,
+                          uint8_t led_modifier2 = 0);
     bool send_wash_pulse(uint8_t target_group, const RgbPulseEvent&);
 
     // -------------------------------------------------------------------------

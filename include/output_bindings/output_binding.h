@@ -114,8 +114,16 @@ public:
     //                          baseline. Drops silently if no wash active.
     virtual void on_light_wash(OutputBindingContext&,
                                 const transport::espnow::LightWashPayload&) {}
+    // v4 LED-level addressing (Epic 18): led_mode/led_modifier1/led_modifier2
+    // are v4 wire fields. Default 0/0/0 = LedMode::All (whole strip).
+    // Bindings that don't care ignore them; strip bindings route them to
+    // per-pixel wash-end handling. Existing overrides may take the older
+    // (ctx, release_time) shape and continue to compile via default args.
     virtual void on_light_wash_end(OutputBindingContext&,
-                                    uint8_t /*release_time*/) {}
+                                    uint8_t /*release_time*/,
+                                    uint8_t /*led_mode*/      = 0,
+                                    uint8_t /*led_modifier1*/ = 0,
+                                    uint8_t /*led_modifier2*/ = 0) {}
     virtual void on_light_wash_pulse(OutputBindingContext&,
                                       const dal::RgbPulseEvent&) {}
 

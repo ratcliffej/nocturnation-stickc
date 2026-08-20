@@ -97,6 +97,13 @@ struct RgbPulseEvent {
     pixmob::Time   sustain;
     pixmob::Time   release;
     pixmob::Chance chance;
+    // Epic 18 LED-level addressing (v0x04). Default 0 = LedMode::All
+    // (whole strip), matching v3-era behaviour. See docs/epics/
+    // epic-18-led-level-addressing.md and transport/espnow/frame.h
+    // LedMode enum for the semantics.
+    uint8_t        led_mode      = 0;
+    uint8_t        led_modifier1 = 0;
+    uint8_t        led_modifier2 = 0;
 };
 
 // LightWashEvent (Epic 6C Phase E) - Show-side describe-a-wash event.
@@ -114,6 +121,13 @@ struct LightWashEvent {
     uint16_t cycle_ms;             // one full A<->B<->A oscillation; 0 = no cycle (hold r1g1b1)
     uint16_t ttl_seconds;          // 0 = infinite (held until LIGHT_WASH_END or supersede)
     uint8_t  pulse_response;       // 0 = ignore PULSE while washing; 1 = accept PULSE as additive overlay
+    // Epic 18 LED-level addressing (v0x04). Default 0 = whole strip.
+    // Wash MVP honours only LedMode::All; modes 1+ carry through the
+    // event for the driver to route, but wash-with-per-pixel behaviour
+    // is deferred (a follow-up phase adds per-pixel wash state).
+    uint8_t  led_mode      = 0;
+    uint8_t  led_modifier1 = 0;
+    uint8_t  led_modifier2 = 0;
 };
 
 struct RgbStaticEvent {

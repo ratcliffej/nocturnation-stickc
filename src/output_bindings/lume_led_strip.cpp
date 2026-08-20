@@ -40,15 +40,25 @@ void LumeLedStripBinding::on_light_wash(
     ev.cycle_ms       = p.cycle_ms;
     ev.ttl_seconds    = p.ttl_seconds;
     ev.pulse_response = p.pulse_response;
+    // v4 LED addressing (Epic 18). Wash MVP treats mode!=0 as mode=0
+    // (whole strip); fields are threaded through for the follow-up
+    // that adds per-pixel wash state.
+    ev.led_mode      = p.led_mode;
+    ev.led_modifier1 = p.led_modifier1;
+    ev.led_modifier2 = p.led_modifier2;
     drv->send_wash(ctx.current_target_group(), ev);
     drv->increment_send_count();
 }
 
 void LumeLedStripBinding::on_light_wash_end(OutputBindingContext& ctx,
-                                              uint8_t release_time) {
+                                              uint8_t release_time,
+                                              uint8_t led_mode,
+                                              uint8_t led_modifier1,
+                                              uint8_t led_modifier2) {
     auto* drv = led_strip_driver_instance();
     if (!drv || !drv->enabled()) return;
-    drv->send_wash_end(ctx.current_target_group(), release_time);
+    drv->send_wash_end(ctx.current_target_group(), release_time,
+                       led_mode, led_modifier1, led_modifier2);
     drv->increment_send_count();
 }
 

@@ -73,7 +73,10 @@ public:
                               const dal::RgbPulseEvent&) override;
     void on_light_wash      (OutputBindingContext&,
                               const transport::espnow::LightWashPayload&) override;
-    void on_light_wash_end  (OutputBindingContext&, uint8_t release_time) override;
+    void on_light_wash_end  (OutputBindingContext&, uint8_t release_time,
+                             uint8_t led_mode = 0,
+                             uint8_t led_modifier1 = 0,
+                             uint8_t led_modifier2 = 0) override;
     void on_light_wash_pulse(OutputBindingContext&,
                               const dal::RgbPulseEvent&) override;
 };
