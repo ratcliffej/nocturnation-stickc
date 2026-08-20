@@ -174,6 +174,10 @@ static void test_light_pulse_round_trip(void) {
     TEST_ASSERT_EQUAL_UINT8(4,    buf[kHeaderSize + 7]);
     TEST_ASSERT_EQUAL_UINT8(6,    buf[kHeaderSize + 8]);
     TEST_ASSERT_EQUAL_UINT8(3,    buf[kHeaderSize + 9]);
+    // v4: trailing 3 bytes for LED addressing default to LedMode::All + 0/0.
+    TEST_ASSERT_EQUAL_UINT8(0,    buf[kHeaderSize + 10]);  // led_mode
+    TEST_ASSERT_EQUAL_UINT8(0,    buf[kHeaderSize + 11]);  // led_modifier1
+    TEST_ASSERT_EQUAL_UINT8(0,    buf[kHeaderSize + 12]);  // led_modifier2
 
     Header decoded{};
     TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
@@ -193,6 +197,9 @@ static void test_light_pulse_round_trip(void) {
     TEST_ASSERT_EQUAL_UINT8 (p_in.sustain,      p_out.sustain);
     TEST_ASSERT_EQUAL_UINT8 (p_in.release,      p_out.release);
     TEST_ASSERT_EQUAL_UINT8 (p_in.chance,       p_out.chance);
+    TEST_ASSERT_EQUAL_UINT8 (0,                 p_out.led_mode);
+    TEST_ASSERT_EQUAL_UINT8 (0,                 p_out.led_modifier1);
+    TEST_ASSERT_EQUAL_UINT8 (0,                 p_out.led_modifier2);
 }
 
 // ---------------------------------------------------------------------------
@@ -235,6 +242,10 @@ static void test_light_wash_round_trip_with_drift(void) {
     TEST_ASSERT_EQUAL_UINT8(0x00, buf[kHeaderSize + 14]);
     TEST_ASSERT_EQUAL_UINT8(0x00, buf[kHeaderSize + 15]);
     TEST_ASSERT_EQUAL_UINT8(   1, buf[kHeaderSize + 16]);
+    // v4: trailing 3 bytes for LED addressing default to LedMode::All + 0/0.
+    TEST_ASSERT_EQUAL_UINT8(   0, buf[kHeaderSize + 17]);  // led_mode
+    TEST_ASSERT_EQUAL_UINT8(   0, buf[kHeaderSize + 18]);  // led_modifier1
+    TEST_ASSERT_EQUAL_UINT8(   0, buf[kHeaderSize + 19]);  // led_modifier2
 
     Header decoded{};
     TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
@@ -259,6 +270,9 @@ static void test_light_wash_round_trip_with_drift(void) {
     TEST_ASSERT_EQUAL_UINT16(p_in.cycle_ms,       p_out.cycle_ms);
     TEST_ASSERT_EQUAL_UINT16(p_in.ttl_seconds,    p_out.ttl_seconds);
     TEST_ASSERT_EQUAL_UINT8 (p_in.pulse_response, p_out.pulse_response);
+    TEST_ASSERT_EQUAL_UINT8 (0,                   p_out.led_mode);
+    TEST_ASSERT_EQUAL_UINT8 (0,                   p_out.led_modifier1);
+    TEST_ASSERT_EQUAL_UINT8 (0,                   p_out.led_modifier2);
 }
 
 static void test_light_wash_round_trip_cycle_ms_zero(void) {
@@ -308,6 +322,10 @@ static void test_light_wash_end_round_trip(void) {
     TEST_ASSERT_EQUAL_UINT8(   0, buf[kHeaderSize + 1]);   // target_group LSB (v3)
     TEST_ASSERT_EQUAL_UINT8(   0, buf[kHeaderSize + 2]);   // target_group MSB
     TEST_ASSERT_EQUAL_UINT8(  10, buf[kHeaderSize + 3]);
+    // v4: trailing 3 bytes for LED addressing default to LedMode::All + 0/0.
+    TEST_ASSERT_EQUAL_UINT8(   0, buf[kHeaderSize + 4]);   // led_mode
+    TEST_ASSERT_EQUAL_UINT8(   0, buf[kHeaderSize + 5]);   // led_modifier1
+    TEST_ASSERT_EQUAL_UINT8(   0, buf[kHeaderSize + 6]);   // led_modifier2
 
     Header decoded{};
     TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
@@ -321,6 +339,9 @@ static void test_light_wash_end_round_trip(void) {
     TEST_ASSERT_EQUAL_UINT8 (p_in.target_class, p_out.target_class);
     TEST_ASSERT_EQUAL_UINT16(p_in.target_group, p_out.target_group);
     TEST_ASSERT_EQUAL_UINT8 (p_in.release_time, p_out.release_time);
+    TEST_ASSERT_EQUAL_UINT8 (0,                 p_out.led_mode);
+    TEST_ASSERT_EQUAL_UINT8 (0,                 p_out.led_modifier1);
+    TEST_ASSERT_EQUAL_UINT8 (0,                 p_out.led_modifier2);
 }
 
 static void test_light_wash_pulse_round_trip(void) {
@@ -355,6 +376,9 @@ static void test_light_wash_pulse_round_trip(void) {
     TEST_ASSERT_EQUAL_UINT8 (p_in.sustain,      p_out.sustain);
     TEST_ASSERT_EQUAL_UINT8 (p_in.release,      p_out.release);
     TEST_ASSERT_EQUAL_UINT8 (p_in.chance,       p_out.chance);
+    TEST_ASSERT_EQUAL_UINT8 (0,                 p_out.led_mode);
+    TEST_ASSERT_EQUAL_UINT8 (0,                 p_out.led_modifier1);
+    TEST_ASSERT_EQUAL_UINT8 (0,                 p_out.led_modifier2);
 }
 
 // ---------------------------------------------------------------------------
@@ -502,8 +526,9 @@ static void test_decode_header_extension_type_recognised(void) {
 
 // ---------------------------------------------------------------------------
 // Wire-format spot check: a fully hand-encoded HEARTBEAT frame matches the
-// spec v3 §3.1 layout byte-for-byte. Guards against accidental field-order
+// spec v4 §3.1 layout byte-for-byte. Guards against accidental field-order
 // regressions on the only Director-emitted broadcast besides LIGHT_PULSE.
+// HEARTBEAT payload is unaffected by v4 - only header version bumps.
 // ---------------------------------------------------------------------------
 
 static void test_heartbeat_wire_format_byte_for_byte(void) {
@@ -525,7 +550,7 @@ static void test_heartbeat_wire_format_byte_for_byte(void) {
     const uint8_t expected[kHeaderSize + kHeartbeatPayloadLen] = {
         0x4E,        // magic byte 0 ('N')
         0x4E,        // magic byte 1 ('N')
-        0x03,        // protocol_version (v3)
+        0x04,        // protocol_version (v4)
         0x21, 0x04,  // source_id LE u16 (v3)
         0x07,        // sequence_number
         0x02,        // hop_count
@@ -982,6 +1007,164 @@ static void test_v3_target_group_extended_range_round_trip(void) {
 }
 
 // ---------------------------------------------------------------------------
+// v4 - LED-level addressing (Epic 18). Trailing 3 bytes on
+// LIGHT_PULSE / LIGHT_WASH / LIGHT_WASH_END / LIGHT_WASH_PULSE.
+// Verifies non-default LedMode values round-trip byte-for-byte.
+// ---------------------------------------------------------------------------
+
+static void test_v4_light_pulse_single_led_round_trip(void) {
+    uint8_t buf[kMaxFrameSize] = {};
+    const Header in = make_header();
+    LightPulsePayload p_in{};
+    p_in.target_class  = 0x01;
+    p_in.target_group  = 3;
+    p_in.r = 100; p_in.g = 50; p_in.b = 25;
+    p_in.attack = 2; p_in.sustain = 4; p_in.release = 6; p_in.chance = 0;
+    p_in.led_mode      = static_cast<uint8_t>(LedMode::SingleLed);
+    p_in.led_modifier1 = 2;   // chain ID
+    p_in.led_modifier2 = 17;  // LED index within chain
+
+    const size_t n = encode_light_pulse(buf, sizeof(buf), in, p_in);
+    TEST_ASSERT_EQUAL_size_t(kHeaderSize + kLightPulsePayloadLen, n);
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(LedMode::SingleLed),
+                            buf[kHeaderSize + 10]);
+    TEST_ASSERT_EQUAL_UINT8( 2, buf[kHeaderSize + 11]);
+    TEST_ASSERT_EQUAL_UINT8(17, buf[kHeaderSize + 12]);
+
+    Header decoded{};
+    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
+                      static_cast<int>(decode_header(buf, n, decoded)));
+    LightPulsePayload p_out{};
+    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
+                      static_cast<int>(decode_light_pulse(decoded,
+                                                          buf + kHeaderSize,
+                                                          decoded.payload_len,
+                                                          p_out)));
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(LedMode::SingleLed),
+                            p_out.led_mode);
+    TEST_ASSERT_EQUAL_UINT8( 2, p_out.led_modifier1);
+    TEST_ASSERT_EQUAL_UINT8(17, p_out.led_modifier2);
+}
+
+static void test_v4_light_wash_repeat_pattern_round_trip(void) {
+    uint8_t buf[kMaxFrameSize] = {};
+    const Header in = make_header();
+    LightWashPayload p_in{};
+    p_in.target_class = 0x01;
+    p_in.target_group = 1;
+    p_in.r1 = 128; p_in.g1 = 64; p_in.b1 = 32;
+    p_in.intensity = 255;
+    p_in.led_mode = static_cast<uint8_t>(LedMode::RepeatPattern);
+    // Alternating tile: 0b101010101010 = 0xAAA. Low byte 0xAA, high nibble 0x0A.
+    unpack_repeat_mask(0x0AAA, p_in.led_modifier1, p_in.led_modifier2);
+    TEST_ASSERT_EQUAL_UINT8(0xAA, p_in.led_modifier1);
+    TEST_ASSERT_EQUAL_UINT8(0x0A, p_in.led_modifier2);
+
+    const size_t n = encode_light_wash(buf, sizeof(buf), in, p_in);
+    TEST_ASSERT_EQUAL_size_t(kHeaderSize + kLightWashPayloadLen, n);
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(LedMode::RepeatPattern),
+                            buf[kHeaderSize + 17]);
+    TEST_ASSERT_EQUAL_UINT8(0xAA, buf[kHeaderSize + 18]);
+    TEST_ASSERT_EQUAL_UINT8(0x0A, buf[kHeaderSize + 19]);
+
+    Header decoded{};
+    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
+                      static_cast<int>(decode_header(buf, n, decoded)));
+    LightWashPayload p_out{};
+    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
+                      static_cast<int>(decode_light_wash(decoded,
+                                                         buf + kHeaderSize,
+                                                         decoded.payload_len,
+                                                         p_out)));
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(LedMode::RepeatPattern),
+                            p_out.led_mode);
+    TEST_ASSERT_EQUAL_UINT16(0x0AAA, pack_repeat_mask(p_out.led_modifier1,
+                                                     p_out.led_modifier2));
+}
+
+static void test_v4_light_wash_end_single_led_round_trip(void) {
+    uint8_t buf[kMaxFrameSize] = {};
+    const Header in = make_header();
+    LightWashEndPayload p_in{};
+    p_in.target_class = 0x01;
+    p_in.target_group = 7;
+    p_in.release_time = 20;
+    p_in.led_mode      = static_cast<uint8_t>(LedMode::SingleLed);
+    p_in.led_modifier1 = 0;    // chain 0 = all chains
+    p_in.led_modifier2 = 3;    // LED index 3
+
+    const size_t n = encode_light_wash_end(buf, sizeof(buf), in, p_in);
+    TEST_ASSERT_EQUAL_size_t(kHeaderSize + kLightWashEndPayloadLen, n);
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(LedMode::SingleLed),
+                            buf[kHeaderSize + 4]);
+    TEST_ASSERT_EQUAL_UINT8(0, buf[kHeaderSize + 5]);
+    TEST_ASSERT_EQUAL_UINT8(3, buf[kHeaderSize + 6]);
+
+    Header decoded{};
+    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
+                      static_cast<int>(decode_header(buf, n, decoded)));
+    LightWashEndPayload p_out{};
+    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
+                      static_cast<int>(decode_light_wash_end(decoded,
+                                                             buf + kHeaderSize,
+                                                             decoded.payload_len,
+                                                             p_out)));
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(LedMode::SingleLed),
+                            p_out.led_mode);
+    TEST_ASSERT_EQUAL_UINT8(0, p_out.led_modifier1);
+    TEST_ASSERT_EQUAL_UINT8(3, p_out.led_modifier2);
+}
+
+static void test_v4_light_wash_pulse_single_led_round_trip(void) {
+    uint8_t buf[kMaxFrameSize] = {};
+    const Header in = make_header();
+    LightWashPulsePayload p_in{};
+    p_in.target_class = 0x01;
+    p_in.target_group = 1;
+    p_in.r = 200; p_in.g = 100; p_in.b = 50;
+    p_in.attack = 1; p_in.sustain = 2; p_in.release = 3; p_in.chance = 4;
+    p_in.led_mode      = static_cast<uint8_t>(LedMode::SingleLed);
+    p_in.led_modifier1 = 1;
+    p_in.led_modifier2 = 5;
+
+    const size_t n = encode_light_wash_pulse(buf, sizeof(buf), in, p_in);
+    TEST_ASSERT_EQUAL_size_t(kHeaderSize + kLightWashPulsePayloadLen, n);
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(LedMode::SingleLed),
+                            buf[kHeaderSize + 10]);
+    TEST_ASSERT_EQUAL_UINT8(1, buf[kHeaderSize + 11]);
+    TEST_ASSERT_EQUAL_UINT8(5, buf[kHeaderSize + 12]);
+
+    Header decoded{};
+    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
+                      static_cast<int>(decode_header(buf, n, decoded)));
+    LightWashPulsePayload p_out{};
+    TEST_ASSERT_EQUAL(static_cast<int>(DecodeResult::Ok),
+                      static_cast<int>(decode_light_wash_pulse(decoded,
+                                                               buf + kHeaderSize,
+                                                               decoded.payload_len,
+                                                               p_out)));
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(LedMode::SingleLed),
+                            p_out.led_mode);
+    TEST_ASSERT_EQUAL_UINT8(1, p_out.led_modifier1);
+    TEST_ASSERT_EQUAL_UINT8(5, p_out.led_modifier2);
+}
+
+// pack/unpack round-trip for the 12-bit RepeatPattern mask. Upper 4 bits
+// of modifier2 are reserved; the pack helper must clamp them.
+static void test_v4_repeat_mask_pack_unpack_boundaries(void) {
+    for (uint16_t mask : {0x0000u, 0x0001u, 0x0555u, 0x0AAAu, 0x0FFFu}) {
+        uint8_t m1 = 0xEE, m2 = 0xEE;
+        unpack_repeat_mask(mask, m1, m2);
+        TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(mask & 0xFF), m1);
+        TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>((mask >> 8) & 0x0F), m2);
+        TEST_ASSERT_EQUAL_UINT16(mask, pack_repeat_mask(m1, m2));
+    }
+    // Reserved upper 4 bits of modifier2 are ignored on decode.
+    TEST_ASSERT_EQUAL_UINT16(0x0FFF, pack_repeat_mask(0xFF, 0xFF));
+    TEST_ASSERT_EQUAL_UINT16(kLedRepeatMaskMax, 0x0FFF);
+}
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
@@ -1025,5 +1208,11 @@ int main(int, char**) {
     // v3 wide-range coverage
     RUN_TEST(test_v3_source_id_extended_range_round_trip);
     RUN_TEST(test_v3_target_group_extended_range_round_trip);
+    // v4 LED-level addressing
+    RUN_TEST(test_v4_light_pulse_single_led_round_trip);
+    RUN_TEST(test_v4_light_wash_repeat_pattern_round_trip);
+    RUN_TEST(test_v4_light_wash_end_single_led_round_trip);
+    RUN_TEST(test_v4_light_wash_pulse_single_led_round_trip);
+    RUN_TEST(test_v4_repeat_mask_pack_unpack_boundaries);
     return UNITY_END();
 }

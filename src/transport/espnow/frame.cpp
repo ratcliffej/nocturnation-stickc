@@ -53,10 +53,10 @@ inline uint32_t read_u32_le(const uint8_t* src) {
            (static_cast<uint32_t>(src[3]) << 24);
 }
 
-// Serialise the fixed 9-byte header (spec v3). Forces magic + protocol_version
+// Serialise the fixed 9-byte header (spec v4). Forces magic + protocol_version
 // and writes message_type / payload_len chosen by the caller (the per-type
-// encoder). v3 widens source_id to a 2-byte LE field at offset 3-4; every
-// field after it shifted by 1.
+// encoder). v4 keeps the v3 header layout unchanged; the wire bump lives
+// entirely in the four affected payloads (+3 bytes each for LED addressing).
 void write_header(uint8_t* buf, const Header& hdr,
                   MessageType message_type, uint8_t payload_len) {
     buf[0] = kMagic0;
@@ -130,15 +130,18 @@ size_t encode_light_pulse(uint8_t* buf, size_t buf_len, const Header& hdr,
     constexpr size_t total = kHeaderSize + kLightPulsePayloadLen;
     if (buf_len < total) return 0;
     write_header(buf, hdr, MessageType::LightPulse, kLightPulsePayloadLen);
-    buf[kHeaderSize + 0] = p.target_class;
+    buf[kHeaderSize +  0] = p.target_class;
     write_u16_le(buf + kHeaderSize + 1, p.target_group);   // v3: 2 bytes
-    buf[kHeaderSize + 3] = p.r;
-    buf[kHeaderSize + 4] = p.g;
-    buf[kHeaderSize + 5] = p.b;
-    buf[kHeaderSize + 6] = p.attack;
-    buf[kHeaderSize + 7] = p.sustain;
-    buf[kHeaderSize + 8] = p.release;
-    buf[kHeaderSize + 9] = p.chance;
+    buf[kHeaderSize +  3] = p.r;
+    buf[kHeaderSize +  4] = p.g;
+    buf[kHeaderSize +  5] = p.b;
+    buf[kHeaderSize +  6] = p.attack;
+    buf[kHeaderSize +  7] = p.sustain;
+    buf[kHeaderSize +  8] = p.release;
+    buf[kHeaderSize +  9] = p.chance;
+    buf[kHeaderSize + 10] = p.led_mode;         // v4
+    buf[kHeaderSize + 11] = p.led_modifier1;    // v4
+    buf[kHeaderSize + 12] = p.led_modifier2;    // v4
     return total;
 }
 
@@ -161,6 +164,9 @@ size_t encode_light_wash(uint8_t* buf, size_t buf_len, const Header& hdr,
     write_u16_le(buf + kHeaderSize + 12, p.cycle_ms);
     write_u16_le(buf + kHeaderSize + 14, p.ttl_seconds);
     buf[kHeaderSize + 16] = p.pulse_response;
+    buf[kHeaderSize + 17] = p.led_mode;         // v4
+    buf[kHeaderSize + 18] = p.led_modifier1;    // v4
+    buf[kHeaderSize + 19] = p.led_modifier2;    // v4
     return total;
 }
 
@@ -172,6 +178,9 @@ size_t encode_light_wash_end(uint8_t* buf, size_t buf_len, const Header& hdr,
     buf[kHeaderSize + 0] = p.target_class;
     write_u16_le(buf + kHeaderSize + 1, p.target_group);   // v3: 2 bytes
     buf[kHeaderSize + 3] = p.release_time;
+    buf[kHeaderSize + 4] = p.led_mode;          // v4
+    buf[kHeaderSize + 5] = p.led_modifier1;     // v4
+    buf[kHeaderSize + 6] = p.led_modifier2;     // v4
     return total;
 }
 
@@ -180,15 +189,18 @@ size_t encode_light_wash_pulse(uint8_t* buf, size_t buf_len, const Header& hdr,
     constexpr size_t total = kHeaderSize + kLightWashPulsePayloadLen;
     if (buf_len < total) return 0;
     write_header(buf, hdr, MessageType::LightWashPulse, kLightWashPulsePayloadLen);
-    buf[kHeaderSize + 0] = p.target_class;
+    buf[kHeaderSize +  0] = p.target_class;
     write_u16_le(buf + kHeaderSize + 1, p.target_group);   // v3: 2 bytes
-    buf[kHeaderSize + 3] = p.r;
-    buf[kHeaderSize + 4] = p.g;
-    buf[kHeaderSize + 5] = p.b;
-    buf[kHeaderSize + 6] = p.attack;
-    buf[kHeaderSize + 7] = p.sustain;
-    buf[kHeaderSize + 8] = p.release;
-    buf[kHeaderSize + 9] = p.chance;
+    buf[kHeaderSize +  3] = p.r;
+    buf[kHeaderSize +  4] = p.g;
+    buf[kHeaderSize +  5] = p.b;
+    buf[kHeaderSize +  6] = p.attack;
+    buf[kHeaderSize +  7] = p.sustain;
+    buf[kHeaderSize +  8] = p.release;
+    buf[kHeaderSize +  9] = p.chance;
+    buf[kHeaderSize + 10] = p.led_mode;         // v4
+    buf[kHeaderSize + 11] = p.led_modifier1;    // v4
+    buf[kHeaderSize + 12] = p.led_modifier2;    // v4
     return total;
 }
 
@@ -361,15 +373,18 @@ DecodeResult decode_light_pulse(const Header& hdr,
         payload_len    != kLightPulsePayloadLen) {
         return DecodeResult::PayloadLenMismatch;
     }
-    out.target_class = payload[0];
-    out.target_group = read_u16_le(payload + 1);   // v3: 2 bytes
-    out.r            = payload[3];
-    out.g            = payload[4];
-    out.b            = payload[5];
-    out.attack       = payload[6];
-    out.sustain      = payload[7];
-    out.release      = payload[8];
-    out.chance       = payload[9];
+    out.target_class   = payload[ 0];
+    out.target_group   = read_u16_le(payload + 1);   // v3: 2 bytes
+    out.r              = payload[ 3];
+    out.g              = payload[ 4];
+    out.b              = payload[ 5];
+    out.attack         = payload[ 6];
+    out.sustain        = payload[ 7];
+    out.release        = payload[ 8];
+    out.chance         = payload[ 9];
+    out.led_mode       = payload[10];   // v4
+    out.led_modifier1  = payload[11];   // v4
+    out.led_modifier2  = payload[12];   // v4
     return DecodeResult::Ok;
 }
 
@@ -397,6 +412,9 @@ DecodeResult decode_light_wash(const Header& hdr,
     out.cycle_ms       = read_u16_le(payload + 12);
     out.ttl_seconds    = read_u16_le(payload + 14);
     out.pulse_response = payload[16];
+    out.led_mode       = payload[17];   // v4
+    out.led_modifier1  = payload[18];   // v4
+    out.led_modifier2  = payload[19];   // v4
     return DecodeResult::Ok;
 }
 
@@ -410,9 +428,12 @@ DecodeResult decode_light_wash_end(const Header& hdr,
         payload_len    != kLightWashEndPayloadLen) {
         return DecodeResult::PayloadLenMismatch;
     }
-    out.target_class = payload[0];
-    out.target_group = read_u16_le(payload + 1);   // v3: 2 bytes
-    out.release_time = payload[3];
+    out.target_class  = payload[0];
+    out.target_group  = read_u16_le(payload + 1);   // v3: 2 bytes
+    out.release_time  = payload[3];
+    out.led_mode      = payload[4];   // v4
+    out.led_modifier1 = payload[5];   // v4
+    out.led_modifier2 = payload[6];   // v4
     return DecodeResult::Ok;
 }
 
@@ -426,15 +447,18 @@ DecodeResult decode_light_wash_pulse(const Header& hdr,
         payload_len    != kLightWashPulsePayloadLen) {
         return DecodeResult::PayloadLenMismatch;
     }
-    out.target_class = payload[0];
-    out.target_group = read_u16_le(payload + 1);   // v3: 2 bytes
-    out.r            = payload[3];
-    out.g            = payload[4];
-    out.b            = payload[5];
-    out.attack       = payload[6];
-    out.sustain      = payload[7];
-    out.release      = payload[8];
-    out.chance       = payload[9];
+    out.target_class   = payload[ 0];
+    out.target_group   = read_u16_le(payload + 1);   // v3: 2 bytes
+    out.r              = payload[ 3];
+    out.g              = payload[ 4];
+    out.b              = payload[ 5];
+    out.attack         = payload[ 6];
+    out.sustain        = payload[ 7];
+    out.release        = payload[ 8];
+    out.chance         = payload[ 9];
+    out.led_mode       = payload[10];   // v4
+    out.led_modifier1  = payload[11];   // v4
+    out.led_modifier2  = payload[12];   // v4
     return DecodeResult::Ok;
 }
 
