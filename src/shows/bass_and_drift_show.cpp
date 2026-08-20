@@ -303,7 +303,14 @@ const PropertyDef kProps[] = {
         /*type=*/PropertyType::U8,
         /*default_value=*/PropertyValue::from_u8(0),
         /*min_value=*/    PropertyValue::from_u8(0),
-        /*max_value=*/    PropertyValue::from_u8(255),
+        // Cycle 0..3 wrapping back to 0 in the Director-Mode property UI
+        // (Btn advance wraps at max_value per the U8 handler in
+        // director_mode.cpp). 0 = broadcast; 1..3 = the capability-rich
+        // fleet zones set by the first-install random-group [1,3] rule.
+        // Groups 4..15 exist for operator hand-assignment via Config-mode
+        // but aren't part of the Bass-and-Drift authored palette; PixMobs
+        // live in groups 10..12 and don't render the wash coherently anyway.
+        /*max_value=*/    PropertyValue::from_u8(3),
         /*display_name=*/"Target group",
         /*unit=*/nullptr,
         /*enum_names=*/nullptr,
