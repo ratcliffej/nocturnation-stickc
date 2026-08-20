@@ -92,7 +92,15 @@ void PixMobIrBinding::on_light_wash(
 }
 
 void PixMobIrBinding::on_light_wash_end(OutputBindingContext& ctx,
-                                           uint8_t release_time) {
+                                           uint8_t release_time,
+                                           uint8_t led_mode,
+                                           uint8_t /*led_modifier1*/,
+                                           uint8_t /*led_modifier2*/) {
+    // PixMob is a single-pixel Lume - it doesn't declare
+    // Capability::AddressableLeds. LedMode!=0 is not addressed at PixMob
+    // bracelets; drop silently to avoid ending an ongoing wash the
+    // Director didn't intend to cancel on us.
+    if (led_mode != 0) return;
     auto* drv = pixmob_ir_driver_instance();
     if (!drv || !drv->enabled()) return;
     const uint8_t g = ctx.current_target_group();

@@ -478,6 +478,166 @@ static void test_max_brightness_clamps_existing_value(void) {
     drv->set_max_brightness_percent(100);   // restore for following tests
 }
 
+// ---------------------------------------------------------------------------
+// Epic 18 (v4) LED-level addressing.
+//
+// LedMode 1 (SingleLed) fires deterministically at the addressed pixel index
+// regardless of CHANCE. LedMode 2 (RepeatPattern) tiles a 12-bit mask across
+// the whole pixel array, LSB = position 0.
+// ---------------------------------------------------------------------------
+
+// Sparkle used by the mode tests: bright red, T_192 sustain so the assertion
+// window is generous, CHANCE_100 kept only so that the fall-through mode-0
+// path also fires on comparison tests.
+static RgbPulseEvent make_sparkle_for_led_mode(uint8_t led_mode,
+                                                uint8_t led_modifier1,
+                                                uint8_t led_modifier2) {
+    RgbPulseEvent sp{};
+    sp.r = 255; sp.g = 0; sp.b = 0;
+    sp.attack = pixmob::T_0_MS;
+    sp.sustain = pixmob::T_192_MS;
+    sp.release = pixmob::T_0_MS;
+    sp.chance = pixmob::CHANCE_100;
+    sp.led_mode      = led_mode;
+    sp.led_modifier1 = led_modifier1;
+    sp.led_modifier2 = led_modifier2;
+    return sp;
+}
+
+static void test_led_mode_single_targets_one_pixel(void) {
+    // SingleLed with LED index 3 lights ONLY pixel 3. Pixels 0..2 and
+    // 4..N stay at wash baseline. Chain=0 means "all chains, this index"
+    // which on the single-chain host resolves to just pixel 3.
+    auto* drv = led_strip_driver_instance();
+    drv->send_wash(0, make_wash(0, 50, 0));   // dim green baseline
+    s_now_ms += 50;
+    drv->loop_tick();
+
+    auto sp = make_sparkle_for_led_mode(1 /*SingleLed*/, 0 /*chain=0*/, 3);
+    drv->send(0, sp);
+    drv->loop_tick();
+
+    for (size_t i = 0; i < kPixelCount; ++i) {
+        if (i == 3) {
+            TEST_ASSERT_EQUAL_UINT8_MESSAGE(255, s_strip.pixels[i].r,
+                "target pixel should be at pulse red");
+            TEST_ASSERT_EQUAL_UINT8(0, s_strip.pixels[i].g);
+            TEST_ASSERT_EQUAL_UINT8(0, s_strip.pixels[i].b);
+        } else {
+            TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, s_strip.pixels[i].r,
+                "non-target pixel should keep wash baseline (red=0)");
+            TEST_ASSERT_EQUAL_UINT8(50, s_strip.pixels[i].g);
+        }
+    }
+}
+
+static void test_led_mode_single_out_of_range_index_drops(void) {
+    // SingleLed with LED index >= pixel_count is silently dropped;
+    // no pixel changes and no crash / OOB write.
+    auto* drv = led_strip_driver_instance();
+    drv->send_wash(0, make_wash(0, 50, 0));
+    s_now_ms += 50;
+    drv->loop_tick();
+
+    auto sp = make_sparkle_for_led_mode(1, 0, /*idx=*/200 /* > kPixelCount */);
+    drv->send(0, sp);
+    drv->loop_tick();
+
+    for (size_t i = 0; i < kPixelCount; ++i) {
+        TEST_ASSERT_EQUAL_UINT8(0,  s_strip.pixels[i].r);
+        TEST_ASSERT_EQUAL_UINT8(50, s_strip.pixels[i].g);
+    }
+}
+
+static void test_led_mode_single_chain_id_gt_1_drops(void) {
+    // Chain ID > 1 has no physical chain on the MVP single-chain driver;
+    // the pulse silently drops. (Chain=0 and chain=1 both map to the one
+    // physical chain.)
+    auto* drv = led_strip_driver_instance();
+    drv->send_wash(0, make_wash(0, 50, 0));
+    s_now_ms += 50;
+    drv->loop_tick();
+
+    auto sp = make_sparkle_for_led_mode(1, /*chain=*/5, /*idx=*/3);
+    drv->send(0, sp);
+    drv->loop_tick();
+
+    for (size_t i = 0; i < kPixelCount; ++i) {
+        TEST_ASSERT_EQUAL_UINT8(0,  s_strip.pixels[i].r);
+        TEST_ASSERT_EQUAL_UINT8(50, s_strip.pixels[i].g);
+    }
+}
+
+static void test_led_mode_repeat_pattern_tiles_across_strip(void) {
+    // 12-bit tile 0b000000000101 (mask=0x005) lights positions 0 and 2
+    // of every 12-pixel repeat. On our 8-pixel test strip only positions
+    // 0 and 2 are addressable; both should light.
+    auto* drv = led_strip_driver_instance();
+    drv->send_wash(0, make_wash(0, 50, 0));
+    s_now_ms += 50;
+    drv->loop_tick();
+
+    auto sp = make_sparkle_for_led_mode(2 /*RepeatPattern*/,
+                                        /*modifier1=mask low=*/0x05,
+                                        /*modifier2=mask high nibble=*/0x00);
+    drv->send(0, sp);
+    drv->loop_tick();
+
+    for (size_t i = 0; i < kPixelCount; ++i) {
+        const bool should_light = (i == 0 || i == 2);
+        if (should_light) {
+            TEST_ASSERT_EQUAL_UINT8_MESSAGE(255, s_strip.pixels[i].r,
+                "mask-selected pixel should be at pulse red");
+        } else {
+            TEST_ASSERT_EQUAL_UINT8_MESSAGE(0,  s_strip.pixels[i].r,
+                "mask-unselected pixel should keep wash baseline");
+            TEST_ASSERT_EQUAL_UINT8(50, s_strip.pixels[i].g);
+        }
+    }
+}
+
+static void test_led_mode_repeat_pattern_zero_mask_lights_nothing(void) {
+    // Empty mask = no pixels selected. All pixels hold wash baseline.
+    auto* drv = led_strip_driver_instance();
+    drv->send_wash(0, make_wash(0, 50, 0));
+    s_now_ms += 50;
+    drv->loop_tick();
+
+    auto sp = make_sparkle_for_led_mode(2, 0, 0);
+    drv->send(0, sp);
+    drv->loop_tick();
+
+    for (size_t i = 0; i < kPixelCount; ++i) {
+        TEST_ASSERT_EQUAL_UINT8(0,  s_strip.pixels[i].r);
+        TEST_ASSERT_EQUAL_UINT8(50, s_strip.pixels[i].g);
+    }
+}
+
+static void test_led_mode_zero_keeps_v3_chance_semantics(void) {
+    // LedMode=0 (default) keeps the whole-strip CHANCE_100 render path.
+    // A CHANCE_100 pulse should still light every pixel — visual parity
+    // with v3-era Directors that don't set the LED-mode fields.
+    auto* drv = led_strip_driver_instance();
+    drv->send_wash(0, make_wash(0, 50, 0));
+    s_now_ms += 50;
+    drv->loop_tick();
+
+    RgbPulseEvent sp{};
+    sp.r = 255; sp.g = 255; sp.b = 255;
+    sp.attack = pixmob::T_0_MS;
+    sp.sustain = pixmob::T_192_MS;
+    sp.release = pixmob::T_0_MS;
+    sp.chance = pixmob::CHANCE_100;
+    // led_mode defaulted to 0 by the aggregate initialiser.
+    drv->send(0, sp);
+    drv->loop_tick();
+
+    for (size_t i = 0; i < kPixelCount; ++i) {
+        TEST_ASSERT_EQUAL_UINT8_MESSAGE(255, s_strip.pixels[i].r,
+            "CHANCE_100 with LedMode=0 should light every pixel");
+    }
+}
+
 static void test_overlay_disabled_yields_pixel_0_to_wash(void) {
     auto* drv = led_strip_driver_instance();
     drv->send_wash(0, make_wash(200, 0, 0));
@@ -515,5 +675,12 @@ int main(int, char**) {
     RUN_TEST(test_max_brightness_clamps_existing_value);
     RUN_TEST(test_max_brightness_default_is_100);
     RUN_TEST(test_overlay_disabled_yields_pixel_0_to_wash);
+    // Epic 18 (v4) LED-level addressing
+    RUN_TEST(test_led_mode_single_targets_one_pixel);
+    RUN_TEST(test_led_mode_single_out_of_range_index_drops);
+    RUN_TEST(test_led_mode_single_chain_id_gt_1_drops);
+    RUN_TEST(test_led_mode_repeat_pattern_tiles_across_strip);
+    RUN_TEST(test_led_mode_repeat_pattern_zero_mask_lights_nothing);
+    RUN_TEST(test_led_mode_zero_keeps_v3_chance_semantics);
     return UNITY_END();
 }

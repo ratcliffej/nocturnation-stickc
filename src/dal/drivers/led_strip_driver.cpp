@@ -213,8 +213,14 @@ bool LedStripDriver::send_wash(uint8_t /*target_group*/, const LightWashEvent& e
     return true;
 }
 
-bool LedStripDriver::send_wash_end(uint8_t /*target_group*/, uint8_t release_time) {
+bool LedStripDriver::send_wash_end(uint8_t /*target_group*/, uint8_t release_time,
+                                    uint8_t /*led_mode*/,
+                                    uint8_t /*led_modifier1*/,
+                                    uint8_t /*led_modifier2*/) {
     if (!wash_.active) return false;
+    // v4 LED addressing (Epic 18) MVP: treat modes 1 and 2 the same as
+    // mode 0 (end the whole strip's wash). Per-pixel wash-end is deferred
+    // to the wash follow-up that adds per-pixel wash state.
     // release_time overrides the wash's default release window. If both
     // are zero, snap to black on the next tick.
     if (release_time != 0) wash_.release_100ms = release_time;
@@ -279,15 +285,52 @@ bool LedStripDriver::send(uint8_t /*group_id*/, const RgbPulseEvent& ev) {
         current_pulse_.sustain_ms = 192;
     }
 
-    // Per-group CHANCE roll. Each group of group_size_ consecutive
-    // pixels shares one roll - all pixels in that group light or all
-    // stay dark per pulse. group_size_ = 1 means per-pixel rolls
-    // (Phase 1 behaviour). A partial group at the strip's tail
-    // shares a roll too.
-    const uint8_t  chance_pct = chance_to_percent(static_cast<uint8_t>(ev.chance));
     const uint32_t now        = now_ms();
     const size_t   walk       = (pcount < kMaxPixels) ? pcount : kMaxPixels;
-    const size_t   group      = (group_size_ == 0) ? 1u : group_size_;
+    const uint32_t stamp      = now ? now : 1;     // 0 reserved as inactive sentinel
+
+    // v4 LED-level addressing (Epic 18). Modes 1 and 2 bypass the CHANCE
+    // roll: they're deterministic per-position targets from the Director.
+    // Mode 0 keeps the per-group CHANCE behaviour that PixMob-parity
+    // renders depend on.
+    switch (ev.led_mode) {
+        case 1: {   // LedMode::SingleLed
+            // MVP: single-chain assumption. Chain 0 (all chains) and
+            // chain 1 (specific chain 1) both address our one physical
+            // chain. Chain >= 2 has no pixel to write and drops.
+            if (ev.led_modifier1 > 1) return true;
+            const size_t idx = ev.led_modifier2;
+            if (idx < walk) {
+                pixel_pulse_started_[idx].store(stamp, std::memory_order_release);
+            }
+            return true;
+        }
+        case 2: {   // LedMode::RepeatPattern
+            // 12-bit tile mask packed LSB-first across modifier bytes,
+            // upper 4 bits of modifier2 reserved. Tile repeats across
+            // the full pixel array; group boundaries are irrelevant.
+            const uint16_t mask =
+                static_cast<uint16_t>(ev.led_modifier1) |
+                (static_cast<uint16_t>(ev.led_modifier2 & 0x0F) << 8);
+            if (mask == 0) return true;   // empty mask lights nothing
+            constexpr size_t kTileWidth = 12;
+            for (size_t p = 0; p < walk; ++p) {
+                if (mask & (1u << (p % kTileWidth))) {
+                    pixel_pulse_started_[p].store(stamp, std::memory_order_release);
+                }
+            }
+            return true;
+        }
+        default: break;   // fall through to mode 0 (whole-strip CHANCE roll)
+    }
+
+    // Per-group CHANCE roll (LedMode::All, v3-parity path). Each group
+    // of group_size_ consecutive pixels shares one roll - all pixels in
+    // that group light or all stay dark per pulse. group_size_ = 1
+    // means per-pixel rolls (Phase 1 behaviour). A partial group at
+    // the strip's tail shares a roll too.
+    const uint8_t chance_pct = chance_to_percent(static_cast<uint8_t>(ev.chance));
+    const size_t  group      = (group_size_ == 0) ? 1u : group_size_;
     // Release-store publishes the current_pulse_ envelope + colour
     // writes above to any core observing this slot via acquire-load.
     // See the pixel_pulse_started_ member comment for the cross-core
@@ -297,7 +340,6 @@ bool LedStripDriver::send(uint8_t /*group_id*/, const RgbPulseEvent& ev) {
         const bool hit = (next_random() % 100) < chance_pct;
         if (!hit) continue;
         const size_t end = (i + group < walk) ? (i + group) : walk;
-        const uint32_t stamp = now ? now : 1;     // 0 reserved as inactive sentinel
         for (size_t p = i; p < end; ++p) {
             pixel_pulse_started_[p].store(stamp, std::memory_order_release);
         }
