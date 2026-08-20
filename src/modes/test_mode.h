@@ -37,19 +37,21 @@ private:
         Calibrate,
         WashTest,
         PixMobBench,
+        LedAddressing,
     };
 
     struct MenuItem { SubTest test; const char* label; };
-    static constexpr MenuItem kSubTests[9] = {
-        { SubTest::PulseTest,    "Pulse"        },
-        { SubTest::FadeTest,     "Fade"         },
-        { SubTest::RainbowTest,  "Rainbow"      },
-        { SubTest::SparkleTest,  "Sparkle"      },
-        { SubTest::WhiteOut,     "White Out"    },
-        { SubTest::AudioLive,    "Audio Live"   },
-        { SubTest::Calibrate,    "Calibrate"    },
-        { SubTest::WashTest,     "Wash Test"    },
-        { SubTest::PixMobBench,  "PMob Bench"   },
+    static constexpr MenuItem kSubTests[10] = {
+        { SubTest::PulseTest,     "Pulse"        },
+        { SubTest::FadeTest,      "Fade"         },
+        { SubTest::RainbowTest,   "Rainbow"      },
+        { SubTest::SparkleTest,   "Sparkle"      },
+        { SubTest::WhiteOut,      "White Out"    },
+        { SubTest::AudioLive,     "Audio Live"   },
+        { SubTest::Calibrate,     "Calibrate"    },
+        { SubTest::WashTest,      "Wash Test"    },
+        { SubTest::PixMobBench,   "PMob Bench"   },
+        { SubTest::LedAddressing, "LED Address"  },   // Epic 18 v0x04 bench
     };
     static constexpr size_t kSubTestCount = sizeof(kSubTests) / sizeof(kSubTests[0]);
 
@@ -204,6 +206,20 @@ private:
     void pmob_fire_set_background(uint8_t r, uint8_t g, uint8_t b);
     void pmob_fire_single_color(uint8_t r, uint8_t g, uint8_t b,
                                  uint8_t attack, uint8_t sustain, uint8_t release);
+
+    // LED Addressing bench (Epic 18 v0x04). Six scenarios auto-cycling
+    // through LedMode 0 / 1 / 2 with the modifier permutations the
+    // LD needs to sanity-check the wire spec end-to-end on a bench
+    // strip. See src/modes/test_mode.cpp for the scenario table.
+    static constexpr size_t   kLedTestScenarioCount = 6;
+    static constexpr uint32_t kLedTestStepMs        = 400;   // 2.5 Hz
+    uint8_t  led_test_step_ = 0;         // index within the current scenario
+    uint32_t led_last_fire_ms_ = 0;
+    void enter_led_addressing();
+    void tick_led_addressing(uint32_t now);
+    void handle_button_led_addressing(const dal::ButtonPressEvent& ev);
+    void draw_led_addressing();
+    void fire_led_addressing_step();
 };
 
 }  // namespace modes

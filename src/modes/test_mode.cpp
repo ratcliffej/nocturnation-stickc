@@ -50,7 +50,7 @@ constexpr uint32_t kSparkleStepMs     = 1100;
 
 }  // namespace
 
-constexpr TestMode::MenuItem TestMode::kSubTests[9];
+constexpr TestMode::MenuItem TestMode::kSubTests[10];
 
 void TestMode::enter() {
     menu_selected_    = 0;
@@ -83,6 +83,7 @@ void TestMode::loop_tick() {
         case SubTest::AudioLive:   tick_audio_live(now);                     break;
         case SubTest::Calibrate:   tick_calibrate(now);                      break;
         case SubTest::PixMobBench: tick_pixmob_bench(now);                   break;
+        case SubTest::LedAddressing: tick_led_addressing(now);               break;
         default: break;
     }
     // Post-pulse status redraw: LocalDriver paints frame-by-frame while
@@ -212,6 +213,7 @@ void TestMode::launch_test(SubTest t) {
         case SubTest::Calibrate:    enter_calibrate();                    break;
         case SubTest::WashTest:     enter_wash_test();                    break;
         case SubTest::PixMobBench:  enter_pixmob_bench();                 break;
+        case SubTest::LedAddressing: enter_led_addressing();              break;
         default: break;
     }
 }
@@ -236,6 +238,9 @@ void TestMode::handle_button_in_test(const ButtonPressEvent& ev) {
             break;
         case SubTest::PixMobBench:
             handle_button_pixmob_bench(ev);
+            break;
+        case SubTest::LedAddressing:
+            handle_button_led_addressing(ev);
             break;
         default:
             break;
@@ -1146,6 +1151,153 @@ void TestMode::draw_pixmob_bench() {
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         10, 128, "B: next test  B-hold: back",
         WHITE, BLACK, 1});
+}
+
+// -------------------------------------------------------------------------
+// LED Addressing (Epic 18 v0x04). Six scenarios auto-cycling through
+// LedMode 0 / 1 / 2 with the modifier permutations the LD needs to
+// verify at the bench:
+//   0: Mode 0 whole-strip RED pulse (parity check).
+//   1: Mode 1 chain=0, walking LED index across the strip (GREEN).
+//   2: Mode 1 chain=1, walking LED index across the strip (BLUE).
+//   3: Mode 2 mask=0x555 alternating (WHITE, static).
+//   4: Mode 2 mask=0xAAA opposite alternating (YELLOW, static).
+//   5: Mode 2 walking single-bit mask 1<<n through 12 bits (MAGENTA).
+//
+// Fires every kLedTestStepMs (400 ms = 2.5 Hz). Scenario auto-advances
+// every kLedTestStepsPerScenario fires; step_index_ animates within a
+// scenario (LED index / mask bit). Btn1 short = fire one step manually.
+// Btn2 short = skip to next scenario. Btn2 long = back to menu.
+// -------------------------------------------------------------------------
+
+namespace {
+constexpr size_t kLedTestStepsPerScenario = 12;   // ~4.8 s per scenario
+}
+
+void TestMode::enter_led_addressing() {
+    step_index_       = 0;
+    led_test_step_    = 0;
+    led_last_fire_ms_ = 0;
+    draw_led_addressing();
+    fire_led_addressing_step();
+    led_last_fire_ms_ = millis();
+}
+
+void TestMode::tick_led_addressing(uint32_t now) {
+    if (now - led_last_fire_ms_ < kLedTestStepMs) return;
+    ++led_test_step_;
+    // Advance scenario after N steps.
+    if (led_test_step_ % kLedTestStepsPerScenario == 0) {
+        step_index_ = static_cast<uint8_t>((step_index_ + 1) % kLedTestScenarioCount);
+        draw_led_addressing();
+    }
+    fire_led_addressing_step();
+    led_last_fire_ms_ = now;
+}
+
+void TestMode::handle_button_led_addressing(const dal::ButtonPressEvent& ev) {
+    using nocturnation::hal::ButtonEvent;
+    using nocturnation::hal::ButtonId;
+    if (ev.kind != ButtonEvent::Pressed) return;
+    if (ev.id == ButtonId::Btn1) {
+        // Manual fire.
+        fire_led_addressing_step();
+        led_last_fire_ms_ = millis();
+        return;
+    }
+    if (ev.id == ButtonId::Btn2) {
+        // Skip to next scenario.
+        step_index_ = static_cast<uint8_t>((step_index_ + 1) % kLedTestScenarioCount);
+        led_test_step_ = 0;
+        draw_led_addressing();
+        fire_led_addressing_step();
+        led_last_fire_ms_ = millis();
+        return;
+    }
+}
+
+void TestMode::fire_led_addressing_step() {
+    // Bench strip caps at 30 pixels by default (persistence kDefaultStripChainSize),
+    // but the mode-1 walking index uses (led_test_step_ % 30) so shorter strips
+    // still see every pixel exercised. Mode-2 walking-mask uses bit index 0..11.
+    RgbPulseEvent ev{};
+    ev.attack  = pixmob::T_0_MS;
+    ev.sustain = pixmob::T_192_MS;   // holds long enough to see between fires
+    ev.release = pixmob::T_96_MS;
+    ev.chance  = pixmob::CHANCE_100;
+
+    switch (step_index_) {
+        case 0:   // Mode 0 whole-strip RED
+            ev.r = 255; ev.g = 0; ev.b = 0;
+            ev.led_mode      = 0;
+            ev.led_modifier1 = 0;
+            ev.led_modifier2 = 0;
+            break;
+        case 1: { // Mode 1 chain=0 walking LED (GREEN)
+            const uint8_t idx = static_cast<uint8_t>(led_test_step_ % 30);
+            ev.r = 0; ev.g = 255; ev.b = 0;
+            ev.led_mode      = 1;
+            ev.led_modifier1 = 0;   // chain 0 = all chains
+            ev.led_modifier2 = idx;
+            break;
+        }
+        case 2: { // Mode 1 chain=1 walking LED (BLUE)
+            const uint8_t idx = static_cast<uint8_t>(led_test_step_ % 30);
+            ev.r = 0; ev.g = 0; ev.b = 255;
+            ev.led_mode      = 1;
+            ev.led_modifier1 = 1;   // chain 1 specifically
+            ev.led_modifier2 = idx;
+            break;
+        }
+        case 3:   // Mode 2 mask=0x555 (WHITE)
+            ev.r = 255; ev.g = 255; ev.b = 255;
+            ev.led_mode      = 2;
+            ev.led_modifier1 = 0x55;
+            ev.led_modifier2 = 0x05;   // 0x555 = 0b010101010101
+            break;
+        case 4:   // Mode 2 mask=0xAAA (YELLOW)
+            ev.r = 255; ev.g = 255; ev.b = 0;
+            ev.led_mode      = 2;
+            ev.led_modifier1 = 0xAA;
+            ev.led_modifier2 = 0x0A;   // 0xAAA = 0b101010101010
+            break;
+        case 5: { // Mode 2 walking single-bit mask (MAGENTA)
+            const uint16_t bit = static_cast<uint16_t>(1u << (led_test_step_ % 12));
+            ev.r = 255; ev.g = 0; ev.b = 255;
+            ev.led_mode      = 2;
+            ev.led_modifier1 = static_cast<uint8_t>(bit & 0xFF);
+            ev.led_modifier2 = static_cast<uint8_t>((bit >> 8) & 0x0F);
+            break;
+        }
+    }
+    // Broadcast to all groups so a bench Lume in any group sees it.
+    DAL::render_fx("00:00", ev);
+}
+
+void TestMode::draw_led_addressing() {
+    static const char* kScenarioLabels[kLedTestScenarioCount] = {
+        "Mode 0: all pixels",
+        "Mode 1: chain=0 walk",
+        "Mode 1: chain=1 walk",
+        "Mode 2: mask 0x555",
+        "Mode 2: mask 0xAAA",
+        "Mode 2: walking bit",
+    };
+    DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 5, "LED Address", WHITE, BLACK, 3});
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 50, kScenarioLabels[step_index_], YELLOW, BLACK, 2});
+    char buf[24];
+    std::snprintf(buf, sizeof(buf), "Scn %u/%u",
+                  (unsigned)(step_index_ + 1),
+                  (unsigned)kLedTestScenarioCount);
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 80, buf, WHITE, BLACK, 2});
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 108, "B1:fire B2:next", WHITE, BLACK, 1});
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 122, "B2-hold: back", WHITE, BLACK, 1});
 }
 
 }  // namespace modes
