@@ -83,6 +83,26 @@ private:
     void emit_wash_for_section(ShowContext& ctx, uint8_t section, uint32_t now_ms);
     void fire_pulse_for_section(ShowContext& ctx, uint8_t section, uint8_t strength);
     uint16_t cycle_ms_for_section(uint8_t section) const;
+
+    // LED-effect state (Epic 18 v0x04 follow-up). One counter serves both
+    // Walk (steps 0..kLedWalkLength-1) and Alternating (steps 0..1). The
+    // fire helper reads and post-increments it per fire, wrapping at the
+    // effect's own period.
+    //
+    // kLedWalkLength is the wire-side walk cap - the sender iterates
+    // 0..kLedWalkLength-1 regardless of the receiving Lume's actual
+    // pixel count. A Lume with fewer pixels silently drops OOB indices
+    // (see LedStripDriver LedMode-1 handler); a Lume with more pixels
+    // sees the walk repeat every kLedWalkLength positions. 30 matches
+    // the current NocturNation strip standard (6 x 5 = 30 LEDs); a
+    // future property can override this if the fleet grows longer.
+    static constexpr uint8_t kLedWalkLength = 30;
+    uint8_t led_step_ = 0;
+
+    // Deterministic RNG for Sparkle. Sequence-driven from a xorshift
+    // seed so unit tests can pin exact pixel picks. Reseeded on enter().
+    uint32_t sparkle_rng_state_ = 0x9E3779B9u;
+    uint8_t  next_sparkle_pixel();
 };
 
 BassAndDriftShow*       bass_and_drift_show_instance();

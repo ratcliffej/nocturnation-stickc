@@ -9,6 +9,7 @@
 
 #include "dal/dal.h"
 #include "pulse/envelope.h"
+#include "transport/espnow/frame.h"   // LedMode enum
 
 #include <cstdio>
 #include <cstdlib>
@@ -224,6 +225,21 @@ const char* const kChanceNames[] = {
     "100%", "88%", "67%", "50%", "32%", "16%", "10%", "4%"
 };
 
+// LED-effect vocabulary (Epic 18 follow-up). Four values map to wire
+// primitives per the effect-vocabulary Notion ticket. Wire semantics:
+//   Whole       -> LedMode.All   (mod1=0, mod2=0). CHANCE roll per pixel.
+//   Walk        -> LedMode.SingleLed (mod1=chain, mod2=step). CHANCE bypassed.
+//   Sparkle     -> LedMode.SingleLed (mod1=chain, mod2=rand). CHANCE bypassed.
+//   Alternating -> LedMode.RepeatPattern with mask 0x555 then 0xAAA per fire.
+constexpr uint8_t kLedEffectWhole       = 0;
+constexpr uint8_t kLedEffectWalk        = 1;
+constexpr uint8_t kLedEffectSparkle     = 2;
+constexpr uint8_t kLedEffectAlternating = 3;
+constexpr uint8_t kLedEffectCount       = 4;
+const char* const kLedEffectNames[] = {
+    "Whole", "Walk", "Sparkle", "Alternating"
+};
+
 // `chance` is an Enum picking one of the wire protocol's eight discrete
 // Chance steps. Index 0..7 maps directly to the pixmob::Chance enum value
 // in descending percentage order, which matches how the property displays
@@ -297,6 +313,16 @@ const PropertyDef kProps[] = {
         /*display_name=*/"Starlight",
         /*unit=*/nullptr,
         /*enum_names=*/nullptr,
+    },
+    PropertyDef{
+        /*key=*/"led_effect",
+        /*type=*/PropertyType::Enum,
+        /*default_value=*/PropertyValue::from_enum(kLedEffectWhole),
+        /*min_value=*/    PropertyValue::from_enum(0),
+        /*max_value=*/    PropertyValue::from_enum(kLedEffectCount - 1),
+        /*display_name=*/"LED effect",
+        /*unit=*/nullptr,
+        /*enum_names=*/kLedEffectNames,
     },
     PropertyDef{
         /*key=*/"target_group",
@@ -383,6 +409,13 @@ void BassAndDriftShow::enter(ShowContext& ctx) {
     manual_drop_prev_sec_  = kSectionVerse;
     bass_energy_           = 0.0f;
     overall_rms_           = 0.0f;
+
+    // LED-effect state (Epic 18 follow-up). Reset the shared step counter
+    // to 0 so Walk starts at pixel 0 and Alternating starts on the "evens"
+    // phase (mask 0x555). Reseed the Sparkle RNG so bench runs are
+    // reproducible when starting from the same clock.
+    led_step_ = 0;
+    sparkle_rng_state_ = 0x9E3779B9u;
 
     emit_wash_for_section(ctx, current_section_, millis());
 }
@@ -596,6 +629,46 @@ void BassAndDriftShow::fire_pulse_for_section(ShowContext& ctx,
     ev.release = pulse::T_192_MS;
     ev.chance  = chance_from_idx(ctx.get_property("chance").as_enum());
 
+    // LED-effect enum (Epic 18 follow-up) picks which subset of pixels
+    // this pulse addresses. Whole keeps v3 behaviour (whole strip via
+    // per-group CHANCE roll on the Lume). Walk / Sparkle / Alternating
+    // bypass CHANCE - they're deterministic Director-driven targets, so
+    // every pulse hits the addressed pixel(s).
+    const uint8_t effect = ctx.get_property("led_effect").as_enum();
+    switch (effect) {
+        case kLedEffectWalk: {
+            ev.led_mode      = static_cast<uint8_t>(
+                transport::espnow::LedMode::SingleLed);
+            ev.led_modifier1 = 0;   // chain 0 = all chains, same index
+            ev.led_modifier2 = led_step_;
+            led_step_ = static_cast<uint8_t>((led_step_ + 1) % kLedWalkLength);
+            break;
+        }
+        case kLedEffectSparkle: {
+            ev.led_mode      = static_cast<uint8_t>(
+                transport::espnow::LedMode::SingleLed);
+            ev.led_modifier1 = 0;
+            ev.led_modifier2 = next_sparkle_pixel();
+            break;
+        }
+        case kLedEffectAlternating: {
+            // Toggle between mask 0x555 (evens: LEDs 0, 2, 4, ...) and
+            // mask 0xAAA (odds: LEDs 1, 3, 5, ...) per fire. led_step_
+            // & 1 gives the phase; increment for next fire.
+            ev.led_mode = static_cast<uint8_t>(
+                transport::espnow::LedMode::RepeatPattern);
+            const uint16_t mask = (led_step_ & 1) ? 0x0AAA : 0x0555;
+            ev.led_modifier1 = static_cast<uint8_t>(mask & 0xFF);
+            ev.led_modifier2 = static_cast<uint8_t>((mask >> 8) & 0x0F);
+            ++led_step_;
+            break;
+        }
+        case kLedEffectWhole:
+        default:
+            // ev.led_mode/led_modifier1/led_modifier2 already 0 from init.
+            break;
+    }
+
     char target[8];
     build_target(target, sizeof(target),
                  ctx.get_property("target_group").as_u8());
@@ -604,6 +677,10 @@ void BassAndDriftShow::fire_pulse_for_section(ShowContext& ctx,
     // Starlight overlay: when enabled, fire a second low-chance pulse in
     // a contrasting palette colour on top of the bass-driven pulse. This
     // is the §1.2 "occasional accent that isn't the beat" gesture.
+    // Starlight stays whole-strip regardless of led_effect: it's an
+    // accent gesture, not part of the targeted-pixel pattern, so a
+    // Walk pulse on pixel 5 with Starlight enabled still peppers the
+    // whole strip with a starlight sparkle at CHANCE_4.
     if (ctx.get_property("starlight").as_bool() && section != kSectionBreakdown) {
         const PulseColour sl = kStarlightColour[palette_idx];
         RgbPulseEvent star{};
@@ -614,6 +691,19 @@ void BassAndDriftShow::fire_pulse_for_section(ShowContext& ctx,
         star.chance  = pulse::CHANCE_4;
         ctx.render_fx(target, star);
     }
+}
+
+uint8_t BassAndDriftShow::next_sparkle_pixel() {
+    // xorshift32 - fast, deterministic (reseeded on enter()), no external
+    // deps. Range: 0..kLedWalkLength-1 to match the Walk cap so Sparkle
+    // and Walk address the same visual range.
+    uint32_t x = sparkle_rng_state_;
+    if (x == 0) x = 0x9E3779B9u;   // xorshift can't tolerate zero seed
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    sparkle_rng_state_ = x;
+    return static_cast<uint8_t>(x % kLedWalkLength);
 }
 
 // =============================================================================
