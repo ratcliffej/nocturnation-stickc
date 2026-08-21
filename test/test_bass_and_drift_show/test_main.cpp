@@ -234,7 +234,7 @@ static void test_power_profile_requests_audio_frames(void) {
 
 static void test_properties_schema(void) {
     auto props = bass_and_drift_show_instance()->properties();
-    TEST_ASSERT_EQUAL_size_t(6, props.size);
+    TEST_ASSERT_EQUAL_size_t(7, props.size);
 
     // Property keys present in expected order (callers + tests rely on it).
     TEST_ASSERT_EQUAL_STRING("palette_set",         props.data[0].key);
@@ -242,7 +242,8 @@ static void test_properties_schema(void) {
     TEST_ASSERT_EQUAL_STRING("wash_speed",          props.data[2].key);
     TEST_ASSERT_EQUAL_STRING("respond_to_sections", props.data[3].key);
     TEST_ASSERT_EQUAL_STRING("starlight",           props.data[4].key);
-    TEST_ASSERT_EQUAL_STRING("target_group",        props.data[5].key);
+    TEST_ASSERT_EQUAL_STRING("led_effect",          props.data[5].key);
+    TEST_ASSERT_EQUAL_STRING("target_group",        props.data[6].key);
 
     // Types.
     TEST_ASSERT_EQUAL_INT((int)PropertyType::Enum, (int)props.data[0].type);
@@ -250,7 +251,8 @@ static void test_properties_schema(void) {
     TEST_ASSERT_EQUAL_INT((int)PropertyType::Enum, (int)props.data[2].type);
     TEST_ASSERT_EQUAL_INT((int)PropertyType::Bool, (int)props.data[3].type);
     TEST_ASSERT_EQUAL_INT((int)PropertyType::Bool, (int)props.data[4].type);
-    TEST_ASSERT_EQUAL_INT((int)PropertyType::U8,   (int)props.data[5].type);
+    TEST_ASSERT_EQUAL_INT((int)PropertyType::Enum, (int)props.data[5].type);   // led_effect
+    TEST_ASSERT_EQUAL_INT((int)PropertyType::U8,   (int)props.data[6].type);
 }
 
 static void test_property_defaults_match_B0(void) {
@@ -516,6 +518,151 @@ static void test_starlight_off_fires_only_one_pulse(void) {
 }
 
 // =============================================================================
+// LED-effect enum (Epic 18 follow-up). Four values: Whole (0), Walk (1),
+// Sparkle (2), Alternating (3). Whole preserves v3-parity bytes; the other
+// three set LedMode + modifier bytes so the receiver's per-pixel router
+// hits deterministic targets.
+// =============================================================================
+
+static void test_led_effect_whole_leaves_wire_fields_zero(void) {
+    BassAndDriftShow* s = bass_and_drift_show_instance();
+    auto& ctx = bass_and_drift_show_context();
+    auto& bag = bass_and_drift_show_property_bag();
+
+    s->enter(ctx);
+    bag.set("led_effect", PropertyValue::from_enum(0));   // Whole
+    // Turn off Starlight so the last-pulse we inspect is the primary one.
+    bag.set("starlight", PropertyValue::from_bool(false));
+
+    g_espnow_driver.reset();
+    s->on_beat_detected(ctx, 100);
+    auto ev = g_espnow_driver.last_rgb_pulse();
+    TEST_ASSERT_EQUAL_UINT8(0, ev.led_mode);
+    TEST_ASSERT_EQUAL_UINT8(0, ev.led_modifier1);
+    TEST_ASSERT_EQUAL_UINT8(0, ev.led_modifier2);
+}
+
+static void test_led_effect_walk_advances_pixel_index_per_beat(void) {
+    BassAndDriftShow* s = bass_and_drift_show_instance();
+    auto& ctx = bass_and_drift_show_context();
+    auto& bag = bass_and_drift_show_property_bag();
+
+    s->enter(ctx);
+    bag.set("led_effect", PropertyValue::from_enum(1));   // Walk
+    bag.set("starlight", PropertyValue::from_bool(false));
+
+    // First beat: pixel 0. Second: pixel 1. LedMode.SingleLed = 1.
+    g_espnow_driver.reset();
+    s->on_beat_detected(ctx, 100);
+    auto e0 = g_espnow_driver.last_rgb_pulse();
+    TEST_ASSERT_EQUAL_UINT8(1, e0.led_mode);
+    TEST_ASSERT_EQUAL_UINT8(0, e0.led_modifier1);   // chain 0
+    TEST_ASSERT_EQUAL_UINT8(0, e0.led_modifier2);   // pixel 0
+
+    s->on_beat_detected(ctx, 100);
+    auto e1 = g_espnow_driver.last_rgb_pulse();
+    TEST_ASSERT_EQUAL_UINT8(1, e1.led_mode);
+    TEST_ASSERT_EQUAL_UINT8(1, e1.led_modifier2);   // pixel 1
+
+    s->on_beat_detected(ctx, 100);
+    auto e2 = g_espnow_driver.last_rgb_pulse();
+    TEST_ASSERT_EQUAL_UINT8(2, e2.led_modifier2);   // pixel 2
+}
+
+static void test_led_effect_walk_wraps_at_walk_length(void) {
+    BassAndDriftShow* s = bass_and_drift_show_instance();
+    auto& ctx = bass_and_drift_show_context();
+    auto& bag = bass_and_drift_show_property_bag();
+
+    s->enter(ctx);
+    bag.set("led_effect", PropertyValue::from_enum(1));   // Walk
+    bag.set("starlight", PropertyValue::from_bool(false));
+
+    // kLedWalkLength = 30. After 30 beats we should be back at pixel 0.
+    for (int i = 0; i < 30; ++i) {
+        g_espnow_driver.reset();
+        s->on_beat_detected(ctx, 100);
+    }
+    auto ev = g_espnow_driver.last_rgb_pulse();
+    // The 30th beat emitted pixel 29 (0..29 = 30 positions); the next fire
+    // wraps to pixel 0.
+    TEST_ASSERT_EQUAL_UINT8(29, ev.led_modifier2);
+
+    g_espnow_driver.reset();
+    s->on_beat_detected(ctx, 100);
+    ev = g_espnow_driver.last_rgb_pulse();
+    TEST_ASSERT_EQUAL_UINT8(0, ev.led_modifier2);
+}
+
+static void test_led_effect_sparkle_stays_in_range_and_is_deterministic(void) {
+    BassAndDriftShow* s = bass_and_drift_show_instance();
+    auto& ctx = bass_and_drift_show_context();
+    auto& bag = bass_and_drift_show_property_bag();
+
+    s->enter(ctx);   // Reseeds the xorshift RNG deterministically.
+    bag.set("led_effect", PropertyValue::from_enum(2));   // Sparkle
+    bag.set("starlight", PropertyValue::from_bool(false));
+
+    // Every sparkle pick must be within [0, kLedWalkLength), i.e. 0..29.
+    // Cover a good sample so a bug that produced OOB indices would surface.
+    for (int i = 0; i < 60; ++i) {
+        g_espnow_driver.reset();
+        s->on_beat_detected(ctx, 100);
+        auto ev = g_espnow_driver.last_rgb_pulse();
+        TEST_ASSERT_EQUAL_UINT8(1, ev.led_mode);
+        TEST_ASSERT_EQUAL_UINT8(0, ev.led_modifier1);
+        TEST_ASSERT_TRUE_MESSAGE(ev.led_modifier2 < 30,
+            "Sparkle pixel index must be within the walk range");
+    }
+
+    // Reseeding via re-enter() reproduces the same first pick — proves the
+    // RNG is deterministic, not clock-driven.
+    s->enter(ctx);
+    g_espnow_driver.reset();
+    s->on_beat_detected(ctx, 100);
+    const uint8_t first_after_reenter = g_espnow_driver.last_rgb_pulse().led_modifier2;
+
+    s->enter(ctx);
+    g_espnow_driver.reset();
+    s->on_beat_detected(ctx, 100);
+    TEST_ASSERT_EQUAL_UINT8(first_after_reenter,
+                            g_espnow_driver.last_rgb_pulse().led_modifier2);
+}
+
+static void test_led_effect_alternating_toggles_mask_per_beat(void) {
+    BassAndDriftShow* s = bass_and_drift_show_instance();
+    auto& ctx = bass_and_drift_show_context();
+    auto& bag = bass_and_drift_show_property_bag();
+
+    s->enter(ctx);
+    bag.set("led_effect", PropertyValue::from_enum(3));   // Alternating
+    bag.set("starlight", PropertyValue::from_bool(false));
+
+    // First beat: mask 0x555 (evens) = modifier1 0x55, modifier2 0x05.
+    g_espnow_driver.reset();
+    s->on_beat_detected(ctx, 100);
+    auto e0 = g_espnow_driver.last_rgb_pulse();
+    TEST_ASSERT_EQUAL_UINT8(2, e0.led_mode);
+    TEST_ASSERT_EQUAL_UINT8(0x55, e0.led_modifier1);
+    TEST_ASSERT_EQUAL_UINT8(0x05, e0.led_modifier2);
+
+    // Second beat: mask 0xAAA (odds) = modifier1 0xAA, modifier2 0x0A.
+    g_espnow_driver.reset();
+    s->on_beat_detected(ctx, 100);
+    auto e1 = g_espnow_driver.last_rgb_pulse();
+    TEST_ASSERT_EQUAL_UINT8(2, e1.led_mode);
+    TEST_ASSERT_EQUAL_UINT8(0xAA, e1.led_modifier1);
+    TEST_ASSERT_EQUAL_UINT8(0x0A, e1.led_modifier2);
+
+    // Third beat: back to evens.
+    g_espnow_driver.reset();
+    s->on_beat_detected(ctx, 100);
+    auto e2 = g_espnow_driver.last_rgb_pulse();
+    TEST_ASSERT_EQUAL_UINT8(0x55, e2.led_modifier1);
+    TEST_ASSERT_EQUAL_UINT8(0x05, e2.led_modifier2);
+}
+
+// =============================================================================
 // Unity main
 // =============================================================================
 
@@ -538,5 +685,11 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_section_change_when_respond_false_keeps_pulse_signature);
     RUN_TEST(test_starlight_overlay_fires_extra_pulse);
     RUN_TEST(test_starlight_off_fires_only_one_pulse);
+    // Epic 18 follow-up: LED-effect vocabulary
+    RUN_TEST(test_led_effect_whole_leaves_wire_fields_zero);
+    RUN_TEST(test_led_effect_walk_advances_pixel_index_per_beat);
+    RUN_TEST(test_led_effect_walk_wraps_at_walk_length);
+    RUN_TEST(test_led_effect_sparkle_stays_in_range_and_is_deterministic);
+    RUN_TEST(test_led_effect_alternating_toggles_mask_per_beat);
     return UNITY_END();
 }
