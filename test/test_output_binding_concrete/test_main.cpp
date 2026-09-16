@@ -881,6 +881,78 @@ static void test_stop_broadcast_mid_listening_cleans_up(void) {
 }
 
 // =============================================================================
+// Epic 19: airtime cap gate (Director-side minimum send interval)
+// =============================================================================
+
+static void test_airtime_cap_first_send_passes(void) {
+    reset_listen_driver();
+    auto* drv = listen_driver();
+    drv->test_reset_airtime_state();
+    dal::test_seam::set_now_ms(0);
+
+    // After reset the first send always passes regardless of `now`.
+    TEST_ASSERT_TRUE(drv->test_airtime_cap_ready_now());
+    TEST_ASSERT_EQUAL_UINT32(0, drv->airtime_drops());
+
+    reset_listen_driver();
+}
+
+static void test_airtime_cap_burst_second_send_dropped(void) {
+    reset_listen_driver();
+    auto* drv = listen_driver();
+    drv->test_reset_airtime_state();
+    dal::test_seam::set_now_ms(0);
+
+    TEST_ASSERT_TRUE (drv->test_airtime_cap_ready_now());
+    // Same tick: second call refused.
+    TEST_ASSERT_FALSE(drv->test_airtime_cap_ready_now());
+    TEST_ASSERT_EQUAL_UINT32(1, drv->airtime_drops());
+    // Still under the 50 ms floor: refused again.
+    dal::test_seam::set_now_ms(dal::EspNowBroadcastDriver::kMinSendIntervalMs - 1);
+    TEST_ASSERT_FALSE(drv->test_airtime_cap_ready_now());
+    TEST_ASSERT_EQUAL_UINT32(2, drv->airtime_drops());
+
+    reset_listen_driver();
+}
+
+static void test_airtime_cap_send_at_floor_passes(void) {
+    reset_listen_driver();
+    auto* drv = listen_driver();
+    drv->test_reset_airtime_state();
+    dal::test_seam::set_now_ms(0);
+
+    TEST_ASSERT_TRUE(drv->test_airtime_cap_ready_now());
+    // Exactly the floor - the gate is `elapsed < kMinSendIntervalMs`,
+    // so an elapsed value equal to the floor passes.
+    dal::test_seam::set_now_ms(dal::EspNowBroadcastDriver::kMinSendIntervalMs);
+    TEST_ASSERT_TRUE(drv->test_airtime_cap_ready_now());
+    TEST_ASSERT_EQUAL_UINT32(0, drv->airtime_drops());
+
+    reset_listen_driver();
+}
+
+static void test_airtime_cap_start_broadcast_resets_state(void) {
+    reset_listen_driver();
+    auto* drv = listen_driver();
+    // Drive the drop counter up first.
+    drv->test_reset_airtime_state();
+    dal::test_seam::set_now_ms(0);
+    (void)drv->test_airtime_cap_ready_now();
+    (void)drv->test_airtime_cap_ready_now();
+    TEST_ASSERT_EQUAL_UINT32(1, drv->airtime_drops());
+
+    // start_broadcast fails without a live radio in native, so exercise
+    // the reset directly via the seam - same code path start_broadcast
+    // runs on real hardware.
+    drv->test_reset_airtime_state();
+    TEST_ASSERT_EQUAL_UINT32(0, drv->airtime_drops());
+    // First post-reset send passes.
+    TEST_ASSERT_TRUE(drv->test_airtime_cap_ready_now());
+
+    reset_listen_driver();
+}
+
+// =============================================================================
 // main
 // =============================================================================
 
@@ -927,5 +999,9 @@ int main(int, char**) {
     RUN_TEST(test_status_label_out_of_range_uses_question_prefix);
     RUN_TEST(test_status_label_truncated_buffer_returns_zero);
     RUN_TEST(test_stop_broadcast_mid_listening_cleans_up);
+    RUN_TEST(test_airtime_cap_first_send_passes);
+    RUN_TEST(test_airtime_cap_burst_second_send_dropped);
+    RUN_TEST(test_airtime_cap_send_at_floor_passes);
+    RUN_TEST(test_airtime_cap_start_broadcast_resets_state);
     return UNITY_END();
 }
