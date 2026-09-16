@@ -59,6 +59,13 @@ public:
     // uses to gate Show selection.
     hal::CapabilityMask analyser_caps() const;
 
+    // -- Director-side attributes -----------------------------------------
+    // Calm mode (Epic 19). Toggle lives at Config > Calm on the Director
+    // and is read here by shows that want to modulate composition. A show
+    // is free to ignore it; framework does not transform output on the
+    // show's behalf. Forwards to persistence::load_dir_calm().
+    bool director_calm() const;
+
     // -- Framework-managed state ------------------------------------------
     bool paused()           const { return paused_; }
     void set_paused(bool p)       { paused_ = p; }

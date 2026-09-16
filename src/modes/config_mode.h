@@ -89,8 +89,9 @@ private:
     //       a level-2 picker; or
     //   (c) a leaf submenu: target is the leaf, drill straight in.
     enum class TopAction : uint8_t {
-        Drill,      // descend into target (picker or leaf)
-        GroupId,    // direct action: increment slv_group 0..6 (UI cap; wire allows 0..255)
+        Drill,       // descend into target (picker or leaf)
+        GroupId,     // direct action: increment slv_group 0..6 (UI cap; wire allows 0..255)
+        CalmToggle,  // direct action: flip dir_calm on/off (Epic 19)
     };
     struct TopEntry {
         SubMenu     target;
@@ -105,12 +106,13 @@ private:
     // precedent); only the top-level entry is removed so operators
     // stop seeing a phantom control. Re-add the entry here if a
     // future Epic restores LCD-as-light-surface.
-    static constexpr TopEntry kTop[5] = {
-        { SubMenu::None,         TopAction::GroupId, "Group"        },
-        { SubMenu::Show,         TopAction::Drill,   "Show"         },
-        { SubMenu::Connectivity, TopAction::Drill,   "Connectivity" },
-        { SubMenu::Utilities,    TopAction::Drill,   "Utilities"    },
-        { SubMenu::System,       TopAction::Drill,   "System"       },
+    static constexpr TopEntry kTop[6] = {
+        { SubMenu::None,         TopAction::GroupId,    "Group"        },
+        { SubMenu::None,         TopAction::CalmToggle, "Calm"         },
+        { SubMenu::Show,         TopAction::Drill,      "Show"         },
+        { SubMenu::Connectivity, TopAction::Drill,      "Connectivity" },
+        { SubMenu::Utilities,    TopAction::Drill,      "Utilities"    },
+        { SubMenu::System,       TopAction::Drill,      "System"       },
     };
     static constexpr size_t kTopCount = sizeof(kTop) / sizeof(kTop[0]);
 

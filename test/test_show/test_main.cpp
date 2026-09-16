@@ -311,6 +311,24 @@ static void test_context_property_round_trip(void) {
 }
 
 // =============================================================================
+// ShowContext::director_calm forwards to persistence::load_dir_calm (Epic 19)
+// =============================================================================
+
+static void test_context_director_calm_forwards(void) {
+    SimpleBeatShow* sb = simple_beat_show_instance();
+    auto& ctx = sb->context();
+
+    // clear_native_persistence in setUp() resets dir_calm to false.
+    TEST_ASSERT_FALSE(ctx.director_calm());
+
+    modes::persistence::save_dir_calm(true);
+    TEST_ASSERT_TRUE(ctx.director_calm());
+
+    modes::persistence::save_dir_calm(false);
+    TEST_ASSERT_FALSE(ctx.director_calm());
+}
+
+// =============================================================================
 // SimpleBeatShow: identity / kind / display_name
 // =============================================================================
 
@@ -546,6 +564,7 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_registry_register_find_clear);
     RUN_TEST(test_required_capabilities_can_be_outside_host);
     RUN_TEST(test_context_property_round_trip);
+    RUN_TEST(test_context_director_calm_forwards);
     RUN_TEST(test_simple_beat_identity);
     RUN_TEST(test_simple_beat_properties_schema);
     RUN_TEST(test_simple_beat_required_capabilities);

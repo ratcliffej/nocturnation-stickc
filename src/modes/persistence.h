@@ -58,6 +58,15 @@ void             save_external_ir_enabled(bool e);
 bool             load_screen_pulse_enabled();
 void             save_screen_pulse_enabled(bool e);
 
+// Director-side Calm-mode toggle (Epic 19). When true, Director-hosted
+// shows tone down their composition - skip strobe-adjacent FX, stretch
+// envelopes, lower CHANCE. Lumes don't see this on the wire; the show
+// reads it via ShowContext::director_calm() and branches locally.
+// Default off (Full). Persisted as `dir_calm` under the "noct" NVS
+// namespace.
+bool             load_dir_calm();
+void             save_dir_calm(bool e);
+
 uint8_t          load_director_channel();
 void             save_director_channel(uint8_t c);
 
