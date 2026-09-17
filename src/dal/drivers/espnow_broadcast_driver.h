@@ -23,11 +23,24 @@ public:
 
     // Per spec §4.3: each frame goes out N times with the SAME sequence
     // number, separated by 5-15 ms of pseudo-random jitter, for airtime
-    // resilience. Lume dedup catches the duplicates. Current N chosen
+    // resilience. Lume dedup catches the duplicates. Default N chosen
     // conservatively - louder retransmits saturate airtime; see
     // docs/stickc-history.md for the 3→5→2 bench history and the
-    // Lume-repeat-mesh alternative for range.
-    static constexpr uint8_t  kRedundantSends     = 2;
+    // Lume-repeat-mesh alternative for range. Operators can now bump
+    // N at runtime via Config > ESP-NOW > TX Copies for congested rooms
+    // (persisted via NVS `retx_count`); the value is picked up at the
+    // next start_broadcast(). Build-flag override sets the first-boot
+    // default: -DESPNOW_RETRANSMITS_DEFAULT=N.
+#ifndef ESPNOW_RETRANSMITS_DEFAULT
+#define ESPNOW_RETRANSMITS_DEFAULT 2
+#endif
+    static constexpr uint8_t  kRedundantSendsDefault = ESPNOW_RETRANSMITS_DEFAULT;
+    // Retained name so existing docs / diagnostic references keep
+    // resolving. Points at the compile-time default; the live value is
+    // retransmit_count_ (loaded from NVS at start_broadcast).
+    static constexpr uint8_t  kRedundantSends     = kRedundantSendsDefault;
+    static constexpr uint8_t  kRedundantSendsMin  = 1;
+    static constexpr uint8_t  kRedundantSendsMax  = 5;
     static constexpr uint8_t  kRedundantGapMinMs  = 5;
     static constexpr uint8_t  kRedundantGapMaxMs  = 15;
 
@@ -101,6 +114,11 @@ public:
     // transitions - Director exit resets it.
     uint32_t airtime_drops() const { return airtime_drop_count_; }
 
+    // Current runtime retransmit count (§4.3). Snapshot of NVS
+    // `retx_count` taken at the last start_broadcast(); changes via
+    // Config > ESP-NOW > TX Copies apply on the next start.
+    uint8_t retransmit_count() const { return retransmit_count_; }
+
     // Currently-allocated source_id for the active broadcast. Valid once
     // start_broadcast has been called; returns 0 before that.
     uint8_t source_id() const { return source_id_; }
@@ -152,6 +170,17 @@ public:
     // the interval timer + drop counter.
     bool test_airtime_cap_ready_now();
     void test_reset_airtime_state();
+
+    // Retransmit-count test seams. In native, start_broadcast bails on
+    // a nullptr radio before load_retx_count() runs, so tests reach in
+    // directly. test_set_active() pushes the driver into a running
+    // state that send_frame_bytes will accept; test_send_frame() calls
+    // the private helper so the retransmit queue reflects the runtime
+    // count.
+    void test_set_retransmit_count(uint8_t n);
+    void test_set_active(bool a);
+    void test_call_send_frame_bytes(const uint8_t* buf, size_t n);
+    uint8_t test_retransmits_remaining() const { return retransmits_remaining_; }
 #endif
 
 private:
@@ -211,6 +240,10 @@ private:
     size_t    retransmit_len_       = 0;
     uint8_t   retransmits_remaining_ = 0;
     uint32_t  next_retransmit_ms_   = 0;
+    // Live retransmit count. Snapshot of persistence::load_retx_count()
+    // taken in start_broadcast(); ranges [kRedundantSendsMin,
+    // kRedundantSendsMax]. Value 1 disables retransmits.
+    uint8_t   retransmit_count_    = kRedundantSendsDefault;
 
     // Airtime cap state (Epic 19). last_airtime_send_ms_ initialised
     // via unsigned wraparound so the FIRST send after boot always

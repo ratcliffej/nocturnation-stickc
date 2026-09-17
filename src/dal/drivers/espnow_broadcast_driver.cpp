@@ -192,6 +192,15 @@ bool EspNowBroadcastDriver::start_broadcast(uint8_t channel) {
     last_tx_ms_ = 0;
     last_airtime_send_ms_ = 0u - kMinSendIntervalMs;
     airtime_drop_count_   = 0;
+    // Snapshot the operator-configured §4.3 retransmit count. Persistence
+    // clamps to [kRedundantSendsMin, kRedundantSendsMax]; guard again
+    // defensively in case of NVS corruption.
+    {
+        uint8_t n = modes::persistence::load_retx_count();
+        if (n < kRedundantSendsMin) n = kRedundantSendsMin;
+        if (n > kRedundantSendsMax) n = kRedundantSendsMax;
+        retransmit_count_ = n;
+    }
 
     if (channel == 11) {
         // Performance mode: load the persisted candidate, hold TX off,
@@ -297,9 +306,11 @@ bool EspNowBroadcastDriver::airtime_cap_ready() {
 void EspNowBroadcastDriver::send_frame_bytes(const uint8_t* buf, size_t n, const char* label) {
     if (!active_ || n == 0) return;
     auto* radio = hal::HAL::esp_now();
-    if (!radio) return;
-    const bool ok = radio->send_broadcast(buf, n);
-    if (ok) last_tx_ms_ = now_ms();
+    bool ok = false;
+    if (radio) {
+        ok = radio->send_broadcast(buf, n);
+        if (ok) last_tx_ms_ = now_ms();
+    }
     // Suppress the diagnostic line on the AtomS3-PoE Director (Serial is
     // its config console).
 #if defined(ARDUINO) && !defined(NOCT_DMX_ETHERNET)
@@ -310,10 +321,13 @@ void EspNowBroadcastDriver::send_frame_bytes(const uint8_t* buf, size_t n, const
 
     // A fresh frame replaces any pending retransmit queue: getting a
     // new beat on air beats finishing an old frame's redundancy.
-    if (n <= kRetransmitBufSize) {
+    // retransmit_count_ counts total on-air copies (including this
+    // first one); remaining is count - 1. A count of 1 means "no
+    // retransmits" and leaves the queue empty.
+    if (n <= kRetransmitBufSize && retransmit_count_ > 1) {
         std::memcpy(retransmit_buf_, buf, n);
         retransmit_len_        = n;
-        retransmits_remaining_ = kRedundantSends - 1;
+        retransmits_remaining_ = static_cast<uint8_t>(retransmit_count_ - 1);
         next_retransmit_ms_    = now_ms() + redundant_gap_ms();
     } else {
         retransmits_remaining_ = 0;
@@ -571,6 +585,21 @@ bool EspNowBroadcastDriver::test_airtime_cap_ready_now() {
 void EspNowBroadcastDriver::test_reset_airtime_state() {
     last_airtime_send_ms_ = 0u - kMinSendIntervalMs;
     airtime_drop_count_   = 0;
+}
+
+void EspNowBroadcastDriver::test_set_retransmit_count(uint8_t n) {
+    if (n < kRedundantSendsMin) n = kRedundantSendsMin;
+    if (n > kRedundantSendsMax) n = kRedundantSendsMax;
+    retransmit_count_ = n;
+}
+
+void EspNowBroadcastDriver::test_set_active(bool a) {
+    active_ = a;
+}
+
+void EspNowBroadcastDriver::test_call_send_frame_bytes(const uint8_t* buf,
+                                                       size_t n) {
+    send_frame_bytes(buf, n, "TEST");
 }
 
 void EspNowBroadcastDriver::test_inject_listen_heartbeat(uint8_t source_id) {

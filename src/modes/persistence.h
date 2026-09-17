@@ -67,6 +67,17 @@ void             save_screen_pulse_enabled(bool e);
 bool             load_dir_calm();
 void             save_dir_calm(bool e);
 
+// Director ESP-NOW retransmit count (§4.3 redundant sends). Number of
+// times the driver puts each Director-originated frame on air with the
+// same sequence number, separated by 5-15 ms jitter. Range 1..5;
+// clamped on save. Default 2 (from build-flag override
+// -DESPNOW_RETRANSMITS_DEFAULT=N; falls back to 2). Loaded by
+// EspNowBroadcastDriver::start_broadcast() into a runtime member so
+// the operator can bump it via Config > ESP-NOW > TX Copies for
+// congested rooms without recompiling.
+uint8_t          load_retx_count();
+void             save_retx_count(uint8_t n);
+
 uint8_t          load_director_channel();
 void             save_director_channel(uint8_t c);
 

@@ -953,6 +953,65 @@ static void test_airtime_cap_start_broadcast_resets_state(void) {
 }
 
 // =============================================================================
+// §4.3 runtime retransmit count (Config > ESP-NOW > TX Copies)
+// =============================================================================
+
+static void test_retransmit_count_persistence_round_trip(void) {
+    modes::persistence::test_seam::clear_native_persistence();
+    // Default 2 when never written.
+    TEST_ASSERT_EQUAL_UINT8(2, modes::persistence::load_retx_count());
+    modes::persistence::save_retx_count(4);
+    TEST_ASSERT_EQUAL_UINT8(4, modes::persistence::load_retx_count());
+    // Clamped: 0 -> 1, 42 -> 5.
+    modes::persistence::save_retx_count(0);
+    TEST_ASSERT_EQUAL_UINT8(1, modes::persistence::load_retx_count());
+    modes::persistence::save_retx_count(42);
+    TEST_ASSERT_EQUAL_UINT8(5, modes::persistence::load_retx_count());
+    modes::persistence::test_seam::clear_native_persistence();
+}
+
+// send_frame_bytes should schedule (retransmit_count_ - 1) pending
+// duplicates and drop the queue entirely when the count is 1.
+static void test_retransmit_count_arms_queue(void) {
+    reset_listen_driver();
+    auto* drv = listen_driver();
+    drv->test_set_active(true);
+    dal::test_seam::set_now_ms(0);
+
+    // 8 bytes of arbitrary payload; well below kRetransmitBufSize.
+    const uint8_t frame[8] = { 0xA0, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07 };
+
+    drv->test_set_retransmit_count(2);
+    drv->test_call_send_frame_bytes(frame, sizeof(frame));
+    TEST_ASSERT_EQUAL_UINT8(1, drv->test_retransmits_remaining());
+
+    drv->test_set_retransmit_count(4);
+    drv->test_call_send_frame_bytes(frame, sizeof(frame));
+    TEST_ASSERT_EQUAL_UINT8(3, drv->test_retransmits_remaining());
+
+    // Count of 1 disables retransmit entirely.
+    drv->test_set_retransmit_count(1);
+    drv->test_call_send_frame_bytes(frame, sizeof(frame));
+    TEST_ASSERT_EQUAL_UINT8(0, drv->test_retransmits_remaining());
+
+    reset_listen_driver();
+}
+
+// The test_set_* seam clamps the same way the operator-facing setter
+// does, so out-of-range inputs snap to [1, 5].
+static void test_retransmit_count_clamped_by_seam(void) {
+    reset_listen_driver();
+    auto* drv = listen_driver();
+
+    drv->test_set_retransmit_count(0);
+    TEST_ASSERT_EQUAL_UINT8(1, drv->retransmit_count());
+    drv->test_set_retransmit_count(99);
+    TEST_ASSERT_EQUAL_UINT8(5, drv->retransmit_count());
+
+    reset_listen_driver();
+}
+
+// =============================================================================
 // main
 // =============================================================================
 
@@ -1003,5 +1062,8 @@ int main(int, char**) {
     RUN_TEST(test_airtime_cap_burst_second_send_dropped);
     RUN_TEST(test_airtime_cap_send_at_floor_passes);
     RUN_TEST(test_airtime_cap_start_broadcast_resets_state);
+    RUN_TEST(test_retransmit_count_persistence_round_trip);
+    RUN_TEST(test_retransmit_count_arms_queue);
+    RUN_TEST(test_retransmit_count_clamped_by_seam);
     return UNITY_END();
 }
