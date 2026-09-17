@@ -11,6 +11,7 @@
 #include "shows/show.h"
 
 #include "hal/hal.h"
+#include "modes/persistence.h"
 
 #include <cstdint>
 
@@ -67,6 +68,10 @@ plugins::PropertyValue ShowContext::get_property(const char* key) const {
 bool ShowContext::set_property(const char* key,
                                 plugins::PropertyValue value) {
     return bag_->set(key, value);
+}
+
+bool ShowContext::director_calm() const {
+    return modes::persistence::load_dir_calm();
 }
 
 hal::CapabilityMask ShowContext::analyser_caps() const {

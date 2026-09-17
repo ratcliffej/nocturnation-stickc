@@ -619,6 +619,14 @@ void BassAndDriftShow::fire_pulse_for_section(ShowContext& ctx,
     const uint8_t palette_idx = ctx.get_property("palette_set").as_enum();
     const PulseColour pc = kPulseColour[palette_idx];
 
+    // Calm mode (Epic 19) tones down composition when the Director has
+    // Calm toggled on: longer release (softer decay), CHANCE dropped
+    // two enum steps (fewer Lumes light per pulse), and led_effect
+    // forced to Whole so we don't fire strobe-adjacent Walk / Sparkle
+    // / Alternating patterns. Starlight overlay is already CHANCE_4
+    // (low accent), left as-is.
+    const bool calm = ctx.director_calm();
+
     // Drop section gets the peak pulse (max intensity); other sections
     // use the palette's pulse colour at full saturation. The receiver's
     // `chance` gate distributes across Lumes.
@@ -626,15 +634,24 @@ void BassAndDriftShow::fire_pulse_for_section(ShowContext& ctx,
     ev.r = pc.r; ev.g = pc.g; ev.b = pc.b;
     ev.attack  = pulse::T_0_MS;
     ev.sustain = (section == kSectionDrop) ? pulse::T_192_MS : pulse::T_96_MS;
-    ev.release = pulse::T_192_MS;
-    ev.chance  = chance_from_idx(ctx.get_property("chance").as_enum());
+    ev.release = calm ? pulse::T_480_MS : pulse::T_192_MS;
+
+    uint8_t chance_idx = ctx.get_property("chance").as_enum();
+    if (calm) {
+        const uint8_t stepped = static_cast<uint8_t>(chance_idx + 2);
+        chance_idx = (stepped >= kChanceCount)
+                     ? static_cast<uint8_t>(kChanceCount - 1)
+                     : stepped;
+    }
+    ev.chance  = chance_from_idx(chance_idx);
 
     // LED-effect enum (Epic 18 follow-up) picks which subset of pixels
     // this pulse addresses. Whole keeps v3 behaviour (whole strip via
     // per-group CHANCE roll on the Lume). Walk / Sparkle / Alternating
     // bypass CHANCE - they're deterministic Director-driven targets, so
-    // every pulse hits the addressed pixel(s).
-    const uint8_t effect = ctx.get_property("led_effect").as_enum();
+    // every pulse hits the addressed pixel(s). Calm forces Whole.
+    const uint8_t effect_raw = ctx.get_property("led_effect").as_enum();
+    const uint8_t effect = calm ? kLedEffectWhole : effect_raw;
     switch (effect) {
         case kLedEffectWalk: {
             ev.led_mode      = static_cast<uint8_t>(

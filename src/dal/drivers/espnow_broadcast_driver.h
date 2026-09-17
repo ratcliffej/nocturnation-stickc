@@ -35,6 +35,18 @@ public:
     // retransmit (TextDisplay + bitmap planes reach ~200 bytes).
     static constexpr size_t   kRetransmitBufSize  = 250;
 
+    // Airtime safety net (Epic 19). Minimum interval between Director-
+    // originated wire sends. Applies to LIGHT_* + passthrough entry
+    // points; heartbeats and §4.3 retransmits are exempt (heartbeats
+    // own their own 1 Hz gate; retransmits are duplicates of an
+    // already-gated frame). Sends refused for airtime are DROPPED, not
+    // queued, so a runaway show can't build a backlog. Override with
+    // -DDIRECTOR_MIN_SEND_INTERVAL_MS=N at build time.
+#ifndef DIRECTOR_MIN_SEND_INTERVAL_MS
+#define DIRECTOR_MIN_SEND_INTERVAL_MS 50
+#endif
+    static constexpr uint32_t kMinSendIntervalMs = DIRECTOR_MIN_SEND_INTERVAL_MS;
+
     // Channel 11 listen-before-broadcast (spec §3.4). Director MUST listen
     // for at least one second on its chosen source_id before transmitting;
     // a HEARTBEAT with the same id during that window forces a re-roll.
@@ -84,6 +96,11 @@ public:
     bool active() const { return active_; }
     StartupState startup_state() const { return startup_state_; }
 
+    // Bench diagnostic: count of sends refused by the airtime cap
+    // since the last start_broadcast(). Non-monotonic across mode
+    // transitions - Director exit resets it.
+    uint32_t airtime_drops() const { return airtime_drop_count_; }
+
     // Currently-allocated source_id for the active broadcast. Valid once
     // start_broadcast has been called; returns 0 before that.
     uint8_t source_id() const { return source_id_; }
@@ -129,6 +146,12 @@ public:
     bool    test_listen_collision_heard()    const { return listen_collision_heard_; }
     uint8_t test_listen_attempts_remaining() const { return listen_attempts_remaining_; }
     uint32_t test_listen_started_ms()        const { return listen_started_ms_; }
+
+    // Airtime gate test seam. Exercises the same helper the send
+    // entry points call, without needing a live radio; reset zeros
+    // the interval timer + drop counter.
+    bool test_airtime_cap_ready_now();
+    void test_reset_airtime_state();
 #endif
 
 private:
@@ -136,6 +159,12 @@ private:
     static uint8_t  pick_performance_id_random();
 
     uint8_t next_seq();
+
+    // Airtime cap gate (Epic 19). Returns true if this send should
+    // proceed and stamps the timer. Otherwise bumps airtime_drop_count_
+    // and returns false. Called by the four LIGHT_* / WASH_* entry
+    // points and send_passthrough; heartbeats + retransmits bypass.
+    bool airtime_cap_ready();
 
     void send_frame_bytes(const uint8_t* buf, size_t n, const char* label);
 
@@ -182,6 +211,14 @@ private:
     size_t    retransmit_len_       = 0;
     uint8_t   retransmits_remaining_ = 0;
     uint32_t  next_retransmit_ms_   = 0;
+
+    // Airtime cap state (Epic 19). last_airtime_send_ms_ initialised
+    // via unsigned wraparound so the FIRST send after boot always
+    // passes: (any uint32_t now) - (0 - kMinSendIntervalMs) is
+    // congruent to (now + kMinSendIntervalMs) mod 2^32, which is
+    // >= kMinSendIntervalMs for every reachable `now`.
+    uint32_t  last_airtime_send_ms_ = 0u - kMinSendIntervalMs;
+    uint32_t  airtime_drop_count_   = 0;
 };
 
 EspNowBroadcastDriver* esp_now_broadcast_driver_instance();

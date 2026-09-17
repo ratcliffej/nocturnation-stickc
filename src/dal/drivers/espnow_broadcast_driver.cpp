@@ -69,6 +69,7 @@ bool EspNowBroadcastDriver::send(uint8_t target_class,
                                   uint8_t target_group,
                                   const RgbPulseEvent& ev) {
     if (!active_) return false;
+    if (!airtime_cap_ready()) return false;
     using namespace transport::espnow;
     Header h{};
     h.source_id       = source_id_;
@@ -103,6 +104,7 @@ bool EspNowBroadcastDriver::send_wash(uint8_t target_class,
                                        uint8_t target_group,
                                        const LightWashEvent& ev) {
     if (!active_) return false;
+    if (!airtime_cap_ready()) return false;
     using namespace transport::espnow;
     Header h{};
     h.source_id       = source_id_;
@@ -133,6 +135,7 @@ bool EspNowBroadcastDriver::send_wash_end(uint8_t target_class,
                                           uint8_t target_group,
                                           uint8_t release_time) {
     if (!active_) return false;
+    if (!airtime_cap_ready()) return false;
     using namespace transport::espnow;
     Header h{};
     h.source_id       = source_id_;
@@ -153,6 +156,7 @@ bool EspNowBroadcastDriver::send_wash_pulse(uint8_t target_class,
                                              uint8_t target_group,
                                              const RgbPulseEvent& ev) {
     if (!active_) return false;
+    if (!airtime_cap_ready()) return false;
     using namespace transport::espnow;
     Header h{};
     h.source_id       = source_id_;
@@ -186,6 +190,8 @@ bool EspNowBroadcastDriver::start_broadcast(uint8_t channel) {
     if (!radio) return false;
     seq_num_    = 1;
     last_tx_ms_ = 0;
+    last_airtime_send_ms_ = 0u - kMinSendIntervalMs;
+    airtime_drop_count_   = 0;
 
     if (channel == 11) {
         // Performance mode: load the persisted candidate, hold TX off,
@@ -277,6 +283,17 @@ uint8_t EspNowBroadcastDriver::next_seq() {
     return s;
 }
 
+bool EspNowBroadcastDriver::airtime_cap_ready() {
+    const uint32_t now     = now_ms();
+    const uint32_t elapsed = now - last_airtime_send_ms_;
+    if (elapsed < kMinSendIntervalMs) {
+        ++airtime_drop_count_;
+        return false;
+    }
+    last_airtime_send_ms_ = now;
+    return true;
+}
+
 void EspNowBroadcastDriver::send_frame_bytes(const uint8_t* buf, size_t n, const char* label) {
     if (!active_ || n == 0) return;
     auto* radio = hal::HAL::esp_now();
@@ -311,6 +328,7 @@ void EspNowBroadcastDriver::send_passthrough(const uint8_t* buf, size_t n) {
         || buf[1] != transport::espnow::kMagic1) return;
     if (buf[2] != transport::espnow::kProtocolVersion) return;
     if (!active_) return;
+    if (!airtime_cap_ready()) return;
 
     // Re-stamp source_id and sequence_number when upstream used the
     // broadcast id (0xFFFF): joins this Director's single monotonic seq
@@ -544,6 +562,15 @@ void EspNowBroadcastDriver::test_enter_listening(uint8_t candidate,
     listen_started_ms_         = started_ms;
     active_                    = false;
     startup_state_             = StartupState::Listening;
+}
+
+bool EspNowBroadcastDriver::test_airtime_cap_ready_now() {
+    return airtime_cap_ready();
+}
+
+void EspNowBroadcastDriver::test_reset_airtime_state() {
+    last_airtime_send_ms_ = 0u - kMinSendIntervalMs;
+    airtime_drop_count_   = 0;
 }
 
 void EspNowBroadcastDriver::test_inject_listen_heartbeat(uint8_t source_id) {

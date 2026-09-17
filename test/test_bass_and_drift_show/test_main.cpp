@@ -26,6 +26,8 @@
 #include "shows/bass_and_drift_show.h"
 #include "pulse/envelope.h"
 
+#include "../../src/modes/persistence.h"
+
 // =============================================================================
 // Native millis() seam
 // =============================================================================
@@ -193,6 +195,9 @@ void setUp(void) {
     // BassAndDriftShow context is a TU-static singleton; reset paused
     // state so it doesn't leak across tests.
     bass_and_drift_show_context().set_paused(false);
+    // Epic 19: reset the Director-side calm toggle so a prior calm
+    // test doesn't bleed into the next case.
+    modes::persistence::test_seam::clear_native_persistence();
     dal::DAL::begin();
     dal::DAL::register_driver(&g_ir_driver);
     dal::DAL::register_driver(&g_espnow_driver);
@@ -663,6 +668,100 @@ static void test_led_effect_alternating_toggles_mask_per_beat(void) {
 }
 
 // =============================================================================
+// Epic 19: Director-side Calm attribute modulates composition
+// =============================================================================
+
+static void test_calm_forces_led_effect_whole(void) {
+    BassAndDriftShow* s = bass_and_drift_show_instance();
+    auto& ctx = bass_and_drift_show_context();
+    auto& bag = bass_and_drift_show_property_bag();
+
+    s->enter(ctx);
+    // Author wants Walk, but calm should force Whole (mode 0).
+    bag.set("led_effect", PropertyValue::from_enum(1));  // Walk
+    bag.set("starlight", PropertyValue::from_bool(false));
+    modes::persistence::save_dir_calm(true);
+
+    g_espnow_driver.reset();
+    s->on_beat_detected(ctx, 100);
+    auto ev = g_espnow_driver.last_rgb_pulse();
+    TEST_ASSERT_EQUAL_UINT8(0, ev.led_mode);
+    TEST_ASSERT_EQUAL_UINT8(0, ev.led_modifier1);
+    TEST_ASSERT_EQUAL_UINT8(0, ev.led_modifier2);
+}
+
+static void test_calm_stretches_release_to_t480ms(void) {
+    BassAndDriftShow* s = bass_and_drift_show_instance();
+    auto& ctx = bass_and_drift_show_context();
+    auto& bag = bass_and_drift_show_property_bag();
+
+    s->enter(ctx);
+    bag.set("starlight", PropertyValue::from_bool(false));
+    modes::persistence::save_dir_calm(true);
+
+    g_espnow_driver.reset();
+    s->on_beat_detected(ctx, 100);
+    auto ev = g_espnow_driver.last_rgb_pulse();
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(pulse::T_480_MS), ev.release);
+}
+
+static void test_calm_drops_chance_two_enum_steps(void) {
+    BassAndDriftShow* s = bass_and_drift_show_instance();
+    auto& ctx = bass_and_drift_show_context();
+    auto& bag = bass_and_drift_show_property_bag();
+
+    s->enter(ctx);
+    bag.set("starlight", PropertyValue::from_bool(false));
+    // chance property default is idx 4 = CHANCE_32; calm shifts to
+    // idx 6 = CHANCE_10.
+    bag.set("chance", PropertyValue::from_enum(4));
+    modes::persistence::save_dir_calm(true);
+
+    g_espnow_driver.reset();
+    s->on_beat_detected(ctx, 100);
+    auto ev = g_espnow_driver.last_rgb_pulse();
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(pulse::CHANCE_10), ev.chance);
+}
+
+static void test_calm_clamps_chance_at_lowest_step(void) {
+    BassAndDriftShow* s = bass_and_drift_show_instance();
+    auto& ctx = bass_and_drift_show_context();
+    auto& bag = bass_and_drift_show_property_bag();
+
+    s->enter(ctx);
+    bag.set("starlight", PropertyValue::from_bool(false));
+    // Author is already at idx 7 (CHANCE_4, lowest chance in the enum).
+    // Calm's +2 step must clamp there rather than run past the table.
+    bag.set("chance", PropertyValue::from_enum(7));
+    modes::persistence::save_dir_calm(true);
+
+    g_espnow_driver.reset();
+    s->on_beat_detected(ctx, 100);
+    auto ev = g_espnow_driver.last_rgb_pulse();
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(pulse::CHANCE_4), ev.chance);
+}
+
+static void test_non_calm_leaves_authored_led_effect_intact(void) {
+    BassAndDriftShow* s = bass_and_drift_show_instance();
+    auto& ctx = bass_and_drift_show_context();
+    auto& bag = bass_and_drift_show_property_bag();
+
+    s->enter(ctx);
+    bag.set("led_effect", PropertyValue::from_enum(1));  // Walk
+    bag.set("starlight", PropertyValue::from_bool(false));
+    // clear_native_persistence() in setUp() left dir_calm=false, but be
+    // explicit about it — this test's whole point is the false branch.
+    modes::persistence::save_dir_calm(false);
+
+    g_espnow_driver.reset();
+    s->on_beat_detected(ctx, 100);
+    auto ev = g_espnow_driver.last_rgb_pulse();
+    // Walk-mode (mode 1) with the step counter untouched by calm.
+    TEST_ASSERT_EQUAL_UINT8(1, ev.led_mode);
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(pulse::T_192_MS), ev.release);
+}
+
+// =============================================================================
 // Unity main
 // =============================================================================
 
@@ -691,5 +790,12 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_led_effect_walk_wraps_at_walk_length);
     RUN_TEST(test_led_effect_sparkle_stays_in_range_and_is_deterministic);
     RUN_TEST(test_led_effect_alternating_toggles_mask_per_beat);
+
+    // Epic 19: Calm-mode composition modulation.
+    RUN_TEST(test_calm_forces_led_effect_whole);
+    RUN_TEST(test_calm_stretches_release_to_t480ms);
+    RUN_TEST(test_calm_drops_chance_two_enum_steps);
+    RUN_TEST(test_calm_clamps_chance_at_lowest_step);
+    RUN_TEST(test_non_calm_leaves_authored_led_effect_intact);
     return UNITY_END();
 }

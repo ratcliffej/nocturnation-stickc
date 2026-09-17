@@ -107,6 +107,21 @@ void save_screen_pulse_enabled(bool e) {
     prefs.end();
 }
 
+bool load_dir_calm() {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/true);
+    bool e = prefs.getBool("dir_calm", false);   // default OFF (Full)
+    prefs.end();
+    return e;
+}
+
+void save_dir_calm(bool e) {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/false);
+    prefs.putBool("dir_calm", e);
+    prefs.end();
+}
+
 // ESP-NOW radio channel preferences. Director uses one of {1, 6, 11}; Lume
 // uses {0=Auto/scan, 1, 6, 11}. Defaults: Director 1 (hobby), Lume 0 (auto-
 // scan with show priority). Per architecture spec §4.5: channel 1 = hobby /
@@ -548,6 +563,7 @@ namespace {
 uint8_t s_native_lume_channel    = 0;
 uint8_t s_native_repeater_channel = 0;
 bool    s_native_lume_repeat_en  = false;
+bool    s_native_dir_calm        = false;
 uint8_t s_native_lume_group        = 0;
 bool    s_native_lume_group_set    = false;   // tracks "has slv_group been written" (the isKey() analogue)
 uint8_t s_native_first_boot_rng   = 2;       // deterministic stand-in for esp_random() % 3 + 1
@@ -598,6 +614,8 @@ void             save_repeater_channel(uint8_t c) {
 }
 bool             load_lume_repeat_enabled()           { return s_native_lume_repeat_en; }
 void             save_lume_repeat_enabled(bool e)     { s_native_lume_repeat_en = e; }
+bool             load_dir_calm()                       { return s_native_dir_calm; }
+void             save_dir_calm(bool e)                 { s_native_dir_calm = e; }
 uint8_t          load_lume_group()                       { return s_native_lume_group; }
 void             save_lume_group(uint8_t g)              {
     s_native_lume_group     = g;
@@ -785,6 +803,7 @@ void plant_raw_director_perf_src_id(uint8_t id) {
 void clear_native_persistence() {
     s_native_lume_channel             = 0;
     s_native_lume_repeat_en           = false;
+    s_native_dir_calm                 = false;
     s_native_lume_group                 = 0;
     s_native_lume_group_set             = false;
     s_native_first_boot_rng            = 2;

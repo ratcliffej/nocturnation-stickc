@@ -71,7 +71,7 @@ size_t scroll_offset(size_t selected, size_t total, size_t max_visible) {
 }  // namespace
 
 // Out-of-class definitions for the ODR-used static constexpr members.
-constexpr ConfigMode::TopEntry    ConfigMode::kTop[5];
+constexpr ConfigMode::TopEntry    ConfigMode::kTop[6];
 constexpr ConfigMode::PickerEntry ConfigMode::kConnectivity[4];
 constexpr ConfigMode::PickerEntry ConfigMode::kUtilities[2];
 constexpr const char* ConfigMode::kWifiItems[];
@@ -236,6 +236,10 @@ void ConfigMode::handle_top(const ButtonPressEvent& ev) {
                 static_cast<uint8_t>((persistence::load_lume_group() + 1) % 7));
             draw();
             return;
+        case TopAction::CalmToggle:
+            persistence::save_dir_calm(!persistence::load_dir_calm());
+            draw();
+            return;
         case TopAction::Drill:
             break;
     }
@@ -291,6 +295,10 @@ void ConfigMode::draw_top() {
             std::snprintf(buf, sizeof(buf), "%s %s: %u",
                           sel ? ">" : " ", kTop[i].label,
                           (unsigned)persistence::load_lume_group());
+        } else if (kTop[i].action == TopAction::CalmToggle) {
+            std::snprintf(buf, sizeof(buf), "%s %s: %s",
+                          sel ? ">" : " ", kTop[i].label,
+                          persistence::load_dir_calm() ? "On" : "Off");
         } else {
             std::snprintf(buf, sizeof(buf), "%s %s",
                           sel ? ">" : " ", kTop[i].label);
