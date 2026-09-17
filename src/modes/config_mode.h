@@ -332,9 +332,10 @@ private:
         DirectorId,
         SlaveChannel,
         SlaveRepeat,
+        TxCopies,
         ScanChannels,
     };
-    static constexpr size_t kEspNowFunctionalItemCount = 5;
+    static constexpr size_t kEspNowFunctionalItemCount = 6;
 
     // Wi-Fi channel scanner workflow, entered from EspNow > Scan
     // channels. Blocks the radio for ~5 s while WiFi.scanNetworks runs

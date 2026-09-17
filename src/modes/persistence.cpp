@@ -122,6 +122,29 @@ void save_dir_calm(bool e) {
     prefs.end();
 }
 
+#ifndef ESPNOW_RETRANSMITS_DEFAULT
+#define ESPNOW_RETRANSMITS_DEFAULT 2
+#endif
+
+uint8_t load_retx_count() {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/true);
+    uint8_t n = prefs.getUChar("retx_count", ESPNOW_RETRANSMITS_DEFAULT);
+    prefs.end();
+    if (n < 1) n = 1;
+    if (n > 5) n = 5;
+    return n;
+}
+
+void save_retx_count(uint8_t n) {
+    if (n < 1) n = 1;
+    if (n > 5) n = 5;
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/false);
+    prefs.putUChar("retx_count", n);
+    prefs.end();
+}
+
 // ESP-NOW radio channel preferences. Director uses one of {1, 6, 11}; Lume
 // uses {0=Auto/scan, 1, 6, 11}. Defaults: Director 1 (hobby), Lume 0 (auto-
 // scan with show priority). Per architecture spec §4.5: channel 1 = hobby /
@@ -564,6 +587,7 @@ uint8_t s_native_lume_channel    = 0;
 uint8_t s_native_repeater_channel = 0;
 bool    s_native_lume_repeat_en  = false;
 bool    s_native_dir_calm        = false;
+uint8_t s_native_retx_count      = 2;
 uint8_t s_native_lume_group        = 0;
 bool    s_native_lume_group_set    = false;   // tracks "has slv_group been written" (the isKey() analogue)
 uint8_t s_native_first_boot_rng   = 2;       // deterministic stand-in for esp_random() % 3 + 1
@@ -616,6 +640,12 @@ bool             load_lume_repeat_enabled()           { return s_native_lume_rep
 void             save_lume_repeat_enabled(bool e)     { s_native_lume_repeat_en = e; }
 bool             load_dir_calm()                       { return s_native_dir_calm; }
 void             save_dir_calm(bool e)                 { s_native_dir_calm = e; }
+uint8_t          load_retx_count()                     { return s_native_retx_count; }
+void             save_retx_count(uint8_t n)            {
+    if (n < 1) n = 1;
+    if (n > 5) n = 5;
+    s_native_retx_count = n;
+}
 uint8_t          load_lume_group()                       { return s_native_lume_group; }
 void             save_lume_group(uint8_t g)              {
     s_native_lume_group     = g;
@@ -804,6 +834,7 @@ void clear_native_persistence() {
     s_native_lume_channel             = 0;
     s_native_lume_repeat_en           = false;
     s_native_dir_calm                 = false;
+    s_native_retx_count               = 2;
     s_native_lume_group                 = 0;
     s_native_lume_group_set             = false;
     s_native_first_boot_rng            = 2;

@@ -1022,6 +1022,15 @@ void ConfigMode::handle_espnow(const ButtonPressEvent& ev) {
                 persistence::save_lume_repeat_enabled(
                     !persistence::load_lume_repeat_enabled());
                 break;
+            case EspNowItem::TxCopies: {
+                // Cycle §4.3 retransmit count 1..5 wrapping. Persistence
+                // clamps out-of-range, so the wrap here is just the UX
+                // choice. New value applies on the next Director enter().
+                uint8_t n = persistence::load_retx_count();
+                n = (n >= 5) ? 1 : static_cast<uint8_t>(n + 1);
+                persistence::save_retx_count(n);
+                break;
+            }
             case EspNowItem::ScanChannels:
                 // Kick off the scan workflow. The Requested->Running
                 // transition happens in loop_tick so the "Scanning..."
@@ -1116,6 +1125,7 @@ void ConfigMode::draw_espnow() {
     char id_line[28];
     char s_line[28];
     char r_line[28];
+    char t_line[28];
     const char* sc_line = "Scan channels";
     std::snprintf(m_line, sizeof(m_line), "Director: %s",
                   director_channel_label(persistence::load_director_channel()));
@@ -1129,8 +1139,12 @@ void ConfigMode::draw_espnow() {
                   lume_channel_label(persistence::load_lume_channel()));
     std::snprintf(r_line, sizeof(r_line), "Repeat:   %s",
                   persistence::load_lume_repeat_enabled() ? "ON" : "OFF");
+    // TX Copies is the §4.3 retransmit count; picked up on the next
+    // Director enter().
+    std::snprintf(t_line, sizeof(t_line), "TX Copies: %u",
+                  static_cast<unsigned>(persistence::load_retx_count()));
     const char* lines[kEspNowFunctionalItemCount] = {
-        m_line, id_line, s_line, r_line, sc_line };
+        m_line, id_line, s_line, r_line, t_line, sc_line };
 
     constexpr int  kRowY0      = 30;
     const size_t   max_visible = static_cast<size_t>(
