@@ -74,6 +74,10 @@ private:
         // port; until then this leaf renders read-only via the
         // shared draw_stub() template.
         LedStrip,
+        // Epic 20 B4 - BLE pairing screen. Reached from the Top
+        // "BLE Pair" entry; hosts a countdown + advertising-name
+        // display and drives BleService lifecycle.
+        BlePair,
     };
 
     // Within the PixMob submenu, drilling into one of its items enters a
@@ -90,26 +94,22 @@ private:
     //   (c) a leaf submenu: target is the leaf, drill straight in.
     enum class TopAction : uint8_t {
         Drill,       // descend into target (picker or leaf)
-        GroupId,     // direct action: increment slv_group 0..6 (UI cap; wire allows 0..255)
+        GroupId,     // direct action: increment slv_group 0..6 (UI cap; wire allows 0..255) — moved to System (Epic 20 B4)
         CalmToggle,  // direct action: flip dir_calm on/off (Epic 19)
+        BlePair,     // direct action: drill into the BLE pairing screen (Epic 20 B4)
     };
     struct TopEntry {
         SubMenu     target;
         TopAction   action;
         const char* label;
     };
-    // Display submenu retired post-Epic-15: its only functional item
-    // was Pulse Enable, which gated a code path retired in Epic 13 B0
-    // (LCD became a text-content surface for lyrics, not a light
-    // surface). The submenu's handle_display / draw_display code stays
-    // in the .cpp as dead branches (matches the SubMenu::WiFi
-    // precedent); only the top-level entry is removed so operators
-    // stop seeing a phantom control. Re-add the entry here if a
-    // future Epic restores LCD-as-light-surface.
-    static constexpr TopEntry kTop[6] = {
-        { SubMenu::None,         TopAction::GroupId,    "Group"        },
+    // Epic 20 B4: Top shrinks to 5 items — Group and Show move into
+    // System submenu (Q1 answer, 2026-09-19) to free vertical space
+    // for the BLE Pair entry. Existing scroll_offset() in draw_top
+    // handles overflow at any future growth.
+    static constexpr TopEntry kTop[5] = {
         { SubMenu::None,         TopAction::CalmToggle, "Calm"         },
-        { SubMenu::Show,         TopAction::Drill,      "Show"         },
+        { SubMenu::None,         TopAction::BlePair,    "BLE Pair"     },
         { SubMenu::Connectivity, TopAction::Drill,      "Connectivity" },
         { SubMenu::Utilities,    TopAction::Drill,      "Utilities"    },
         { SubMenu::System,       TopAction::Drill,      "System"       },
@@ -394,18 +394,48 @@ private:
     void draw_pixmob_set_group();
     void draw_pixmob_group_tgt();
 
-    // System submenu (functional).
+    // System submenu (functional). Epic 20 B4: Show + Group added as
+    // drill / direct-action items to make room for BLE Pair at Top.
     enum class SystemItem : uint8_t {
-        FirmwareVersion = 0,
+        Show = 0,             // drills into the Show picker sub
+        GroupId,              // direct action: cycle slv_group 0..6 (UI cap)
+        FirmwareVersion,
         DefaultBootMode,
         FactoryReset,
         BatteryStatus,
     };
-    static constexpr size_t kSystemItemCount = 4;
+    static constexpr size_t kSystemItemCount = 6;
 
     void handle_system(const dal::ButtonPressEvent& ev);
     void factory_reset();
     void draw_system();
+
+    // BLE pairing sub-mode (Epic 20 B4). Entered via the Top "BLE
+    // Pair" direct action; drives BleService lifecycle, shows a
+    // countdown, then flashes Success / Timeout on close before
+    // returning to Top.
+    void handle_ble_pair(const dal::ButtonPressEvent& ev);
+    void draw_ble_pair();
+    void enter_ble_pair();
+    void exit_ble_pair(bool cancelled);
+
+    // Sub-to-Sub drill support: when handle_system drills into
+    // SubMenu::Show, we save the current active_sub_ so B-hold from
+    // Show returns to System, not straight to Top. `active_picker_`
+    // covers picker→sub; `previous_sub_` covers sub→sub.
+    SubMenu previous_sub_ = SubMenu::None;
+
+    // BLE pairing lifecycle. `ble_pair_return_after_ms_ == 0` means
+    // "not scheduled". Success / Timeout / Sleeping populate it so
+    // loop_tick can auto-return to Top after a brief linger.
+    uint32_t ble_pair_return_after_ms_ = 0;
+    enum class BlePairScreen : uint8_t {
+        Countdown = 0,
+        Success   = 1,
+        Timeout   = 2,
+        Sleeping  = 3,
+    };
+    BlePairScreen ble_pair_screen_ = BlePairScreen::Countdown;
 
     static const char* mode_label_short(ModeId m);
 

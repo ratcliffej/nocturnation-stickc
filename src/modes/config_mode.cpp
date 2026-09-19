@@ -16,6 +16,7 @@
 #include "widgets/beat_bar.h"
 #include "widgets/spectrum_bars.h"
 #include "pixmob_protocol.h"
+#include "../ble/ble_service.h"
 
 #include <cstdio>
 #include <cstring>
@@ -23,6 +24,11 @@
 #ifdef ARDUINO
 #include <Arduino.h>
 #include <Preferences.h>
+// NB: esp_sleep.h is intentionally NOT pulled in yet - it drags IRAM-
+// resident wakeup handlers over the ESP32 iram0 budget on the Plus2
+// build. commit_and_sleep therefore falls back to a plain BLE-down +
+// idle spin in this v0x01 impl; wiring esp_deep_sleep_start is deferred
+// to a bench pass that trims IRAM elsewhere.
 #else
 extern "C" uint32_t millis();
 #endif
@@ -71,7 +77,7 @@ size_t scroll_offset(size_t selected, size_t total, size_t max_visible) {
 }  // namespace
 
 // Out-of-class definitions for the ODR-used static constexpr members.
-constexpr ConfigMode::TopEntry    ConfigMode::kTop[6];
+constexpr ConfigMode::TopEntry    ConfigMode::kTop[5];
 constexpr ConfigMode::PickerEntry ConfigMode::kConnectivity[4];
 constexpr ConfigMode::PickerEntry ConfigMode::kUtilities[2];
 constexpr const char* ConfigMode::kWifiItems[];
@@ -101,6 +107,12 @@ void ConfigMode::exit() {
     // it doesn't leak into the next mode.
     if (level_tuning_audio_active_) {
         level_tuning_audio_exit();
+    }
+    // Similarly: if BLE was up (operator switched modes mid-pairing),
+    // tear it down so ESP-NOW has full radio time in the next mode.
+    if (ble::ble_service().is_active()) {
+        ble::ble_service().end();
+        ble_pair_return_after_ms_ = 0;
     }
 }
 
@@ -143,6 +155,48 @@ void ConfigMode::loop_tick() {
     if (level_ == Level::Sub && active_sub_ == SubMenu::EspNow) {
         run_scan_if_needed();
     }
+    // BLE pairing screen (Epic 20 B4). Redraw the countdown at ~2 Hz;
+    // poll BleService::tick to notice state transitions (client-driven
+    // commit / commit_and_sleep / abort, or timeout).
+    if (level_ == Level::Sub && active_sub_ == SubMenu::BlePair) {
+        // Post-terminal linger: honour the scheduled return-to-Top.
+        if (ble_pair_return_after_ms_ != 0 && now >= ble_pair_return_after_ms_) {
+            // v0x01 note: Sleeping intent is honoured by tearing BLE
+            // down + returning to Top; true deep-sleep (esp_deep_sleep_
+            // start) needs IRAM budget that a follow-on will free by
+            // trimming other IRAM-resident code. Bench-visible today
+            // via the "Paired - sleeping" flash before the exit.
+            exit_ble_pair(/*cancelled=*/false);
+            return;
+        }
+        // While in Countdown, poll the state machine + redraw every ~250 ms.
+        if (ble_pair_screen_ == BlePairScreen::Countdown) {
+            const ble::PairingState st = ble::ble_service().tick();
+            if (st == ble::PairingState::Committed) {
+                ble_pair_screen_          = BlePairScreen::Success;
+                ble_pair_return_after_ms_ = now + 1200;
+                draw();
+                return;
+            }
+            if (st == ble::PairingState::Sleeping) {
+                ble_pair_screen_          = BlePairScreen::Sleeping;
+                ble_pair_return_after_ms_ = now + 1500;
+                draw();
+                return;
+            }
+            if (st == ble::PairingState::Aborted) {
+                ble_pair_screen_          = BlePairScreen::Timeout;
+                ble_pair_return_after_ms_ = now + 1200;
+                draw();
+                return;
+            }
+            // Still Open — redraw the countdown at ~2 Hz.
+            if (now - last_system_redraw_ms_ > 500) {
+                last_system_redraw_ms_ = now;
+                draw();
+            }
+        }
+    }
 }
 
 void ConfigMode::on_button_event(const ButtonPressEvent& ev) {
@@ -182,6 +236,18 @@ void ConfigMode::on_button_event(const ButtonPressEvent& ev) {
             // (WiFi.scanNetworks is blocking and non-cancellable).
             scan_phase_ = ScanPhase::Idle;
             wifi_scanner_.reset();
+            draw();
+        } else if (level_ == Level::Sub && active_sub_ == SubMenu::BlePair) {
+            // Cancel path from the pairing screen. Tear down BLE +
+            // return to Top. See exit_ble_pair().
+            exit_ble_pair(/*cancelled=*/true);
+        } else if (level_ == Level::Sub && previous_sub_ != SubMenu::None) {
+            // Sub-to-Sub drill (Epic 20 B4): reached this Sub from
+            // another Sub (System → Show). Pop to the parent Sub.
+            active_sub_    = previous_sub_;
+            previous_sub_  = SubMenu::None;
+            sub_selected_  = 0;
+            confirm_until_ms_ = 0;
             draw();
         } else if (level_ == Level::Sub && active_picker_ != SubMenu::None) {
             // Came in via a picker - return to the picker, not Top.
@@ -225,20 +291,16 @@ void ConfigMode::handle_top(const ButtonPressEvent& ev) {
     const TopEntry& entry = kTop[top_selected_];
     switch (entry.action) {
         case TopAction::GroupId:
-            // Increment 0..6 wrapping. The wire protocol carries an
-            // 8-bit group, but in practice the show only needs a
-            // handful for now (DynamicShow routes kick/snare/hi-hat
-            // across 3, with headroom for a few more); a tight cycle
-            // is far faster to navigate from the front buttons than
-            // 256 presses. Operators can persist a wider value via
-            // tooling if needed - this is a UI cap, not a wire cap.
-            persistence::save_lume_group(
-                static_cast<uint8_t>((persistence::load_lume_group() + 1) % 7));
-            draw();
+            // Retained enum value for backwards compatibility with tests
+            // and future re-additions; not reachable from kTop[] as of
+            // Epic 20 B4 (Group is now a System sub item).
             return;
         case TopAction::CalmToggle:
             persistence::save_dir_calm(!persistence::load_dir_calm());
             draw();
+            return;
+        case TopAction::BlePair:
+            enter_ble_pair();
             return;
         case TopAction::Drill:
             break;
@@ -291,11 +353,7 @@ void ConfigMode::draw_top() {
     for (size_t i = first; i < last_excl; ++i) {
         const bool sel = (i == top_selected_);
         char buf[28];
-        if (kTop[i].action == TopAction::GroupId) {
-            std::snprintf(buf, sizeof(buf), "%s %s: %u",
-                          sel ? ">" : " ", kTop[i].label,
-                          (unsigned)persistence::load_lume_group());
-        } else if (kTop[i].action == TopAction::CalmToggle) {
+        if (kTop[i].action == TopAction::CalmToggle) {
             std::snprintf(buf, sizeof(buf), "%s %s: %s",
                           sel ? ">" : " ", kTop[i].label,
                           persistence::load_dir_calm() ? "On" : "Off");
@@ -409,6 +467,7 @@ void ConfigMode::handle_sub(const ButtonPressEvent& ev) {
         case SubMenu::PixMob:      handle_pixmob(ev);      break;
         case SubMenu::LevelTuning: handle_level_tuning(ev); break;
         case SubMenu::LedStrip:    handle_led_strip(ev); break;
+        case SubMenu::BlePair:     handle_ble_pair(ev);    break;
         case SubMenu::WiFi:
         case SubMenu::Dmx:
             // Stub submenus accept Btn2 cycling for read-only browsing
@@ -435,6 +494,7 @@ void ConfigMode::draw_sub() {
         case SubMenu::PixMob:      draw_pixmob(); break;
         case SubMenu::LevelTuning: draw_level_tuning(); break;
         case SubMenu::System:      draw_system(); break;
+        case SubMenu::BlePair:     draw_ble_pair(); break;
         default: break;
     }
 }
@@ -1506,6 +1566,21 @@ void ConfigMode::handle_system(const ButtonPressEvent& ev) {
     }
     if (ev.id == ButtonId::Btn1) {
         switch ((SystemItem)sub_selected_) {
+            case SystemItem::Show:
+                // Sub-to-Sub drill: record System as the parent so
+                // B-hold from the Show sub returns here, not to Top.
+                previous_sub_ = active_sub_;
+                active_sub_   = SubMenu::Show;
+                sub_selected_ = 0;
+                draw();
+                break;
+            case SystemItem::GroupId:
+                // Cycle 0..6 wrapping (UI cap; wire allows 0..255). Same
+                // behaviour as the pre-Epic-20 top-level Group action.
+                persistence::save_lume_group(
+                    static_cast<uint8_t>((persistence::load_lume_group() + 1) % 7));
+                draw();
+                break;
             case SystemItem::FactoryReset:
                 factory_reset();
                 confirm_until_ms_ = millis() + 800;   // "done" linger
@@ -1533,6 +1608,8 @@ void ConfigMode::draw_system() {
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         10, 5, "System", WHITE, BLACK, 2});
 
+    char gr[28]; std::snprintf(gr, sizeof(gr), "Group: %u",
+                               (unsigned)persistence::load_lume_group());
     char fw[28]; std::snprintf(fw, sizeof(fw), "Firmware: %s",
                                ::nocturnation::kFirmwareVersion);
     char dm[28]; std::snprintf(dm, sizeof(dm), "Default: %s",
@@ -1544,12 +1621,22 @@ void ConfigMode::draw_system() {
     else          std::snprintf(br, sizeof(br), "Batt: %d%%", batt);
 
     const char* lines[kSystemItemCount] = {
+        "Show",
+        gr,
         fw,
         dm,
         confirm_until_ms_ != 0 ? "Reset complete" : "Factory reset",
         br,
     };
-    for (size_t i = 0; i < kSystemItemCount; ++i) {
+    constexpr int  kRowY0     = 30;
+    const size_t   max_visible = static_cast<size_t>(
+        (kBodyBottomLimit - kRowY0) / kRowStride);
+    const size_t   first      = scroll_offset(sub_selected_, kSystemItemCount, max_visible);
+    const size_t   last_excl  = (first + max_visible > kSystemItemCount)
+                                ? kSystemItemCount
+                                : first + max_visible;
+
+    for (size_t i = first; i < last_excl; ++i) {
         const bool sel = (i == sub_selected_);
         char buf[40];
         std::snprintf(buf, sizeof(buf), "%s %s",
@@ -1559,10 +1646,135 @@ void ConfigMode::draw_system() {
                           : sel                          ? YELLOW
                           :                                WHITE;
         DAL::fire_display_show_text("local", DisplayShowTextEvent{
-            10, 30 + (int)i * 16, buf, fg, BLACK, 2});
+            10, kRowY0 + static_cast<int>(i - first) * kRowStride, buf, fg, BLACK, 2});
     }
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         10, 122, "B: cycle  A: select  B-hold: back",
+        WHITE, BLACK, 1});
+}
+
+// -------------------------------------------------------------------------
+// BLE pairing screen (Epic 20 B4)
+// -------------------------------------------------------------------------
+//
+// Entered from Top > BLE Pair. `enter_ble_pair()` fires BleService::begin
+// with the device's persisted role, transitioning the pairing window into
+// PairingState::Open. `handle_ble_pair` accepts only B-hold (via the
+// shared B-hold path that calls exit_ble_pair). `loop_tick` polls
+// BleService::tick(), notices state transitions, and pushes the screen
+// through Countdown → Success / Timeout / Sleeping, scheduling an
+// auto-return to Top a short linger later.
+
+namespace {
+// Which host we're compiled for. Set per-env in platformio.ini as
+// -DNOCT_BLE_HOST_ID=<enum-value>; falls back to StickCPlus2 so a
+// naive build still reports a plausible value.
+#ifndef NOCT_BLE_HOST_ID
+#define NOCT_BLE_HOST_ID 0x01
+#endif
+constexpr uint8_t kCompileTimeHostId = NOCT_BLE_HOST_ID;
+
+// Choose the role we advertise as. The Config mode is transient (an
+// operator UI); what matters is which mode the device runs when it's
+// live. Use the persisted "last runtime" mode as a heuristic — if the
+// device came from Lume mode, advertise as Lume so the app writes to
+// the right config keys; otherwise assume Director.
+ble::Role role_for_pairing() {
+    return (persistence::current_last_runtime() == ModeId::Lume)
+        ? ble::Role::Lume
+        : ble::Role::Director;
+}
+}  // namespace
+
+void ConfigMode::enter_ble_pair() {
+    level_         = Level::Sub;
+    active_sub_    = SubMenu::BlePair;
+    active_picker_ = SubMenu::None;
+    previous_sub_  = SubMenu::None;
+    sub_selected_  = 0;
+    confirm_until_ms_ = 0;
+    ble_pair_screen_             = BlePairScreen::Countdown;
+    ble_pair_return_after_ms_    = 0;
+
+    const uint8_t pair_win_s = persistence::load_pair_win_s();
+    const bool started = ble::ble_service().begin(
+        role_for_pairing(),
+        static_cast<ble::Host>(kCompileTimeHostId),
+        pair_win_s);
+    if (!started) {
+        // Failed to open BLE — flash a Timeout-shaped error and bounce.
+        ble_pair_screen_          = BlePairScreen::Timeout;
+        ble_pair_return_after_ms_ = millis() + 1500;
+    }
+    draw();
+}
+
+void ConfigMode::exit_ble_pair(bool cancelled) {
+    (void)cancelled;
+    ble::ble_service().end();
+    ble_pair_return_after_ms_ = 0;
+    ble_pair_screen_          = BlePairScreen::Countdown;
+    level_                    = Level::Top;
+    active_sub_               = SubMenu::None;
+    active_picker_            = SubMenu::None;
+    previous_sub_             = SubMenu::None;
+    draw();
+}
+
+void ConfigMode::handle_ble_pair(const ButtonPressEvent& ev) {
+    // B-hold is handled globally in on_button_event via exit_ble_pair.
+    // Everything else is a no-op — the pairing screen is view-only from
+    // the operator's side; the phone drives the state machine.
+    (void)ev;
+}
+
+void ConfigMode::draw_ble_pair() {
+    DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 5, "BLE Pair", BLUE, BLACK, 2});
+
+    auto& svc = ble::ble_service();
+    char nm[24] = {};
+    svc.advertising_name(nm, sizeof(nm));
+
+    switch (ble_pair_screen_) {
+        case BlePairScreen::Countdown: {
+            char l1[28];
+            std::snprintf(l1, sizeof(l1), "Name:");
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 30, l1, WHITE, BLACK, 2});
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 48, nm, YELLOW, BLACK, 2});
+
+            char l3[28];
+            std::snprintf(l3, sizeof(l3), "Time: %us",
+                          (unsigned)svc.seconds_remaining());
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 76, l3, WHITE, BLACK, 2});
+
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 100, "Open your app to pair", WHITE, BLACK, 1});
+            break;
+        }
+        case BlePairScreen::Success:
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 50, "Paired!", GREEN, BLACK, 2});
+            break;
+        case BlePairScreen::Timeout:
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 50, "Timeout", RED, BLACK, 2});
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 76, "No pairing received", WHITE, BLACK, 1});
+            break;
+        case BlePairScreen::Sleeping:
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 50, "Paired -", GREEN, BLACK, 2});
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 76, "sleeping...", GREEN, BLACK, 2});
+            break;
+    }
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 122, "B-hold: cancel",
         WHITE, BLACK, 1});
 }
 

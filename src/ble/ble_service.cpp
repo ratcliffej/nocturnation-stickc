@@ -160,13 +160,17 @@ size_t serialise_config_bag(uint8_t* buf, size_t buflen, Role role) {
     } else {
         // Lume bag: group, led_power, bound_sid (skipped in v0x01 — the
         // NVS key + consumer land in a follow-on epic), channel_pref,
-        // pair_win_s, friendly_name.
+        // strip topology, pair_win_s, friendly_name.
         enc.add_u8 (key::kGroup,
                     modes::persistence::load_lume_group());
         enc.add_u8 (key::kLedPower,
                     modes::persistence::load_strip_brightness());
         enc.add_u8 (key::kChannelPref,
                     modes::persistence::load_lume_channel());
+        enc.add_u16(key::kStripChain,
+                    modes::persistence::load_strip_chain_size());
+        enc.add_u8 (key::kStripGroupSize,
+                    modes::persistence::load_strip_group_size());
         enc.add_u8 (key::kPairWinS,
                     modes::persistence::load_pair_win_s());
         char name[24] = {};
@@ -232,6 +236,21 @@ bool apply_config_entry(const TlvEntry& e, void* raw_ctx) {
             uint8_t v;
             if (!read_u8(v)) { ctx->value_out_of_range = true; return true; }
             modes::persistence::save_lume_channel(v);
+            return true;
+        }
+        if (std::strcmp(keybuf, key::kStripChain) == 0) {
+            if (e.type != ValueType::U16 || e.value_len != 2 || !e.value) {
+                ctx->value_out_of_range = true; return true;
+            }
+            const uint16_t v = static_cast<uint16_t>(e.value[0])
+                             | (static_cast<uint16_t>(e.value[1]) << 8);
+            modes::persistence::save_strip_chain_size(v);
+            return true;
+        }
+        if (std::strcmp(keybuf, key::kStripGroupSize) == 0) {
+            uint8_t v;
+            if (!read_u8(v)) { ctx->value_out_of_range = true; return true; }
+            modes::persistence::save_strip_group_size(v);
             return true;
         }
     }
