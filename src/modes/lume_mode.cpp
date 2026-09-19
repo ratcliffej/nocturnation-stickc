@@ -8,6 +8,7 @@
 #include "output_bindings/pixmob_ir.h"
 #include "output_bindings/lume_led_strip.h"
 #include "output_bindings/lume_text.h"
+#include "../ble/ble_service.h"
 
 #include <cstdio>
 #include <cstring>
@@ -155,6 +156,12 @@ void LumeMode::enter() {
 }
 
 void LumeMode::exit() {
+    // Defensive: tear BLE down if the operator switched modes mid-
+    // pairing (rare on Atom Lite where there's no menu to switch from,
+    // but the mode machine can be driven from elsewhere).
+    if (ble_pair_active_) {
+        exit_ble_pair();
+    }
     if (radio_active_) {
         if (auto* radio = hal::HAL::esp_now()) radio->end();
         radio_active_ = false;
@@ -177,6 +184,16 @@ void LumeMode::exit() {
 
 void LumeMode::loop_tick() {
     const uint32_t now = millis();
+
+    // BLE pairing window (Epic 20 B7): while active, we own the LED
+    // strip and skip the normal Lume rendering / receive path. BLE and
+    // ESP-NOW don't share the radio in v0x01, so there's nothing to
+    // fan out anyway. tick_ble_pair() drives the state machine and the
+    // LED animation until the window terminates, then returns us here.
+    if (ble_pair_active_) {
+        tick_ble_pair(now);
+        return;
+    }
 
     // Pump every binding's tick() at main-loop cadence (~20 Hz) for
     // tick-driven animations (e.g. text scroll).
@@ -354,6 +371,22 @@ void LumeMode::on_button_event(const ButtonPressEvent& ev) {
         ModeMachine::switch_to(ModeId::Menu);
         return;
     }
+
+    // Epic 20 B7: Btn1 LongPressed on display-less hosts opens the BLE
+    // pairing window (Atom Lite is the primary target — no on-device
+    // menu to reach settings). This supersedes the old group-cycle
+    // behaviour by default; NOCT_LUME_GROUP_LONGPRESS_ENABLED still
+    // exists for anyone who wants the group cycle back.
+#if NOCT_LUME_BLE_PAIR_GESTURE_ENABLED
+    if (ev.id == ButtonId::Btn1
+        && ev.kind == ButtonEvent::LongPressed
+        && hal::HAL::display() == nullptr
+        && hal::HAL::led_strip() != nullptr
+        && !ble_pair_active_) {
+        enter_ble_pair();
+        return;
+    }
+#endif
 
     // Btn1 LongPressed on display-less hosts cycles group 1->2->3->1.
     // (g % 3) + 1 also pulls values outside {1,2,3} back into the cycle.
@@ -1081,6 +1114,138 @@ void LumeMode::draw_no_signal_body() {
 
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         kDiagX, 122, "B-hold: menu", WHITE, BLACK, 1});
+}
+
+// ============================================================================
+// Epic 20 B7 - BLE pairing gesture (display-less hosts)
+// ============================================================================
+//
+// Same underlying BleService + property-bag characteristics as the StickC
+// Config pairing screen; different UX because Atom Lite has no display.
+// The operator sees the phone's scan list (advertising as NCTN-Lume-XXXXXX)
+// and confirms the state visually via the LED strip:
+//
+//   Open       - pixel 0 slow-pulse blue (~1 Hz)
+//   Committed  - whole strip solid green for kBlePairTerminalHoldMs
+//   Sleeping   - whole strip solid green for a longer beat then return
+//   Aborted    - whole strip solid red for kBlePairTerminalHoldMs
+//
+// Colours are hard-capped at 10 % brightness raw so we respect the
+// Atom Lite fleet cap without going through LedStripDriver (which
+// would apply another multiplier on top).
+
+namespace {
+constexpr uint8_t kBlePairIntensity = 25;   // ~10 % of 255 — matches Atom fleet cap
+}  // namespace
+
+void LumeMode::enter_ble_pair() {
+    if (ble_pair_active_) return;
+    ble_pair_active_          = true;
+    ble_pair_led_next_edge_ms_ = millis();
+    ble_pair_led_on_          = false;
+    ble_pair_terminal_        = 0;
+    ble_pair_return_after_ms_ = 0;
+
+    // Clear the strip so the pulse indicator has nothing beneath it.
+    if (auto* strip = hal::HAL::led_strip()) {
+        strip->clear();
+        strip->show();
+    }
+
+    // Fire up BLE with the Lume role + compile-time host id.
+#ifndef NOCT_BLE_HOST_ID
+#define NOCT_BLE_HOST_ID 0x01
+#endif
+    ble::ble_service().begin(
+        ble::Role::Lume,
+        static_cast<ble::Host>(NOCT_BLE_HOST_ID),
+        persistence::load_pair_win_s());
+#ifdef ARDUINO
+    Serial.println("[lume] BLE pairing window OPEN");
+#endif
+}
+
+void LumeMode::exit_ble_pair() {
+    ble::ble_service().end();
+    ble_pair_active_          = false;
+    ble_pair_terminal_        = 0;
+    ble_pair_return_after_ms_ = 0;
+    ble_pair_led_on_          = false;
+    if (auto* strip = hal::HAL::led_strip()) {
+        strip->clear();
+        strip->show();
+    }
+#ifdef ARDUINO
+    Serial.println("[lume] BLE pairing window CLOSED");
+#endif
+}
+
+void LumeMode::tick_ble_pair(uint32_t now) {
+    // Post-terminal linger: hold the colour, then close the window.
+    if (ble_pair_return_after_ms_ != 0 && now >= ble_pair_return_after_ms_) {
+        exit_ble_pair();
+        return;
+    }
+
+    // Still open? Poll BleService for state transitions.
+    if (ble_pair_terminal_ == 0) {
+        const ble::PairingState st = ble::ble_service().tick();
+        if (st == ble::PairingState::Committed) {
+            ble_pair_terminal_        = 1;
+            ble_pair_return_after_ms_ = now + kBlePairTerminalHoldMs;
+        } else if (st == ble::PairingState::Sleeping) {
+            ble_pair_terminal_        = 2;
+            ble_pair_return_after_ms_ = now + kBlePairTerminalHoldMs * 2;
+        } else if (st == ble::PairingState::Aborted) {
+            ble_pair_terminal_        = 3;
+            ble_pair_return_after_ms_ = now + kBlePairTerminalHoldMs;
+        }
+    }
+
+    draw_ble_pair_led(now);
+}
+
+void LumeMode::draw_ble_pair_led(uint32_t now) {
+    auto* strip = hal::HAL::led_strip();
+    if (!strip) return;
+    const size_t n = strip->pixel_count();
+
+    switch (ble_pair_terminal_) {
+        case 1:   // Committed - solid green
+            for (size_t i = 0; i < n; ++i) {
+                strip->set_pixel(i, 0, kBlePairIntensity, 0);
+            }
+            strip->show();
+            break;
+        case 2:   // Sleeping - solid green (deep-sleep intent honoured
+                  // behaviourally per Epic 20 B4 note; true esp_deep_sleep
+                  // pending an IRAM trim).
+            for (size_t i = 0; i < n; ++i) {
+                strip->set_pixel(i, 0, kBlePairIntensity, 0);
+            }
+            strip->show();
+            break;
+        case 3:   // Aborted - solid red
+            for (size_t i = 0; i < n; ++i) {
+                strip->set_pixel(i, kBlePairIntensity, 0, 0);
+            }
+            strip->show();
+            break;
+        case 0:
+        default: {
+            // Open - slow blue pulse on pixel 0.
+            if (now >= ble_pair_led_next_edge_ms_) {
+                ble_pair_led_on_          = !ble_pair_led_on_;
+                ble_pair_led_next_edge_ms_ = now + kBlePairPulseHalfPeriodMs;
+                strip->clear();
+                if (ble_pair_led_on_) {
+                    strip->set_pixel(0, 0, 0, kBlePairIntensity);
+                }
+                strip->show();
+            }
+            break;
+        }
+    }
 }
 
 }  // namespace modes
