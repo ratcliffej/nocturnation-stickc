@@ -336,25 +336,13 @@ void LumeMode::loop_tick() {
     //   Searching     -> flashing green at 1 Hz, 50 % duty
     //   FreshlyLocked -> solid green for kFreshLockMs
     //   Active        -> overlay off; pixel 0 belongs to the wash
+    // Pre-Epic-20 also carried a group-cycle confirmation flash here;
+    // dropped alongside the group-cycle button gesture — the strip
+    // now belongs to the BLE pairing screen when a pairing window is
+    // open (handled ahead of this block by tick_ble_pair).
     if (hal::HAL::led_strip() != nullptr && hal::HAL::display() == nullptr) {
         auto* strip_drv = led_strip_driver_instance();
-        if (flash_group_remaining_ > 0) {
-            // Group-cycle confirmation: N white pulses on pixel 0.
-            // Off half decrements the remaining counter, giving exactly
-            // N on/off pairs regardless of signal state.
-            if (now >= flash_next_edge_ms_) {
-                flash_on_ = !flash_on_;
-                strip_drv->set_overlay_pixel_0(
-                    flash_on_ ? 192 : 0,
-                    flash_on_ ? 192 : 0,
-                    flash_on_ ? 192 : 0,
-                    true);
-                flash_next_edge_ms_ = now + kGroupFlashHalfPeriodMs;
-                if (!flash_on_ && --flash_group_remaining_ == 0) {
-                    strip_drv->set_overlay_pixel_0(0, 0, 0, false);
-                }
-            }
-        } else if (no_signal_ || rx_count_ == 0) {
+        if (no_signal_ || rx_count_ == 0) {
             const uint32_t phase = now % kIndicatorFlashPeriodMs;
             const bool     lit   = phase < (kIndicatorFlashPeriodMs / 2);
             strip_drv->set_overlay_pixel_0(0, lit ? 96 : 0, 0, true);
@@ -372,11 +360,11 @@ void LumeMode::on_button_event(const ButtonPressEvent& ev) {
         return;
     }
 
-    // Epic 20 B7: Btn1 LongPressed on display-less hosts opens the BLE
-    // pairing window (Atom Lite is the primary target — no on-device
-    // menu to reach settings). This supersedes the old group-cycle
-    // behaviour by default; NOCT_LUME_GROUP_LONGPRESS_ENABLED still
-    // exists for anyone who wants the group cycle back.
+    // Epic 20 B7: Btn1 LongPressed on display-less hosts (Atom Lite is
+    // the primary target — no on-device menu to reach settings) opens
+    // the BLE pairing window. The pre-Epic-20 group-cycle behaviour has
+    // been removed entirely — it duplicated what BLE now covers cleanly
+    // and was fighting for the same button gesture (bench 2026-09-19).
 #if NOCT_LUME_BLE_PAIR_GESTURE_ENABLED
     if (ev.id == ButtonId::Btn1
         && ev.kind == ButtonEvent::LongPressed
@@ -384,28 +372,6 @@ void LumeMode::on_button_event(const ButtonPressEvent& ev) {
         && hal::HAL::led_strip() != nullptr
         && !ble_pair_active_) {
         enter_ble_pair();
-        return;
-    }
-#endif
-
-    // Btn1 LongPressed on display-less hosts cycles group 1->2->3->1.
-    // (g % 3) + 1 also pulls values outside {1,2,3} back into the cycle.
-    // Confirms visually with a pixel-0 flash sequence.
-#if NOCT_LUME_GROUP_LONGPRESS_ENABLED
-    if (ev.id == ButtonId::Btn1
-        && ev.kind == ButtonEvent::LongPressed
-        && hal::HAL::display() == nullptr
-        && hal::HAL::led_strip() != nullptr) {
-        lume_group_ = static_cast<uint8_t>((lume_group_ % 3) + 1);
-        persistence::save_lume_group(lume_group_);
-        flash_group_remaining_ = lume_group_;
-        flash_next_edge_ms_    = millis();
-        flash_on_              = false;
-#ifdef ARDUINO
-        Serial.printf("[lume] group -> %u (flash %u pulses)\n",
-                      (unsigned)lume_group_,
-                      (unsigned)flash_group_remaining_);
-#endif
         return;
     }
 #endif

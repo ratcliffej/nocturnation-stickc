@@ -16,23 +16,17 @@
 #include "hal/hal.h"
 #include "output_bindings/output_binding.h"
 
-// Compile-time gate on the Atom-Lite Btn1 LongPressed group-cycle
-// gesture. Set to 0 in build_flags to lock the group at flash-time -
-// the handler compiles out entirely and only NOCT_DEFAULT_LUME_GROUP
-// / clearing NVS can change slv_group.
-//
-// Epic 20 B7: default flipped OFF (0) because the same Btn1 LongPress
-// now activates the BLE pairing gesture (below); operators change
-// slv_group via BLE via the phone / CLI app. Set to 1 in build_flags
-// to keep the group-cycle path.
-#ifndef NOCT_LUME_GROUP_LONGPRESS_ENABLED
-#define NOCT_LUME_GROUP_LONGPRESS_ENABLED 0
-#endif
-
 // Epic 20 B7: Btn1 LongPressed on display-less hosts (Atom Lite) opens
-// a BLE pairing window instead of cycling group. Set to 0 to disable
-// the pairing gesture entirely (radio stays off; only the .ini
-// build-time defaults + a reflash reach the settings).
+// a BLE pairing window. Set to 0 to disable the pairing gesture
+// entirely (button becomes inert on Atom Lite; only .ini build-time
+// defaults + a reflash reach the settings).
+//
+// Bench 2026-09-19: the pre-Epic-20 group-cycle behaviour was removed
+// entirely at this point. It duplicated what BLE now covers cleanly
+// and was fighting for the same button gesture. If someone wants it
+// back for a headless / no-BLE deployment, revive the old
+// NOCT_LUME_GROUP_LONGPRESS_ENABLED block from before commit
+// ba248e3 in the git history.
 #ifndef NOCT_LUME_BLE_PAIR_GESTURE_ENABLED
 #define NOCT_LUME_BLE_PAIR_GESTURE_ENABLED 1
 #endif
@@ -154,14 +148,6 @@ private:
     // from the per-PixMobIrBinding `group` property (which is the
     // PixMob protocol's IR group code).
     uint8_t   lume_group_            = 0;
-
-    // Btn1-LongPressed group-cycle confirmation. flash_group_remaining_
-    // = N pulses left in the sequence; each pair of ticks toggles
-    // flash_on_ and decrements on the off half.
-    uint8_t   flash_group_remaining_  = 0;
-    uint32_t  flash_next_edge_ms_     = 0;
-    bool      flash_on_               = false;
-    static constexpr uint32_t kGroupFlashHalfPeriodMs = 250;
 
     // BLE pairing gesture (Epic 20 B7). Btn1 LongPress on display-less
     // hosts activates BleService; loop_tick drives the LED animation
