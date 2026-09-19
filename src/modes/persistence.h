@@ -78,6 +78,25 @@ void             save_dir_calm(bool e);
 uint8_t          load_retx_count();
 void             save_retx_count(uint8_t n);
 
+// BLE pairing window duration (Epic 20). Seconds the device stays in
+// pairing mode after the gesture; longer values enable bulk-pairing
+// UX (§9 of Docs/manuals/ble-service.md). Range 5..255; clamped on
+// save. First-boot default from build flag
+// `-DBLE_PAIRING_WINDOW_S_DEFAULT=N` (falls back to 30). Persisted
+// as `pair_win_s` under the "noct" NVS namespace.
+uint8_t          load_pair_win_s();
+void             save_pair_win_s(uint8_t seconds);
+
+// BLE friendly device name (Epic 20). Operator-set utf8 label 0..20
+// bytes; overrides the MAC-derived advertising-name fallback and
+// appears in phone scan lists. Empty string clears back to the
+// fallback. Persisted as `friendly_name` (utf8) under the "noct" NVS
+// namespace. The caller MUST provide a buffer of at least 21 bytes
+// (20 chars + NUL) for `load_friendly_name`. Returns the number of
+// bytes copied (excluding NUL); zero when the key is absent OR empty.
+size_t           load_friendly_name(char* buf, size_t buflen);
+void             save_friendly_name(const char* name);
+
 uint8_t          load_director_channel();
 void             save_director_channel(uint8_t c);
 
