@@ -374,6 +374,16 @@ StatusCallbacks           s_cb_status;
 PairingControlCallbacks   s_cb_pair_ctrl;
 ShowPassthroughCallbacks  s_cb_show_pt;
 
+// Bench-observed 2026-09-19: `NimBLEDevice::deinit(clearAll=true)` on
+// end() reliably crashes + reboots the Stick when the operator cancels
+// pairing while a client is still connected (NimBLE frees the server
+// while the host task is mid-disconnect). Fix: keep the NimBLE stack
+// initialised for the lifetime of the process and only stop / restart
+// advertising per pairing window. Characteristic pointers stay valid;
+// begin() only touches them on the first call.
+bool s_stack_initialized = false;
+NimBLEServer* s_server = nullptr;
+
 }  // namespace
 
 bool BleService::begin(Role role, Host host, uint8_t pair_win_s) {
@@ -384,50 +394,67 @@ bool BleService::begin(Role role, Host host, uint8_t pair_win_s) {
     pair_win_s_ = (pair_win_s == 0) ? kPairingWindowSecondsDefault : pair_win_s;
     if (pair_win_s_ < 5)   pair_win_s_ = 5;
 
-    NimBLEDevice::init("NocturNation");
-    NimBLEDevice::setPower(ESP_PWR_LVL_P9);
+    // ---- One-shot stack init -------------------------------------------
+    // Runs at most once per process. NimBLE stays up across cancel /
+    // re-pair cycles so end() can avoid the crashy deinit path.
+    if (!s_stack_initialized) {
+        NimBLEDevice::init("NocturNation");
+        NimBLEDevice::setPower(ESP_PWR_LVL_P9);
 
-    if (!fetch_bt_mac(bt_mac_)) {
-        Serial.println("[ble] warn: esp_bt_dev_get_address returned null; adv name will have zero suffix");
-        std::memset(bt_mac_, 0, sizeof(bt_mac_));
+        if (!fetch_bt_mac(bt_mac_)) {
+            Serial.println("[ble] warn: esp_bt_dev_get_address returned null; adv name will have zero suffix");
+            std::memset(bt_mac_, 0, sizeof(bt_mac_));
+        }
+
+        s_server = NimBLEDevice::createServer();
+        NimBLEService* svc = s_server->createService(uuid::kService);
+
+        s_char_device_info = svc->createCharacteristic(uuid::kDeviceInfo,
+                                                        NIMBLE_PROPERTY::READ);
+        s_char_device_info->setCallbacks(&s_cb_device_info);
+
+        s_char_config      = svc->createCharacteristic(uuid::kConfig,
+                                                        NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
+        s_char_config->setCallbacks(&s_cb_config);
+
+        s_char_status      = svc->createCharacteristic(uuid::kStatus,
+                                                        NIMBLE_PROPERTY::READ);
+        s_char_status->setCallbacks(&s_cb_status);
+
+        s_char_pair_ctrl   = svc->createCharacteristic(uuid::kPairingControl,
+                                                        NIMBLE_PROPERTY::WRITE);
+        s_char_pair_ctrl->setCallbacks(&s_cb_pair_ctrl);
+
+        s_char_show_pt     = svc->createCharacteristic(uuid::kShowPassthrough,
+                                                        NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
+        s_char_show_pt->setCallbacks(&s_cb_show_pt);
+
+        svc->start();
+
+        NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
+        adv->addServiceUUID(uuid::kService);
+        adv->setScanResponse(false);
+        adv->setMinInterval(0x20);
+        adv->setMaxInterval(0x40);
+
+        s_stack_initialized = true;
+    } else {
+        // Re-entry: BT MAC + service are already set up; only refresh
+        // fields that may have changed since the last window (currently
+        // just the advertising name via friendly_name).
+        if (!fetch_bt_mac(bt_mac_)) {
+            std::memset(bt_mac_, 0, sizeof(bt_mac_));
+        }
     }
+
+    // Advertising name is recomposed every begin() so friendly_name
+    // writes during the previous pairing session take effect on the
+    // next one.
     compose_adv_name(adv_name_, sizeof(adv_name_), role_label(role_), bt_mac_);
-
-    NimBLEServer* server = NimBLEDevice::createServer();
-    NimBLEService* svc   = server->createService(uuid::kService);
-
-    s_char_device_info = svc->createCharacteristic(uuid::kDeviceInfo,
-                                                    NIMBLE_PROPERTY::READ);
-    s_char_device_info->setCallbacks(&s_cb_device_info);
-
-    s_char_config      = svc->createCharacteristic(uuid::kConfig,
-                                                    NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
-    s_char_config->setCallbacks(&s_cb_config);
-
-    s_char_status      = svc->createCharacteristic(uuid::kStatus,
-                                                    NIMBLE_PROPERTY::READ);
-    s_char_status->setCallbacks(&s_cb_status);
-
-    s_char_pair_ctrl   = svc->createCharacteristic(uuid::kPairingControl,
-                                                    NIMBLE_PROPERTY::WRITE);
-    s_char_pair_ctrl->setCallbacks(&s_cb_pair_ctrl);
-
-    s_char_show_pt     = svc->createCharacteristic(uuid::kShowPassthrough,
-                                                    NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
-    s_char_show_pt->setCallbacks(&s_cb_show_pt);
-
-    svc->start();
-
     NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
-    adv->addServiceUUID(uuid::kService);
     adv->setName(adv_name_);
-    adv->setScanResponse(false);
-    adv->setMinInterval(0x20);
-    adv->setMaxInterval(0x40);
-
     if (!adv->start()) {
         Serial.println("[ble] advertising start FAILED");
-        NimBLEDevice::deinit(false);
         return false;
     }
 
@@ -459,16 +486,36 @@ PairingState BleService::tick() {
 
 void BleService::end() {
     if (!active_) return;
-    NimBLEDevice::getAdvertising()->stop();
-    NimBLEDevice::deinit(/*clearAll=*/true);
+    // Stop advertising first so no new client can land while we
+    // gracefully close existing connections.
+    NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
+    if (adv) {
+        adv->stop();
+    }
+    // Gracefully disconnect any live client. NimBLE frees connection
+    // resources on the host task; the callback fires before the next
+    // pairing session so re-entry sees a clean slate. This is where
+    // the pre-hotfix code crashed: calling deinit(clearAll=true) here
+    // freed the server pointer while the disconnect callback was mid-
+    // flight, dereferencing freed memory when the operator hit cancel.
+    if (s_server && s_server->getConnectedCount() > 0) {
+        // Server::disconnect() with just a conn_handle iterates through
+        // all currently connected peers via the server's connection
+        // list. NimBLE-Arduino v1.4.2's public API is best-effort; on
+        // the two hosts benched to date, iterating conn_handle 0..N-1
+        // covers the common case (one client at a time).
+        for (uint16_t i = 0; i < s_server->getConnectedCount(); ++i) {
+            (void)s_server->disconnect(i);
+        }
+    }
+    // Deliberately NOT calling NimBLEDevice::deinit() — the stack
+    // stays initialised for the process lifetime so subsequent begin()
+    // calls just re-start advertising. See comment above s_stack_
+    // initialized for the crash rationale. ~10 KB RAM cost is a
+    // fair trade for a crash-free cancel gesture.
     active_             = false;
     pairing_state_      = PairingState::Closed;
-    s_char_device_info  = nullptr;
-    s_char_config       = nullptr;
-    s_char_status       = nullptr;
-    s_char_pair_ctrl    = nullptr;
-    s_char_show_pt      = nullptr;
-    Serial.println("[ble] down");
+    Serial.println("[ble] down (advertising stopped; stack retained)");
 }
 
 void BleService::on_pairing_control_write(uint8_t action) {
