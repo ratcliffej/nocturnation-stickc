@@ -86,6 +86,36 @@ enum class PairingState : uint8_t {
     Aborted   = 4,   // Client wrote pairing_control::abort or gesture cancelled.
 };
 
+// Central-role scan state machine (Epic 20 B10). BLE central and
+// peripheral coexist on the same NimBLE stack; the two are used
+// mutually-exclusively from UX (Config > BLE Pair uses peripheral,
+// Config > Config Lumes uses central).
+enum class ScanState : uint8_t {
+    Idle     = 0,
+    Scanning = 1,
+    Done     = 2,
+};
+
+// One discovered Lume peripheral (Epic 20 B10).
+struct DiscoveredLume {
+    uint8_t bt_mac[6];        // BLE peripheral address for connect()
+    char    adv_name[24];     // Advertising name as seen on-air; NUL-terminated
+    int8_t  rssi;             // Signal strength at last advertisement
+    bool    valid;            // Slot occupied
+};
+
+// Result of a configure_lume() call. Distinguished so the UI can show
+// specific error text; on any non-Ok, no bytes were persisted on the
+// remote device (the write either failed or was refused).
+enum class ConfigureResult : uint8_t {
+    Ok                 = 0,
+    ConnectFailed      = 1,
+    ServiceNotFound    = 2,
+    CharacteristicNotFound = 3,
+    WriteFailed        = 4,
+    CommitFailed       = 5,
+};
+
 // BleService is the process-wide singleton owning the NimBLE stack.
 // begin(role, host, pair_win_s) starts advertising with the role's UUID +
 // name; tick() drives the pairing-window timeout; end() tears the stack
@@ -140,6 +170,37 @@ public:
     void on_pairing_control_write(uint8_t action);
     void on_config_write_success();
 
+    // ---- BLE central role (Epic 20 B10) ----
+    // Scan for NocturNation Lume peripherals for up to duration_ms.
+    // Discovered devices land in the fixed-size internal list; the
+    // caller polls scan_state() / discovered() from the main loop.
+    // Returns false if the stack failed to enter central mode. Safe
+    // to call while the peripheral service is inactive (they can
+    // coexist on ESP32 but our UX keeps them mutually exclusive).
+    static constexpr size_t kMaxDiscovered = 8;
+    bool      start_scan(uint32_t duration_ms);
+    void      stop_scan();
+    ScanState scan_state() const { return scan_state_; }
+    const DiscoveredLume* discovered() const { return discovered_; }
+    size_t                discovered_count() const { return discovered_count_; }
+
+    // Callback used by the NimBLE scan runner to feed a discovered
+    // device into the list. Public for the same friend-avoidance
+    // reason as the pairing callbacks.
+    void on_scan_result(const uint8_t bt_mac[6],
+                        const char* adv_name,
+                        int8_t rssi);
+    void on_scan_complete();
+
+    // Connect to a discovered Lume as BLE central, write the property-
+    // bag TLV to the config characteristic, follow with a
+    // pairing_control::commit, disconnect. Blocking; takes 1-3 s.
+    // UI shows a spinner during the call. Returns a specific error
+    // code so the caller can render meaningful feedback.
+    ConfigureResult configure_lume(const DiscoveredLume& target,
+                                   const uint8_t* bag_tlv,
+                                   size_t bag_len);
+
 private:
     static const char* role_label(Role r);
 
@@ -152,6 +213,11 @@ private:
     PairingState pairing_state_ = PairingState::Closed;
     uint32_t     window_started_ms_ = 0;
     bool         write_seen_        = false;
+
+    // Central-role scan state (Epic 20 B10).
+    ScanState      scan_state_       = ScanState::Idle;
+    DiscoveredLume discovered_[kMaxDiscovered] = {};
+    size_t         discovered_count_ = 0;
 };
 
 // Process-wide accessor. Firmware picks this up from menu / pairing UX

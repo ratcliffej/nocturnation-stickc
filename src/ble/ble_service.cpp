@@ -557,6 +557,204 @@ uint32_t BleService::seconds_remaining() const {
     return (total_ms - elapsed_ms) / 1000u;
 }
 
+// ============================================================================
+// Epic 20 B10 — Central-role scan + configure
+// ============================================================================
+//
+// Turns the StickC (any host, really — the code is host-agnostic) into
+// a BLE central so an operator can walk the fleet and reconfigure
+// Lumes without a phone. Coexists cleanly with the peripheral service:
+// the UX makes them mutually exclusive (Config > BLE Pair uses the
+// peripheral, Config > Config Lumes uses the central), and NimBLE
+// itself has no problem being both simultaneously.
+
+namespace {
+
+// NimBLE scan callback bridges into BleService via the singleton so
+// the scan loop can populate the discovered list on the main task.
+class ScanCallbacks : public NimBLEAdvertisedDeviceCallbacks {
+public:
+    void onResult(NimBLEAdvertisedDevice* dev) override {
+        if (!dev) return;
+        // Filter to advertisers claiming the NocturNation service. The
+        // adv-name-based filter alone would let random devices with a
+        // clashing name string in; the service-UUID check makes it
+        // deterministic.
+        if (!dev->isAdvertisingService(NimBLEUUID(uuid::kService))) return;
+
+        const char* name = dev->getName().c_str();
+        uint8_t mac[6] = {};
+        NimBLEAddress addr = dev->getAddress();
+        // NimBLEAddress::getNative() returns a little-endian pointer;
+        // copy into big-endian byte order so it matches what device_
+        // info.bt_mac reports.
+        const uint8_t* p = addr.getNative();
+        if (p) {
+            mac[0] = p[5]; mac[1] = p[4]; mac[2] = p[3];
+            mac[3] = p[2]; mac[4] = p[1]; mac[5] = p[0];
+        }
+        ble_service().on_scan_result(mac, name, dev->getRSSI());
+    }
+};
+ScanCallbacks s_scan_callbacks;
+
+}  // namespace
+
+bool BleService::start_scan(uint32_t duration_ms) {
+    if (scan_state_ == ScanState::Scanning) return true;
+
+    // Reuse the same one-shot init the peripheral role uses so scan
+    // works even when begin() was never called (typical: operator
+    // enters Config Lumes without first entering BLE Pair).
+    if (!s_stack_initialized) {
+        NimBLEDevice::init("NocturNation");
+        NimBLEDevice::setPower(ESP_PWR_LVL_P9);
+        // Note: we're leaving the peripheral service unregistered here.
+        // The first call to begin() will register it; subsequent calls
+        // find s_stack_initialized true and skip re-registration.
+        // For scan-only use this is fine — no one connects to us.
+        s_stack_initialized = true;
+    }
+
+    discovered_count_ = 0;
+    for (size_t i = 0; i < kMaxDiscovered; ++i) discovered_[i].valid = false;
+    scan_state_ = ScanState::Scanning;
+
+    NimBLEScan* scan = NimBLEDevice::getScan();
+    scan->setAdvertisedDeviceCallbacks(&s_scan_callbacks, /*wantDuplicates=*/false);
+    scan->setActiveScan(true);
+    scan->setInterval(0x50);   // 50 ms
+    scan->setWindow(0x30);     // 30 ms
+    // Duration is seconds in NimBLE-Arduino; clamp to 1..30.
+    uint32_t secs = (duration_ms + 999) / 1000;
+    if (secs < 1)  secs = 1;
+    if (secs > 30) secs = 30;
+    Serial.printf("[ble] central scan for %u s\n", (unsigned)secs);
+    // start(secs, cb) is non-blocking when cb is provided. We use the
+    // sync-blocking variant so on_scan_complete fires on this task.
+    scan->start(secs, /*is_continue=*/false);
+    // NimBLE returns synchronously — mark done. The library's stop
+    // will fire naturally at duration.
+    on_scan_complete();
+    return true;
+}
+
+void BleService::stop_scan() {
+    if (scan_state_ != ScanState::Scanning) {
+        scan_state_ = ScanState::Idle;
+        return;
+    }
+    NimBLEScan* scan = NimBLEDevice::getScan();
+    if (scan) scan->stop();
+    scan_state_ = ScanState::Done;
+}
+
+void BleService::on_scan_result(const uint8_t bt_mac[6],
+                                const char* adv_name,
+                                int8_t rssi) {
+    // De-duplicate by MAC.
+    for (size_t i = 0; i < discovered_count_; ++i) {
+        if (std::memcmp(discovered_[i].bt_mac, bt_mac, 6) == 0) {
+            // Refresh RSSI + adv_name in case it changed since first hit.
+            discovered_[i].rssi = rssi;
+            if (adv_name && adv_name[0]) {
+                std::strncpy(discovered_[i].adv_name, adv_name,
+                             sizeof(discovered_[i].adv_name) - 1);
+                discovered_[i].adv_name[sizeof(discovered_[i].adv_name) - 1] = '\0';
+            }
+            return;
+        }
+    }
+    if (discovered_count_ >= kMaxDiscovered) return;
+
+    DiscoveredLume& slot = discovered_[discovered_count_];
+    std::memcpy(slot.bt_mac, bt_mac, 6);
+    if (adv_name && adv_name[0]) {
+        std::strncpy(slot.adv_name, adv_name, sizeof(slot.adv_name) - 1);
+        slot.adv_name[sizeof(slot.adv_name) - 1] = '\0';
+    } else {
+        std::snprintf(slot.adv_name, sizeof(slot.adv_name),
+                      "??-%02X%02X%02X",
+                      static_cast<unsigned>(bt_mac[3]),
+                      static_cast<unsigned>(bt_mac[4]),
+                      static_cast<unsigned>(bt_mac[5]));
+    }
+    slot.rssi  = rssi;
+    slot.valid = true;
+    ++discovered_count_;
+    Serial.printf("[ble] found %s rssi=%d (%u total)\n",
+                  slot.adv_name, (int)rssi, (unsigned)discovered_count_);
+}
+
+void BleService::on_scan_complete() {
+    NimBLEScan* scan = NimBLEDevice::getScan();
+    if (scan) scan->clearResults();
+    scan_state_ = ScanState::Done;
+    Serial.printf("[ble] scan complete: %u discovered\n",
+                  (unsigned)discovered_count_);
+}
+
+ConfigureResult BleService::configure_lume(const DiscoveredLume& target,
+                                           const uint8_t* bag_tlv,
+                                           size_t bag_len) {
+    if (!bag_tlv || bag_len == 0) return ConfigureResult::WriteFailed;
+
+    // Build the NimBLEAddress from our big-endian MAC (reverse for
+    // NimBLE's native little-endian format).
+    uint8_t nimble_mac[6] = {
+        target.bt_mac[5], target.bt_mac[4], target.bt_mac[3],
+        target.bt_mac[2], target.bt_mac[1], target.bt_mac[0],
+    };
+    NimBLEAddress addr(nimble_mac, BLE_ADDR_PUBLIC);
+
+    NimBLEClient* client = NimBLEDevice::createClient();
+    Serial.printf("[ble] connecting to %s...\n", target.adv_name);
+    if (!client->connect(addr, /*deleteAttribute=*/false)) {
+        Serial.println("[ble] connect FAILED");
+        NimBLEDevice::deleteClient(client);
+        return ConfigureResult::ConnectFailed;
+    }
+
+    NimBLERemoteService* svc = client->getService(NimBLEUUID(uuid::kService));
+    if (!svc) {
+        Serial.println("[ble] service not found on peer");
+        client->disconnect();
+        NimBLEDevice::deleteClient(client);
+        return ConfigureResult::ServiceNotFound;
+    }
+
+    NimBLERemoteCharacteristic* chr_cfg = svc->getCharacteristic(NimBLEUUID(uuid::kConfig));
+    NimBLERemoteCharacteristic* chr_ctl = svc->getCharacteristic(NimBLEUUID(uuid::kPairingControl));
+    if (!chr_cfg || !chr_ctl) {
+        Serial.println("[ble] required characteristic missing on peer");
+        client->disconnect();
+        NimBLEDevice::deleteClient(client);
+        return ConfigureResult::CharacteristicNotFound;
+    }
+
+    // Write the property bag first, then the commit action. Both
+    // writes-with-response so we know the peer acknowledged them.
+    if (!chr_cfg->writeValue(bag_tlv, bag_len, /*response=*/true)) {
+        Serial.println("[ble] config write FAILED");
+        client->disconnect();
+        NimBLEDevice::deleteClient(client);
+        return ConfigureResult::WriteFailed;
+    }
+
+    uint8_t commit_action = 0x01;   // pairing_control::commit per spec §3.4
+    if (!chr_ctl->writeValue(&commit_action, 1, /*response=*/true)) {
+        Serial.println("[ble] commit write FAILED (config may have applied though)");
+        client->disconnect();
+        NimBLEDevice::deleteClient(client);
+        return ConfigureResult::CommitFailed;
+    }
+
+    Serial.println("[ble] configure OK");
+    client->disconnect();
+    NimBLEDevice::deleteClient(client);
+    return ConfigureResult::Ok;
+}
+
 #else  // !ARDUINO
 
 // Native stubs — see B3a. Enough for higher-level code to compile
@@ -602,6 +800,24 @@ void BleService::on_config_write_success() { write_seen_ = true; }
 
 uint32_t BleService::seconds_remaining() const {
     return active_ && pairing_state_ == PairingState::Open ? pair_win_s_ : 0;
+}
+
+// Central-role stubs — enough for higher-level code to link natively.
+// The blocking Bluetooth work is Arduino-only.
+bool BleService::start_scan(uint32_t /*duration_ms*/) {
+    scan_state_       = ScanState::Done;
+    discovered_count_ = 0;
+    return true;
+}
+void BleService::stop_scan() { scan_state_ = ScanState::Idle; }
+void BleService::on_scan_result(const uint8_t /*mac*/[6],
+                                const char* /*name*/,
+                                int8_t /*rssi*/) {}
+void BleService::on_scan_complete() { scan_state_ = ScanState::Done; }
+ConfigureResult BleService::configure_lume(const DiscoveredLume& /*target*/,
+                                           const uint8_t* /*bag*/,
+                                           size_t /*bag_len*/) {
+    return ConfigureResult::Ok;
 }
 
 #endif  // ARDUINO

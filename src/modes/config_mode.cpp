@@ -17,6 +17,7 @@
 #include "widgets/spectrum_bars.h"
 #include "pixmob_protocol.h"
 #include "../ble/ble_service.h"
+#include "../ble/property_bag_tlv.h"
 
 #include <cstdio>
 #include <cstring>
@@ -77,7 +78,7 @@ size_t scroll_offset(size_t selected, size_t total, size_t max_visible) {
 }  // namespace
 
 // Out-of-class definitions for the ODR-used static constexpr members.
-constexpr ConfigMode::TopEntry    ConfigMode::kTop[5];
+constexpr ConfigMode::TopEntry    ConfigMode::kTop[6];
 constexpr ConfigMode::PickerEntry ConfigMode::kConnectivity[4];
 constexpr ConfigMode::PickerEntry ConfigMode::kUtilities[2];
 constexpr const char* ConfigMode::kWifiItems[];
@@ -113,6 +114,10 @@ void ConfigMode::exit() {
     if (ble::ble_service().is_active()) {
         ble::ble_service().end();
         ble_pair_return_after_ms_ = 0;
+    }
+    // And if a Config Lumes scan was in flight, stop it.
+    if (ble::ble_service().scan_state() == ble::ScanState::Scanning) {
+        ble::ble_service().stop_scan();
     }
 }
 
@@ -197,6 +202,32 @@ void ConfigMode::loop_tick() {
             }
         }
     }
+    // Config Lumes screen (Epic 20 B10). Handles the post-terminal
+    // linger for Success / Failed flashes, and drains the scan-done
+    // transition.
+    if (level_ == Level::Sub && active_sub_ == SubMenu::ConfigLumes) {
+        if (cl_return_after_ != 0 && now >= cl_return_after_) {
+            cl_return_after_ = 0;
+            cl_screen_       = ConfigLumesScreen::Browsing;
+            draw();
+            return;
+        }
+        // When entering Scanning we've already fired the (blocking)
+        // NimBLE scan; ble_service.scan_state() should already be Done
+        // on entry to this tick. Transition into the list screen or
+        // Empty depending on results.
+        if (cl_screen_ == ConfigLumesScreen::Scanning) {
+            if (ble::ble_service().scan_state() == ble::ScanState::Done) {
+                if (ble::ble_service().discovered_count() == 0) {
+                    cl_screen_ = ConfigLumesScreen::Empty;
+                } else {
+                    cl_screen_ = ConfigLumesScreen::Browsing;
+                    cl_selected_ = 0;
+                }
+                draw();
+            }
+        }
+    }
 }
 
 void ConfigMode::on_button_event(const ButtonPressEvent& ev) {
@@ -241,6 +272,16 @@ void ConfigMode::on_button_event(const ButtonPressEvent& ev) {
             // Cancel path from the pairing screen. Tear down BLE +
             // return to Top. See exit_ble_pair().
             exit_ble_pair(/*cancelled=*/true);
+        } else if (level_ == Level::Sub && active_sub_ == SubMenu::ConfigLumes) {
+            // Cancel path from Config Lumes. Also handled step-wise
+            // inside the sub (Editing -> back to Browsing) — this
+            // top-level B-hold is the last-resort back-out.
+            if (cl_screen_ == ConfigLumesScreen::Editing) {
+                cl_screen_ = ConfigLumesScreen::Browsing;
+                draw();
+            } else {
+                exit_config_lumes();
+            }
         } else if (level_ == Level::Sub && previous_sub_ != SubMenu::None) {
             // Sub-to-Sub drill (Epic 20 B4): reached this Sub from
             // another Sub (System → Show). Pop to the parent Sub.
@@ -301,6 +342,9 @@ void ConfigMode::handle_top(const ButtonPressEvent& ev) {
             return;
         case TopAction::BlePair:
             enter_ble_pair();
+            return;
+        case TopAction::ConfigLumes:
+            enter_config_lumes();
             return;
         case TopAction::Drill:
             break;
@@ -468,6 +512,7 @@ void ConfigMode::handle_sub(const ButtonPressEvent& ev) {
         case SubMenu::LevelTuning: handle_level_tuning(ev); break;
         case SubMenu::LedStrip:    handle_led_strip(ev); break;
         case SubMenu::BlePair:     handle_ble_pair(ev);    break;
+        case SubMenu::ConfigLumes: handle_config_lumes(ev); break;
         case SubMenu::WiFi:
         case SubMenu::Dmx:
             // Stub submenus accept Btn2 cycling for read-only browsing
@@ -495,6 +540,7 @@ void ConfigMode::draw_sub() {
         case SubMenu::LevelTuning: draw_level_tuning(); break;
         case SubMenu::System:      draw_system(); break;
         case SubMenu::BlePair:     draw_ble_pair(); break;
+        case SubMenu::ConfigLumes: draw_config_lumes(); break;
         default: break;
     }
 }
@@ -1776,6 +1822,212 @@ void ConfigMode::draw_ble_pair() {
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         10, 122, "B-hold: cancel",
         WHITE, BLACK, 1});
+}
+
+// -------------------------------------------------------------------------
+// Config Lumes screen (Epic 20 B10) — StickC as BLE central
+// -------------------------------------------------------------------------
+//
+// Flow: Scanning (5 s) -> Browsing (pick from list) -> Editing (cycle
+// group) -> Writing (blocking configure_lume) -> Success/Failed flash
+// -> Browsing.
+//
+// State transitions are driven by button events + the loop_tick above
+// (which drains the scan-done edge and the flash lingers).
+
+namespace {
+// Group value the mini-editor cycles through. 0 = broadcast-only, 1..6
+// mirror the top-level "Group" system-item cycle. Kept in sync with
+// the wire-supported range even though the wire itself allows 0..255.
+constexpr uint8_t kConfigLumesGroupMax = 6;
+constexpr uint32_t kConfigLumesScanMs   = 5000;
+constexpr uint32_t kConfigLumesFlashMs  = 1200;
+}  // namespace
+
+void ConfigMode::enter_config_lumes() {
+    level_         = Level::Sub;
+    active_sub_    = SubMenu::ConfigLumes;
+    active_picker_ = SubMenu::None;
+    previous_sub_  = SubMenu::None;
+    sub_selected_  = 0;
+    confirm_until_ms_ = 0;
+    cl_screen_       = ConfigLumesScreen::Scanning;
+    cl_selected_     = 0;
+    cl_edit_group_   = 0;
+    cl_return_after_ = 0;
+    cl_last_error_   = 0;
+    // Kick off the scan. NimBLE-Arduino's scan->start(secs, false)
+    // blocks on this task for the duration, so the "Scanning..." draw
+    // below fires FIRST, then start_scan returns and the loop_tick
+    // above sees scan_state()==Done and transitions us.
+    draw();
+    ble::ble_service().start_scan(kConfigLumesScanMs);
+}
+
+void ConfigMode::exit_config_lumes() {
+    if (ble::ble_service().scan_state() == ble::ScanState::Scanning) {
+        ble::ble_service().stop_scan();
+    }
+    cl_screen_        = ConfigLumesScreen::Scanning;
+    cl_return_after_  = 0;
+    level_            = Level::Top;
+    active_sub_       = SubMenu::None;
+    active_picker_    = SubMenu::None;
+    draw();
+}
+
+void ConfigMode::handle_config_lumes(const ButtonPressEvent& ev) {
+    // Only ordinary press events matter here; B-hold is caught by the
+    // top-level dispatcher (see on_button_event above).
+    if (ev.kind != ButtonEvent::Pressed) return;
+
+    const auto& svc = ble::ble_service();
+    switch (cl_screen_) {
+        case ConfigLumesScreen::Scanning:
+            // Nothing to do while scanning; ignore taps.
+            break;
+        case ConfigLumesScreen::Empty:
+            // Any button re-scans.
+            cl_screen_ = ConfigLumesScreen::Scanning;
+            draw();
+            ble::ble_service().start_scan(kConfigLumesScanMs);
+            break;
+        case ConfigLumesScreen::Browsing:
+            if (svc.discovered_count() == 0) {
+                cl_screen_ = ConfigLumesScreen::Empty;
+                draw();
+                return;
+            }
+            if (ev.id == ButtonId::Btn2) {
+                cl_selected_ = (cl_selected_ + 1) % svc.discovered_count();
+                draw();
+            } else if (ev.id == ButtonId::Btn1) {
+                cl_screen_     = ConfigLumesScreen::Editing;
+                cl_edit_group_ = 0;   // start at broadcast-only
+                draw();
+            }
+            break;
+        case ConfigLumesScreen::Editing:
+            if (ev.id == ButtonId::Btn2) {
+                cl_edit_group_ = static_cast<uint8_t>(
+                    (cl_edit_group_ + 1) % (kConfigLumesGroupMax + 1));
+                draw();
+            } else if (ev.id == ButtonId::Btn1) {
+                cl_screen_ = ConfigLumesScreen::Writing;
+                draw();
+                // Build a single-entry property bag: { group: u8 }.
+                uint8_t bag[16] = {};
+                ble::TlvEncoder enc(bag, sizeof(bag));
+                enc.add_u8(ble::key::kGroup, cl_edit_group_);
+                const auto& target = svc.discovered()[cl_selected_];
+                const auto result = ble::ble_service().configure_lume(
+                    target, bag, enc.size());
+                cl_last_error_ = static_cast<uint8_t>(result);
+                if (result == ble::ConfigureResult::Ok) {
+                    cl_screen_ = ConfigLumesScreen::Success;
+                } else {
+                    cl_screen_ = ConfigLumesScreen::Failed;
+                }
+                cl_return_after_ = millis() + kConfigLumesFlashMs;
+                draw();
+            }
+            break;
+        case ConfigLumesScreen::Writing:
+        case ConfigLumesScreen::Success:
+        case ConfigLumesScreen::Failed:
+            // Terminal states; loop_tick will auto-return.
+            break;
+    }
+}
+
+void ConfigMode::draw_config_lumes() {
+    DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 5, "Config Lumes", BLUE, BLACK, 2});
+
+    auto& svc = ble::ble_service();
+    switch (cl_screen_) {
+        case ConfigLumesScreen::Scanning:
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 50, "Scanning...", WHITE, BLACK, 2});
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 122, "B-hold: cancel", WHITE, BLACK, 1});
+            break;
+        case ConfigLumesScreen::Empty:
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 40, "No Lumes found", YELLOW, BLACK, 2});
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 70, "Any button: retry", WHITE, BLACK, 1});
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 122, "B-hold: back", WHITE, BLACK, 1});
+            break;
+        case ConfigLumesScreen::Browsing: {
+            // Scrolling list of discovered devices.
+            constexpr int kRowY0 = 30;
+            const size_t count = svc.discovered_count();
+            const size_t max_visible = static_cast<size_t>(
+                (kBodyBottomLimit - kRowY0) / kRowStride);
+            const size_t first = scroll_offset(cl_selected_, count, max_visible);
+            const size_t last_excl = (first + max_visible > count)
+                                     ? count : first + max_visible;
+            for (size_t i = first; i < last_excl; ++i) {
+                const bool sel = (i == cl_selected_);
+                char row[32];
+                std::snprintf(row, sizeof(row), "%s %s",
+                              sel ? ">" : " ",
+                              svc.discovered()[i].adv_name);
+                DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                    10, kRowY0 + static_cast<int>(i - first) * kRowStride,
+                    row, sel ? YELLOW : WHITE, BLACK, 2});
+            }
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 122, "B: cycle  A: edit  B-hold: back",
+                WHITE, BLACK, 1});
+            break;
+        }
+        case ConfigLumesScreen::Editing: {
+            char line1[32];
+            std::snprintf(line1, sizeof(line1), "%s",
+                          svc.discovered()[cl_selected_].adv_name);
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 32, line1, WHITE, BLACK, 2});
+            char line2[32];
+            std::snprintf(line2, sizeof(line2), "Group: %u",
+                          (unsigned)cl_edit_group_);
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 58, line2, YELLOW, BLACK, 2});
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 90, "B: cycle  A: write", WHITE, BLACK, 1});
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 122, "B-hold: back to list", WHITE, BLACK, 1});
+            break;
+        }
+        case ConfigLumesScreen::Writing:
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 50, "Writing...", WHITE, BLACK, 2});
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 76, "(BLE takes a sec)", WHITE, BLACK, 1});
+            break;
+        case ConfigLumesScreen::Success:
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 50, "Written!", GREEN, BLACK, 2});
+            break;
+        case ConfigLumesScreen::Failed: {
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 40, "Failed", RED, BLACK, 2});
+            const char* reason = "unknown";
+            switch (cl_last_error_) {
+                case 1: reason = "connect failed";  break;
+                case 2: reason = "service missing"; break;
+                case 3: reason = "char missing";    break;
+                case 4: reason = "write refused";   break;
+                case 5: reason = "commit refused";  break;
+            }
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 70, reason, WHITE, BLACK, 1});
+            break;
+        }
+    }
 }
 
 const char* ConfigMode::mode_label_short(ModeId m) {
