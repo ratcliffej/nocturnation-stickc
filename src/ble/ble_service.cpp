@@ -29,6 +29,7 @@
 #include <Arduino.h>
 #include <NimBLEDevice.h>
 #include <esp_bt_device.h>
+#include <esp_mac.h>
 #include <esp_sleep.h>
 #include "../modes/persistence.h"
 #endif
@@ -56,11 +57,14 @@ constexpr uint8_t kWireVersion = 0x04;
 BleService& ble_service() { return s_instance; }
 
 const char* BleService::role_label(Role r) {
+    // Short labels for the BLE advertising name so "NCTN-<role>-XXXXXX"
+    // fits on the 240-pixel-wide StickC LCD at size-2 text. "Dir" +
+    // "Lume" are chosen so both labels are ≤4 chars.
     switch (r) {
-        case Role::Director: return "Director";
+        case Role::Director: return "Dir";
         case Role::Lume:     return "Lume";
     }
-    return "Unknown";
+    return "?";
 }
 
 // -----------------------------------------------------------------------------
@@ -106,6 +110,16 @@ size_t compose_adv_name(char* buf, size_t buflen,
 }
 
 bool fetch_bt_mac(uint8_t out[6]) {
+    // `esp_bt_dev_get_address()` is documented to return NULL until
+    // the BT controller is fully enabled and the address has been
+    // programmed into the host stack, which raced our call site on
+    // first pairing gesture (bench 2026-09-19 — name showed as
+    // "NCTN-Dir-000000"). `esp_read_mac(ESP_MAC_BT)` reads the value
+    // straight from eFUSE via the ROM API instead, so it's valid as
+    // soon as the chip is out of reset.
+    if (esp_read_mac(out, ESP_MAC_BT) == ESP_OK) return true;
+    // Fallback: try the BT-stack accessor if eFUSE read fails. Shouldn't
+    // happen on ESP32; kept as belt-and-braces.
     const uint8_t* addr = esp_bt_dev_get_address();
     if (!addr) return false;
     std::memcpy(out, addr, 6);
@@ -402,7 +416,7 @@ bool BleService::begin(Role role, Host host, uint8_t pair_win_s) {
         NimBLEDevice::setPower(ESP_PWR_LVL_P9);
 
         if (!fetch_bt_mac(bt_mac_)) {
-            Serial.println("[ble] warn: esp_bt_dev_get_address returned null; adv name will have zero suffix");
+            Serial.println("[ble] warn: BT MAC read failed; adv name will have zero suffix");
             std::memset(bt_mac_, 0, sizeof(bt_mac_));
         }
 
