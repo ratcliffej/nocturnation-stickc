@@ -135,6 +135,11 @@ constexpr const char* kGroup          = "group";           // u8
 constexpr const char* kLedPower       = "led_power";       // u8 (0..100)
 constexpr const char* kBoundSid       = "bound_sid";       // u16 (0xFFFF = TOFU)
 constexpr const char* kChannelPref    = "channel_pref";    // u8 (0/1/6/11)
+// Strip topology (Epic 20 B4). Required for Atom Lite where the operator
+// has no on-device menu to reach these values - BLE is the only way to
+// change them post-flash.
+constexpr const char* kStripChain     = "strip_chain";     // u16 (1..288 pixels)
+constexpr const char* kStripGroupSize = "strip_group_size";// u8  (1..255 pixels-per-CHANCE-roll)
 
 // Director role
 constexpr const char* kDirSidPerf     = "dir_sid_perf";    // u8 (0x40..0xFE)
