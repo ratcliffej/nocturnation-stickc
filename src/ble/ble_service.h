@@ -6,9 +6,13 @@
 // the time the BLE radio is off (§8 coexistence rule — full ESP-NOW
 // airtime during a show).
 //
-// v0x01 is the skeleton: service registration, empty characteristics,
-// role/host/BT-MAC-based advertising. Characteristic behaviour (property-
-// bag decode, permission gating, notify) lands in B3c.
+// v0x01 characteristics are wired to persistence in B3c: device_info
+// reads return the 24-byte struct; config reads emit a role-appropriate
+// property bag; config writes are gated on the pairing window and apply
+// each recognised key to NVS; pairing_control drives commit / abort /
+// commit-and-sleep transitions; show_passthrough writes are refused with
+// status 0x81 (declared-but-not-implemented per spec §3.5). Status
+// notify is deferred to a follow-on (v0x01 exposes read-only status).
 //
 // Not native-safe: the implementation .cpp assumes the Arduino / NimBLE
 // runtime. Native tests exercise the property-bag TLV codec (B3b) which
@@ -73,31 +77,68 @@ constexpr uint8_t kStatusNotInPairingWindow   = 0x81;
 constexpr uint8_t kStatusMalformedTlv         = 0x82;
 constexpr uint8_t kStatusValueOutOfRange      = 0x83;
 
+// Pairing-window state machine (transitions per spec §7).
+enum class PairingState : uint8_t {
+    Closed    = 0,   // Service not running; no advertising, no writes accepted.
+    Open      = 1,   // Advertising; config writes accepted while in this state.
+    Committed = 2,   // Client wrote pairing_control::commit — window closes on tick.
+    Sleeping  = 3,   // commit_and_sleep — window closes and firmware enters deep sleep.
+    Aborted   = 4,   // Client wrote pairing_control::abort or gesture cancelled.
+};
+
 // BleService is the process-wide singleton owning the NimBLE stack.
 // begin(role, host, pair_win_s) starts advertising with the role's UUID +
-// name; end() tears the stack down. is_active() reports state.
+// name; tick() drives the pairing-window timeout; end() tears the stack
+// down. is_active() reports state.
 //
-// Threading: NimBLE callbacks fire on the BLE task; this class must
-// tolerate begin()/end() from the main loop and characteristic access
-// from the BLE task. In v0x01 there is no characteristic data yet, so
-// the concurrency surface is minimal.
+// Threading: NimBLE characteristic callbacks fire on the BLE host task
+// (single-threaded per NimBLE contract). BleService member state that
+// callbacks touch is `pairing_state_` (uint8_t writes are atomic on
+// ESP32) and the persistence functions the callbacks call take their
+// own NVS locks. begin() and end() are only called from the main task
+// (Config-mode menu handlers, per B4). tick() is called from Config
+// mode's loop_tick.
 class BleService {
 public:
     // Idempotent: begin() while active is a no-op that returns true.
     // Returns false only if NimBLE initialisation fails at OS level.
+    // `pair_win_s == 0` uses the compile-time default.
     bool begin(Role role, Host host, uint8_t pair_win_s);
+
+    // Poll from the main task's loop tick. Closes the window on timeout;
+    // returns the current state so callers can update UI (countdown,
+    // success/failure flash, sleep transition).
+    PairingState tick();
 
     // Idempotent: end() while inactive is a no-op.
     void end();
 
     bool is_active() const { return active_; }
 
+    // Accessors for UI blocks (B4).
+    PairingState pairing_state() const { return pairing_state_; }
+    uint8_t      pair_win_s()    const { return pair_win_s_; }
+    uint32_t     seconds_remaining() const;
+    bool         should_sleep()  const { return pairing_state_ == PairingState::Sleeping; }
+    bool         write_seen()    const { return write_seen_; }
+
     // Advertised name for the current begin() call. Format:
     //     NCTN-<Director|Lume>-<hex(bt_mac[3..5])>
-    // Fills buf and returns the number of chars written (excluding NUL).
-    // Returns 0 if the service is not active OR buf is too small (need >=
-    // 21 chars).
+    // Or the operator-set friendly_name if configured (empty falls back
+    // to the MAC-derived form). Fills buf and returns the number of
+    // chars written (excluding NUL). Returns 0 if the service is not
+    // active OR buf is too small (need >= 21 chars).
     size_t advertising_name(char* buf, size_t buflen) const;
+
+    Role role() const { return role_; }
+    Host host() const { return host_; }
+    const uint8_t* bt_mac() const { return bt_mac_; }
+
+    // Called from NimBLE characteristic callbacks (BLE host task).
+    // Public so the callback dispatchers in ble_service.cpp can reach
+    // them without friend declarations; not for firmware external use.
+    void on_pairing_control_write(uint8_t action);
+    void on_config_write_success();
 
 private:
     static const char* role_label(Role r);
@@ -108,6 +149,9 @@ private:
     uint8_t pair_win_s_    = kPairingWindowSecondsDefault;
     uint8_t bt_mac_[6]     = {};  // captured at begin() from esp_bt_dev_get_address
     char    adv_name_[24]  = {};  // NCTN-Director-XXXXXX + NUL headroom
+    PairingState pairing_state_ = PairingState::Closed;
+    uint32_t     window_started_ms_ = 0;
+    bool         write_seen_        = false;
 };
 
 // Process-wide accessor. Firmware picks this up from menu / pairing UX

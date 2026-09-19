@@ -145,6 +145,64 @@ void save_retx_count(uint8_t n) {
     prefs.end();
 }
 
+#ifndef BLE_PAIRING_WINDOW_S_DEFAULT
+#define BLE_PAIRING_WINDOW_S_DEFAULT 30
+#endif
+
+uint8_t load_pair_win_s() {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/true);
+    uint8_t s = prefs.getUChar("pair_win_s", BLE_PAIRING_WINDOW_S_DEFAULT);
+    prefs.end();
+    if (s < 5)   s = 5;
+    if (s > 255) s = 255;
+    return s;
+}
+
+void save_pair_win_s(uint8_t s) {
+    if (s < 5)   s = 5;
+    if (s > 255) s = 255;
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/false);
+    prefs.putUChar("pair_win_s", s);
+    prefs.end();
+}
+
+size_t load_friendly_name(char* buf, size_t buflen) {
+    if (!buf || buflen == 0) return 0;
+    buf[0] = '\0';
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/true);
+    // getString truncates to buflen-1 and NUL-terminates. If the key is
+    // absent, it leaves buf as-is (already zeroed above) and returns 0.
+    const size_t n = prefs.getString("friendly_name", buf, buflen);
+    prefs.end();
+    // Clamp to 20 bytes (spec limit); anything past that is silently
+    // truncated on read as well as on save.
+    if (n > 20) {
+        buf[20] = '\0';
+        return 20;
+    }
+    return n;
+}
+
+void save_friendly_name(const char* name) {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/false);
+    if (!name || name[0] == '\0') {
+        prefs.remove("friendly_name");
+    } else {
+        // Clamp to 20 bytes (spec §5). Copy into a small buffer to
+        // enforce the limit before hitting Preferences.
+        char clipped[21] = {};
+        size_t i = 0;
+        for (; i < 20 && name[i] != '\0'; ++i) clipped[i] = name[i];
+        clipped[i] = '\0';
+        prefs.putString("friendly_name", clipped);
+    }
+    prefs.end();
+}
+
 // ESP-NOW radio channel preferences. Director uses one of {1, 6, 11}; Lume
 // uses {0=Auto/scan, 1, 6, 11}. Defaults: Director 1 (hobby), Lume 0 (auto-
 // scan with show priority). Per architecture spec §4.5: channel 1 = hobby /
@@ -588,6 +646,8 @@ uint8_t s_native_repeater_channel = 0;
 bool    s_native_lume_repeat_en  = false;
 bool    s_native_dir_calm        = false;
 uint8_t s_native_retx_count      = 2;
+uint8_t s_native_pair_win_s      = 30;
+char    s_native_friendly_name[24] = {};
 uint8_t s_native_lume_group        = 0;
 bool    s_native_lume_group_set    = false;   // tracks "has slv_group been written" (the isKey() analogue)
 uint8_t s_native_first_boot_rng   = 2;       // deterministic stand-in for esp_random() % 3 + 1
@@ -645,6 +705,31 @@ void             save_retx_count(uint8_t n)            {
     if (n < 1) n = 1;
     if (n > 5) n = 5;
     s_native_retx_count = n;
+}
+uint8_t          load_pair_win_s()                     { return s_native_pair_win_s; }
+void             save_pair_win_s(uint8_t s)            {
+    if (s < 5)   s = 5;
+    if (s > 255) s = 255;
+    s_native_pair_win_s = s;
+}
+size_t           load_friendly_name(char* buf, size_t buflen) {
+    if (!buf || buflen == 0) return 0;
+    size_t n = 0;
+    while (n < buflen - 1 && n < 20 && s_native_friendly_name[n] != '\0') {
+        buf[n] = s_native_friendly_name[n];
+        ++n;
+    }
+    buf[n] = '\0';
+    return n;
+}
+void             save_friendly_name(const char* name)  {
+    if (!name || name[0] == '\0') {
+        s_native_friendly_name[0] = '\0';
+        return;
+    }
+    size_t i = 0;
+    for (; i < 20 && name[i] != '\0'; ++i) s_native_friendly_name[i] = name[i];
+    s_native_friendly_name[i] = '\0';
 }
 uint8_t          load_lume_group()                       { return s_native_lume_group; }
 void             save_lume_group(uint8_t g)              {
@@ -835,6 +920,8 @@ void clear_native_persistence() {
     s_native_lume_repeat_en           = false;
     s_native_dir_calm                 = false;
     s_native_retx_count               = 2;
+    s_native_pair_win_s               = 30;
+    s_native_friendly_name[0]         = '\0';
     s_native_lume_group                 = 0;
     s_native_lume_group_set             = false;
     s_native_first_boot_rng            = 2;

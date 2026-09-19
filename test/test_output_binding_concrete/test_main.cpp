@@ -1012,6 +1012,55 @@ static void test_retransmit_count_clamped_by_seam(void) {
 }
 
 // =============================================================================
+// Epic 20 B3c: BLE-config-adjacent persistence keys (pair_win_s +
+// friendly_name). BLE service consumes these; tests here to keep the
+// persistence layer honest.
+// =============================================================================
+
+static void test_pair_win_s_persistence_round_trip(void) {
+    modes::persistence::test_seam::clear_native_persistence();
+    // Default 30 when never written.
+    TEST_ASSERT_EQUAL_UINT8(30, modes::persistence::load_pair_win_s());
+    modes::persistence::save_pair_win_s(120);
+    TEST_ASSERT_EQUAL_UINT8(120, modes::persistence::load_pair_win_s());
+    // Clamped: 0 -> 5, 255 stays.
+    modes::persistence::save_pair_win_s(0);
+    TEST_ASSERT_EQUAL_UINT8(5, modes::persistence::load_pair_win_s());
+    modes::persistence::save_pair_win_s(255);
+    TEST_ASSERT_EQUAL_UINT8(255, modes::persistence::load_pair_win_s());
+    modes::persistence::test_seam::clear_native_persistence();
+}
+
+static void test_friendly_name_round_trip_and_clear(void) {
+    modes::persistence::test_seam::clear_native_persistence();
+    char buf[24] = {};
+    // Absent -> empty.
+    TEST_ASSERT_EQUAL_size_t(0, modes::persistence::load_friendly_name(buf, sizeof(buf)));
+    TEST_ASSERT_EQUAL_STRING("", buf);
+
+    modes::persistence::save_friendly_name("Front Left");
+    const size_t n = modes::persistence::load_friendly_name(buf, sizeof(buf));
+    TEST_ASSERT_EQUAL_size_t(10, n);
+    TEST_ASSERT_EQUAL_STRING("Front Left", buf);
+
+    // Empty string clears.
+    modes::persistence::save_friendly_name("");
+    TEST_ASSERT_EQUAL_size_t(0, modes::persistence::load_friendly_name(buf, sizeof(buf)));
+    modes::persistence::test_seam::clear_native_persistence();
+}
+
+static void test_friendly_name_clipped_to_20_bytes(void) {
+    modes::persistence::test_seam::clear_native_persistence();
+    // 25-char input; save clips to 20.
+    modes::persistence::save_friendly_name("This_name_is_way_too_long_to_fit");
+    char buf[24] = {};
+    const size_t n = modes::persistence::load_friendly_name(buf, sizeof(buf));
+    TEST_ASSERT_EQUAL_size_t(20, n);
+    TEST_ASSERT_EQUAL_STRING_LEN("This_name_is_way_too", buf, 20);
+    modes::persistence::test_seam::clear_native_persistence();
+}
+
+// =============================================================================
 // main
 // =============================================================================
 
@@ -1065,5 +1114,8 @@ int main(int, char**) {
     RUN_TEST(test_retransmit_count_persistence_round_trip);
     RUN_TEST(test_retransmit_count_arms_queue);
     RUN_TEST(test_retransmit_count_clamped_by_seam);
+    RUN_TEST(test_pair_win_s_persistence_round_trip);
+    RUN_TEST(test_friendly_name_round_trip_and_clear);
+    RUN_TEST(test_friendly_name_clipped_to_20_bytes);
     return UNITY_END();
 }
