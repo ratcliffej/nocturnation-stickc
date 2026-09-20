@@ -380,19 +380,6 @@ public:
     }
 };
 
-// Server-level callbacks — receive connect / disconnect edges so the
-// service can pause its window timeout while a client is talking (bench
-// 2026-09-20: pairing window was firing timeout mid-config write).
-class ServerCallbacks : public NimBLEServerCallbacks {
-public:
-    void onConnect(NimBLEServer* /*srv*/) override {
-        ble_service().on_client_connected();
-    }
-    void onDisconnect(NimBLEServer* /*srv*/) override {
-        ble_service().on_client_disconnected();
-    }
-};
-
 // Static instances so the callback pointers stay valid for the service
 // lifetime. NimBLE holds the pointer — no ownership transfer.
 DeviceInfoCallbacks       s_cb_device_info;
@@ -400,7 +387,13 @@ ConfigCallbacks           s_cb_config;
 StatusCallbacks           s_cb_status;
 PairingControlCallbacks   s_cb_pair_ctrl;
 ShowPassthroughCallbacks  s_cb_show_pt;
-ServerCallbacks           s_cb_server;
+
+// Server-connection tracking (bench 2026-09-20). Previously tried a
+// NimBLEServerCallbacks subclass, but v1.4.2 has multiple onConnect
+// signatures and only dispatched to one per event — our override was
+// never called. Switched to polling s_server->getConnectedCount() from
+// tick() below; a lot more robust and doesn't depend on which overload
+// NimBLE chose today.
 
 // Bench-observed 2026-09-19: `NimBLEDevice::deinit(clearAll=true)` on
 // end() reliably crashes + reboots the Stick when the operator cancels
@@ -435,7 +428,10 @@ bool BleService::begin(Role role, Host host, uint8_t pair_win_s) {
         }
 
         s_server = NimBLEDevice::createServer();
-        s_server->setCallbacks(&s_cb_server);
+        // NB: no setCallbacks() — connect/disconnect edges are tracked
+        // via polling in tick() instead, because NimBLE-Arduino v1.4.2
+        // dispatches to varying onConnect overloads and our override
+        // wasn't reliably called. See tick() below.
         NimBLEService* svc = s_server->createService(uuid::kService);
 
         s_char_device_info = svc->createCharacteristic(uuid::kDeviceInfo,
@@ -504,12 +500,23 @@ PairingState BleService::tick() {
     if (!active_ || pairing_state_ == PairingState::Closed) {
         return pairing_state_;
     }
-    // If the client signalled commit/commit_and_sleep/abort, keep the
-    // state as-is; the caller's UI acts on it. The Open→timeout path
-    // auto-closes to Aborted so a walk-away operator doesn't leave a
-    // stray advertising session running — but PAUSED while a client
-    // is connected, so a phone/laptop walking the config isn't ejected
-    // mid-write (bench 2026-09-20).
+    // ---- Poll server connection state (bench 2026-09-20) ------------
+    // Reliable replacement for the NimBLEServerCallbacks route: the
+    // callback signatures vary across NimBLE-Arduino versions and our
+    // override wasn't fired. Polling `getConnectedCount()` at loop
+    // cadence (~20 Hz) catches connect/disconnect edges more than
+    // fast enough for pairing UX.
+    const bool now_connected = (s_server && s_server->getConnectedCount() > 0);
+    if (now_connected && !client_connected_) {
+        on_client_connected();
+    } else if (!now_connected && client_connected_) {
+        on_client_disconnected();
+    }
+    // ---- Auto-timeout, PAUSED while a client is connected ----------
+    // The Open→timeout path auto-closes to Aborted so a walk-away
+    // operator doesn't leave a stray advertising session running.
+    // Paused while `client_connected_` because a phone/laptop walking
+    // the config shouldn't get ejected mid-write.
     if (pairing_state_ == PairingState::Open && !client_connected_) {
         const uint32_t elapsed_ms = ::millis() - window_started_ms_;
         if (elapsed_ms >= static_cast<uint32_t>(pair_win_s_) * 1000u) {
