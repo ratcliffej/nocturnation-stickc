@@ -56,17 +56,6 @@ constexpr uint8_t kWireVersion = 0x04;
 
 BleService& ble_service() { return s_instance; }
 
-const char* BleService::role_label(Role r) {
-    // Short labels for the BLE advertising name so "NCTN-<role>-XXXXXX"
-    // fits on the 240-pixel-wide StickC LCD at size-2 text. "Dir" +
-    // "Lume" are chosen so both labels are ≤4 chars.
-    switch (r) {
-        case Role::Director: return "Dir";
-        case Role::Lume:     return "Lume";
-    }
-    return "?";
-}
-
 // -----------------------------------------------------------------------------
 // Arduino / NimBLE path
 // -----------------------------------------------------------------------------
@@ -86,26 +75,36 @@ NimBLECharacteristic* s_char_show_pt     = nullptr;
 
 // Compose the advertising name, honouring an operator-set friendly_name
 // override when present. Returns chars written (excluding NUL).
-size_t compose_adv_name(char* buf, size_t buflen,
-                        const char* role_label,
-                        const uint8_t* mac) {
-    if (buflen < 21 || !buf || !role_label || !mac) return 0;
+//
+// Bench 2026-09-20: dropped the role prefix ("Dir" / "Lume") from the
+// name. Motivations:
+//   (1) an Atom acting as a Director (driven by a phone app or USB
+//       serial) is a planned future variant — the role isn't a stable
+//       display identity, and clients that need it read
+//       device_info.role over BLE anyway.
+//   (2) name-length is a limited BLE budget; even with the UUID in the
+//       scan response, a shorter name gives more headroom for
+//       friendly_name and future extensions.
+// Fallback form is `NTN%02X%02X%X` (8 chars): "NTN" prefix + 20 bits
+// from bt_mac[3..5]. ~1M-value collision space is enough for the
+// realistic small fleets we deploy.
+size_t compose_adv_name(char* buf, size_t buflen, const uint8_t* mac) {
+    if (buflen < 9 || !buf || !mac) return 0;
     // Try friendly_name first. Non-empty: use verbatim (already clamped
     // to 20 bytes by save_friendly_name).
     char friendly[24] = {};
     const size_t fn_len = modes::persistence::load_friendly_name(friendly, sizeof(friendly));
-    if (fn_len > 0) {
+    if (fn_len > 0 && fn_len < buflen) {
         std::memcpy(buf, friendly, fn_len);
         buf[fn_len] = '\0';
         return fn_len;
     }
     const int n = std::snprintf(
         buf, buflen,
-        "NCTN-%s-%02X%02X%02X",
-        role_label,
+        "NTN%02X%02X%X",
         static_cast<unsigned>(mac[3]),
         static_cast<unsigned>(mac[4]),
-        static_cast<unsigned>(mac[5]));
+        static_cast<unsigned>((mac[5] >> 4) & 0x0F));
     return (n < 0) ? 0 : static_cast<size_t>(n);
 }
 
@@ -487,7 +486,7 @@ bool BleService::begin(Role role, Host host, uint8_t pair_win_s) {
     // Advertising name is recomposed every begin() so friendly_name
     // writes during the previous pairing session take effect on the
     // next one.
-    compose_adv_name(adv_name_, sizeof(adv_name_), role_label(role_), bt_mac_);
+    compose_adv_name(adv_name_, sizeof(adv_name_), bt_mac_);
     NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
     adv->setName(adv_name_);
     if (!adv->start()) {
@@ -842,11 +841,10 @@ bool BleService::begin(Role role, Host host, uint8_t pair_win_s) {
     for (uint8_t i = 0; i < 6; ++i) bt_mac_[i] = static_cast<uint8_t>(0xA0 + i);
     const int n = std::snprintf(
         adv_name_, sizeof(adv_name_),
-        "NCTN-%s-%02X%02X%02X",
-        role_label(role_),
+        "NTN%02X%02X%X",
         static_cast<unsigned>(bt_mac_[3]),
         static_cast<unsigned>(bt_mac_[4]),
-        static_cast<unsigned>(bt_mac_[5]));
+        static_cast<unsigned>((bt_mac_[5] >> 4) & 0x0F));
     (void)n;
     active_             = true;
     pairing_state_      = PairingState::Open;

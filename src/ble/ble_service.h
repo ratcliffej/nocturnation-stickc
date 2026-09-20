@@ -216,7 +216,10 @@ public:
                                    size_t bag_len);
 
 private:
-    static const char* role_label(Role r);
+    // role_label was removed 2026-09-20 alongside the "NTN" short-name
+    // rewrite — the advertising name no longer carries the role (see
+    // compose_adv_name in the .cpp). Role is still surfaced via
+    // device_info.role for any client that needs to discriminate.
 
     bool    active_        = false;
     Role    role_          = Role::Lume;
