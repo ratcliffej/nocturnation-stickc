@@ -458,20 +458,20 @@ bool BleService::begin(Role role, Host host, uint8_t pair_win_s) {
         NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
         adv->setMinInterval(0x20);
         adv->setMaxInterval(0x40);
-        // Bench 2026-09-20: a 128-bit service UUID (18 bytes) plus a
-        // 16-char local name (18 bytes) plus flags (3 bytes) = 39 bytes,
-        // but a primary ADV packet caps at 31. NimBLE truncated the
-        // name to "NCTN-Lum" (Jason saw "TCTN-Lum" — same 8-char
-        // truncation with a display-side transcription slip). Fix:
-        // put the service UUID in the scan-response so the primary
-        // ADV carries only Flags + full Local Name (fits comfortably),
-        // and clients that need the UUID pick it up via the follow-up
-        // scan request. `isAdvertisingService()` on the discovering
-        // end combines both packets so filtering still works.
-        adv->setScanResponse(true);
-        NimBLEAdvertisementData scanResp;
-        scanResp.setCompleteServices(NimBLEUUID(uuid::kService));
-        adv->setScanResponseData(scanResp);
+        // Bench 2026-09-20: keep the service UUID in the primary ADV
+        // and skip the scan-response entirely. Previous attempt split
+        // UUID to scan-response (motivated by NCTN-Lume-XXXXXX name
+        // overflow), but that path left the StickC's central-role
+        // connect() timing out at 8 s with NimBLE status=13 — the
+        // Atom advertised but wasn't accepting connections. Now that
+        // the name is 8 chars ("NTNXXXXX"), the whole thing fits:
+        // Flags(3) + LocalName(2+8=10) + UUID(2+16=18) = 31 bytes,
+        // exactly at the primary ADV cap.
+        adv->setScanResponse(false);
+        adv->addServiceUUID(NimBLEUUID(uuid::kService));
+        // Explicit connectable-undirected mode so there's no ambiguity
+        // about whether central-role peers can connect.
+        adv->setAdvertisementType(BLE_GAP_CONN_MODE_UND);
 
         s_stack_initialized = true;
     } else {
