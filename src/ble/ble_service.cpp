@@ -56,17 +56,6 @@ constexpr uint8_t kWireVersion = 0x04;
 
 BleService& ble_service() { return s_instance; }
 
-const char* BleService::role_label(Role r) {
-    // Short labels for the BLE advertising name so "NCTN-<role>-XXXXXX"
-    // fits on the 240-pixel-wide StickC LCD at size-2 text. "Dir" +
-    // "Lume" are chosen so both labels are ≤4 chars.
-    switch (r) {
-        case Role::Director: return "Dir";
-        case Role::Lume:     return "Lume";
-    }
-    return "?";
-}
-
 // -----------------------------------------------------------------------------
 // Arduino / NimBLE path
 // -----------------------------------------------------------------------------
@@ -86,26 +75,36 @@ NimBLECharacteristic* s_char_show_pt     = nullptr;
 
 // Compose the advertising name, honouring an operator-set friendly_name
 // override when present. Returns chars written (excluding NUL).
-size_t compose_adv_name(char* buf, size_t buflen,
-                        const char* role_label,
-                        const uint8_t* mac) {
-    if (buflen < 21 || !buf || !role_label || !mac) return 0;
+//
+// Bench 2026-09-20: dropped the role prefix ("Dir" / "Lume") from the
+// name. Motivations:
+//   (1) an Atom acting as a Director (driven by a phone app or USB
+//       serial) is a planned future variant — the role isn't a stable
+//       display identity, and clients that need it read
+//       device_info.role over BLE anyway.
+//   (2) name-length is a limited BLE budget; even with the UUID in the
+//       scan response, a shorter name gives more headroom for
+//       friendly_name and future extensions.
+// Fallback form is `NTN%02X%02X%X` (8 chars): "NTN" prefix + 20 bits
+// from bt_mac[3..5]. ~1M-value collision space is enough for the
+// realistic small fleets we deploy.
+size_t compose_adv_name(char* buf, size_t buflen, const uint8_t* mac) {
+    if (buflen < 9 || !buf || !mac) return 0;
     // Try friendly_name first. Non-empty: use verbatim (already clamped
     // to 20 bytes by save_friendly_name).
     char friendly[24] = {};
     const size_t fn_len = modes::persistence::load_friendly_name(friendly, sizeof(friendly));
-    if (fn_len > 0) {
+    if (fn_len > 0 && fn_len < buflen) {
         std::memcpy(buf, friendly, fn_len);
         buf[fn_len] = '\0';
         return fn_len;
     }
     const int n = std::snprintf(
         buf, buflen,
-        "NCTN-%s-%02X%02X%02X",
-        role_label,
+        "NTN%02X%02X%X",
         static_cast<unsigned>(mac[3]),
         static_cast<unsigned>(mac[4]),
-        static_cast<unsigned>(mac[5]));
+        static_cast<unsigned>((mac[5] >> 4) & 0x0F));
     return (n < 0) ? 0 : static_cast<size_t>(n);
 }
 
@@ -388,6 +387,13 @@ StatusCallbacks           s_cb_status;
 PairingControlCallbacks   s_cb_pair_ctrl;
 ShowPassthroughCallbacks  s_cb_show_pt;
 
+// Server-connection tracking (bench 2026-09-20). Previously tried a
+// NimBLEServerCallbacks subclass, but v1.4.2 has multiple onConnect
+// signatures and only dispatched to one per event — our override was
+// never called. Switched to polling s_server->getConnectedCount() from
+// tick() below; a lot more robust and doesn't depend on which overload
+// NimBLE chose today.
+
 // Bench-observed 2026-09-19: `NimBLEDevice::deinit(clearAll=true)` on
 // end() reliably crashes + reboots the Stick when the operator cancels
 // pairing while a client is still connected (NimBLE frees the server
@@ -421,6 +427,10 @@ bool BleService::begin(Role role, Host host, uint8_t pair_win_s) {
         }
 
         s_server = NimBLEDevice::createServer();
+        // NB: no setCallbacks() — connect/disconnect edges are tracked
+        // via polling in tick() instead, because NimBLE-Arduino v1.4.2
+        // dispatches to varying onConnect overloads and our override
+        // wasn't reliably called. See tick() below.
         NimBLEService* svc = s_server->createService(uuid::kService);
 
         s_char_device_info = svc->createCharacteristic(uuid::kDeviceInfo,
@@ -446,10 +456,22 @@ bool BleService::begin(Role role, Host host, uint8_t pair_win_s) {
         svc->start();
 
         NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
-        adv->addServiceUUID(uuid::kService);
-        adv->setScanResponse(false);
         adv->setMinInterval(0x20);
         adv->setMaxInterval(0x40);
+        // Bench 2026-09-20: a 128-bit service UUID (18 bytes) plus a
+        // 16-char local name (18 bytes) plus flags (3 bytes) = 39 bytes,
+        // but a primary ADV packet caps at 31. NimBLE truncated the
+        // name to "NCTN-Lum" (Jason saw "TCTN-Lum" — same 8-char
+        // truncation with a display-side transcription slip). Fix:
+        // put the service UUID in the scan-response so the primary
+        // ADV carries only Flags + full Local Name (fits comfortably),
+        // and clients that need the UUID pick it up via the follow-up
+        // scan request. `isAdvertisingService()` on the discovering
+        // end combines both packets so filtering still works.
+        adv->setScanResponse(true);
+        NimBLEAdvertisementData scanResp;
+        scanResp.setCompleteServices(NimBLEUUID(uuid::kService));
+        adv->setScanResponseData(scanResp);
 
         s_stack_initialized = true;
     } else {
@@ -464,7 +486,7 @@ bool BleService::begin(Role role, Host host, uint8_t pair_win_s) {
     // Advertising name is recomposed every begin() so friendly_name
     // writes during the previous pairing session take effect on the
     // next one.
-    compose_adv_name(adv_name_, sizeof(adv_name_), role_label(role_), bt_mac_);
+    compose_adv_name(adv_name_, sizeof(adv_name_), bt_mac_);
     NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
     adv->setName(adv_name_);
     if (!adv->start()) {
@@ -476,6 +498,10 @@ bool BleService::begin(Role role, Host host, uint8_t pair_win_s) {
     pairing_state_      = PairingState::Open;
     window_started_ms_  = ::millis();
     write_seen_         = false;
+    // Fresh session — reset connect-tracking state so a lingering flag
+    // from a previous session doesn't fool tick() into pausing forever.
+    client_connected_   = false;
+    connected_at_ms_    = 0;
     Serial.printf("[ble] up: name=%s uuid=%s window=%us\n",
                   adv_name_, uuid::kService, (unsigned)pair_win_s_);
     return true;
@@ -485,14 +511,29 @@ PairingState BleService::tick() {
     if (!active_ || pairing_state_ == PairingState::Closed) {
         return pairing_state_;
     }
-    // If the client signalled commit/commit_and_sleep/abort, keep the
-    // state as-is; the caller's UI acts on it. The Open→timeout path
-    // auto-closes to Aborted so a walk-away operator doesn't leave a
-    // stray advertising session running.
-    if (pairing_state_ == PairingState::Open) {
+    // ---- Poll server connection state (bench 2026-09-20) ------------
+    // Reliable replacement for the NimBLEServerCallbacks route: the
+    // callback signatures vary across NimBLE-Arduino versions and our
+    // override wasn't fired. Polling `getConnectedCount()` at loop
+    // cadence (~20 Hz) catches connect/disconnect edges more than
+    // fast enough for pairing UX.
+    const bool now_connected = (s_server && s_server->getConnectedCount() > 0);
+    if (now_connected && !client_connected_) {
+        on_client_connected();
+    } else if (!now_connected && client_connected_) {
+        on_client_disconnected();
+    }
+    // ---- Auto-timeout, PAUSED while a client is connected ----------
+    // The Open→timeout path auto-closes to Aborted so a walk-away
+    // operator doesn't leave a stray advertising session running.
+    // Paused while `client_connected_` because a phone/laptop walking
+    // the config shouldn't get ejected mid-write.
+    if (pairing_state_ == PairingState::Open && !client_connected_) {
         const uint32_t elapsed_ms = ::millis() - window_started_ms_;
         if (elapsed_ms >= static_cast<uint32_t>(pair_win_s_) * 1000u) {
             pairing_state_ = PairingState::Aborted;
+            Serial.printf("[ble] tick -> Aborted (elapsed=%lu ms, pair_win_s=%u)\n",
+                          (unsigned long)elapsed_ms, (unsigned)pair_win_s_);
         }
     }
     return pairing_state_;
@@ -529,6 +570,8 @@ void BleService::end() {
     // fair trade for a crash-free cancel gesture.
     active_             = false;
     pairing_state_      = PairingState::Closed;
+    client_connected_   = false;
+    connected_at_ms_    = 0;
     Serial.println("[ble] down (advertising stopped; stack retained)");
 }
 
@@ -545,6 +588,30 @@ void BleService::on_pairing_control_write(uint8_t action) {
                   static_cast<unsigned>(pairing_state_));
 }
 
+void BleService::on_client_connected() {
+    client_connected_ = true;
+    connected_at_ms_  = ::millis();
+    const uint16_t count = (s_server ? s_server->getConnectedCount() : 0);
+    Serial.printf("[ble] client connected — window paused (getConnectedCount=%u)\n",
+                  (unsigned)count);
+}
+
+void BleService::on_client_disconnected() {
+    uint32_t connected_for = 0;
+    if (client_connected_ && pairing_state_ == PairingState::Open) {
+        // Shift the window origin forward by the "connected" duration so
+        // the operator gets the full remaining window back after the
+        // client drops. Guards against the client-flapping case where a
+        // phone connects, disconnects, connects again — the window
+        // pauses/resumes rather than accumulating drift.
+        connected_for = ::millis() - connected_at_ms_;
+        window_started_ms_ += connected_for;
+    }
+    client_connected_ = false;
+    Serial.printf("[ble] client disconnected — window resumed (connected_for=%lu ms, window shifted)\n",
+                  (unsigned long)connected_for);
+}
+
 void BleService::on_config_write_success() {
     write_seen_ = true;
 }
@@ -555,6 +622,234 @@ uint32_t BleService::seconds_remaining() const {
     const uint32_t total_ms   = static_cast<uint32_t>(pair_win_s_) * 1000u;
     if (elapsed_ms >= total_ms) return 0;
     return (total_ms - elapsed_ms) / 1000u;
+}
+
+// ============================================================================
+// Epic 20 B10 — Central-role scan + configure
+// ============================================================================
+//
+// Turns the StickC (any host, really — the code is host-agnostic) into
+// a BLE central so an operator can walk the fleet and reconfigure
+// Lumes without a phone. Coexists cleanly with the peripheral service:
+// the UX makes them mutually exclusive (Config > BLE Pair uses the
+// peripheral, Config > Config Lumes uses the central), and NimBLE
+// itself has no problem being both simultaneously.
+
+namespace {
+
+// NimBLE scan callback bridges into BleService via the singleton so
+// the scan loop can populate the discovered list on the main task.
+class ScanCallbacks : public NimBLEAdvertisedDeviceCallbacks {
+public:
+    void onResult(NimBLEAdvertisedDevice* dev) override {
+        if (!dev) return;
+        // Filter to advertisers claiming the NocturNation service. The
+        // adv-name-based filter alone would let random devices with a
+        // clashing name string in; the service-UUID check makes it
+        // deterministic.
+        if (!dev->isAdvertisingService(NimBLEUUID(uuid::kService))) return;
+
+        const char* name = dev->getName().c_str();
+        uint8_t mac[6] = {};
+        NimBLEAddress addr = dev->getAddress();
+        // NimBLEAddress::getNative() returns a little-endian pointer;
+        // copy into big-endian byte order so it matches what device_
+        // info.bt_mac reports.
+        const uint8_t* p = addr.getNative();
+        if (p) {
+            mac[0] = p[5]; mac[1] = p[4]; mac[2] = p[3];
+            mac[3] = p[2]; mac[4] = p[1]; mac[5] = p[0];
+        }
+        // Bench 2026-09-20: capture the address TYPE too. Assuming
+        // BLE_ADDR_PUBLIC in configure_lume() would target a
+        // non-existent peer for any Lume advertising with a random-
+        // static address, which is common — ESP32 defaults to public
+        // for us, but the safer path is to echo whatever the peer
+        // announced.
+        ble_service().on_scan_result(mac, addr.getType(), name, dev->getRSSI());
+    }
+};
+ScanCallbacks s_scan_callbacks;
+
+}  // namespace
+
+bool BleService::start_scan(uint32_t duration_ms) {
+    if (scan_state_ == ScanState::Scanning) return true;
+
+    // Reuse the same one-shot init the peripheral role uses so scan
+    // works even when begin() was never called (typical: operator
+    // enters Config Lumes without first entering BLE Pair).
+    if (!s_stack_initialized) {
+        NimBLEDevice::init("NocturNation");
+        NimBLEDevice::setPower(ESP_PWR_LVL_P9);
+        // Note: we're leaving the peripheral service unregistered here.
+        // The first call to begin() will register it; subsequent calls
+        // find s_stack_initialized true and skip re-registration.
+        // For scan-only use this is fine — no one connects to us.
+        s_stack_initialized = true;
+    }
+
+    discovered_count_ = 0;
+    for (size_t i = 0; i < kMaxDiscovered; ++i) discovered_[i].valid = false;
+    scan_state_ = ScanState::Scanning;
+
+    NimBLEScan* scan = NimBLEDevice::getScan();
+    scan->setAdvertisedDeviceCallbacks(&s_scan_callbacks, /*wantDuplicates=*/false);
+    scan->setActiveScan(true);
+    scan->setInterval(0x50);   // 50 ms
+    scan->setWindow(0x30);     // 30 ms
+    // Duration is seconds in NimBLE-Arduino; clamp to 1..30.
+    uint32_t secs = (duration_ms + 999) / 1000;
+    if (secs < 1)  secs = 1;
+    if (secs > 30) secs = 30;
+    Serial.printf("[ble] central scan for %u s\n", (unsigned)secs);
+    // start(secs, cb) is non-blocking when cb is provided. We use the
+    // sync-blocking variant so on_scan_complete fires on this task.
+    scan->start(secs, /*is_continue=*/false);
+    // NimBLE returns synchronously — mark done. The library's stop
+    // will fire naturally at duration.
+    on_scan_complete();
+    return true;
+}
+
+void BleService::stop_scan() {
+    if (scan_state_ != ScanState::Scanning) {
+        scan_state_ = ScanState::Idle;
+        return;
+    }
+    NimBLEScan* scan = NimBLEDevice::getScan();
+    if (scan) scan->stop();
+    scan_state_ = ScanState::Done;
+}
+
+void BleService::on_scan_result(const uint8_t bt_mac[6],
+                                uint8_t addr_type,
+                                const char* adv_name,
+                                int8_t rssi) {
+    // De-duplicate by MAC.
+    for (size_t i = 0; i < discovered_count_; ++i) {
+        if (std::memcmp(discovered_[i].bt_mac, bt_mac, 6) == 0) {
+            // Refresh RSSI + adv_name in case it changed since first hit.
+            discovered_[i].rssi      = rssi;
+            discovered_[i].addr_type = addr_type;
+            if (adv_name && adv_name[0]) {
+                std::strncpy(discovered_[i].adv_name, adv_name,
+                             sizeof(discovered_[i].adv_name) - 1);
+                discovered_[i].adv_name[sizeof(discovered_[i].adv_name) - 1] = '\0';
+            }
+            return;
+        }
+    }
+    if (discovered_count_ >= kMaxDiscovered) return;
+
+    DiscoveredLume& slot = discovered_[discovered_count_];
+    std::memcpy(slot.bt_mac, bt_mac, 6);
+    slot.addr_type = addr_type;
+    if (adv_name && adv_name[0]) {
+        std::strncpy(slot.adv_name, adv_name, sizeof(slot.adv_name) - 1);
+        slot.adv_name[sizeof(slot.adv_name) - 1] = '\0';
+    } else {
+        std::snprintf(slot.adv_name, sizeof(slot.adv_name),
+                      "??-%02X%02X%02X",
+                      static_cast<unsigned>(bt_mac[3]),
+                      static_cast<unsigned>(bt_mac[4]),
+                      static_cast<unsigned>(bt_mac[5]));
+    }
+    slot.rssi  = rssi;
+    slot.valid = true;
+    ++discovered_count_;
+    Serial.printf("[ble] found %s type=%u rssi=%d (%u total)\n",
+                  slot.adv_name, (unsigned)addr_type,
+                  (int)rssi, (unsigned)discovered_count_);
+}
+
+void BleService::on_scan_complete() {
+    NimBLEScan* scan = NimBLEDevice::getScan();
+    if (scan) scan->clearResults();
+    scan_state_ = ScanState::Done;
+    Serial.printf("[ble] scan complete: %u discovered\n",
+                  (unsigned)discovered_count_);
+}
+
+ConfigureResult BleService::configure_lume(const DiscoveredLume& target,
+                                           const uint8_t* bag_tlv,
+                                           size_t bag_len) {
+    if (!bag_tlv || bag_len == 0) return ConfigureResult::WriteFailed;
+
+    // Build the NimBLEAddress from our big-endian MAC (reverse for
+    // NimBLE's native little-endian format). Use the address TYPE
+    // captured from the advertisement — assuming BLE_ADDR_PUBLIC here
+    // would target a non-existent peer whenever the Lume advertises
+    // with a random-static address (bench 2026-09-20: connections
+    // silently no-op'd on the Atom for this reason).
+    uint8_t nimble_mac[6] = {
+        target.bt_mac[5], target.bt_mac[4], target.bt_mac[3],
+        target.bt_mac[2], target.bt_mac[1], target.bt_mac[0],
+    };
+    NimBLEAddress addr(nimble_mac, target.addr_type);
+
+    NimBLEClient* client = NimBLEDevice::createClient();
+    // Explicit timeout so a stuck peer doesn't wedge the UI for the
+    // full 30 s NimBLE default. 8 s is enough for a healthy connect
+    // and short enough that a bench operator sees the failure quickly.
+    client->setConnectTimeout(8);
+    Serial.printf("[ble] connecting to %s (type=%u)...\n",
+                  target.adv_name, (unsigned)target.addr_type);
+    const uint32_t t_connect_start = ::millis();
+    // Pass deleteAttribute=true so any cached GATT state from a
+    // previous session is discarded — safer than reusing potentially-
+    // stale attribute handles across pairing cycles.
+    if (!client->connect(addr, /*deleteAttribute=*/true)) {
+        Serial.printf("[ble] connect FAILED after %lu ms\n",
+                      (unsigned long)(::millis() - t_connect_start));
+        NimBLEDevice::deleteClient(client);
+        return ConfigureResult::ConnectFailed;
+    }
+    Serial.printf("[ble] connected in %lu ms\n",
+                  (unsigned long)(::millis() - t_connect_start));
+
+    NimBLERemoteService* svc = client->getService(NimBLEUUID(uuid::kService));
+    if (!svc) {
+        Serial.println("[ble] service not found on peer");
+        client->disconnect();
+        NimBLEDevice::deleteClient(client);
+        return ConfigureResult::ServiceNotFound;
+    }
+    Serial.println("[ble] service resolved");
+
+    NimBLERemoteCharacteristic* chr_cfg = svc->getCharacteristic(NimBLEUUID(uuid::kConfig));
+    NimBLERemoteCharacteristic* chr_ctl = svc->getCharacteristic(NimBLEUUID(uuid::kPairingControl));
+    if (!chr_cfg || !chr_ctl) {
+        Serial.println("[ble] required characteristic missing on peer");
+        client->disconnect();
+        NimBLEDevice::deleteClient(client);
+        return ConfigureResult::CharacteristicNotFound;
+    }
+
+    // Write the property bag first, then the commit action. Both
+    // writes-with-response so we know the peer acknowledged them.
+    Serial.printf("[ble] writing config (%u bytes)...\n", (unsigned)bag_len);
+    if (!chr_cfg->writeValue(bag_tlv, bag_len, /*response=*/true)) {
+        Serial.println("[ble] config write FAILED");
+        client->disconnect();
+        NimBLEDevice::deleteClient(client);
+        return ConfigureResult::WriteFailed;
+    }
+    Serial.println("[ble] config write OK");
+
+    uint8_t commit_action = 0x01;   // pairing_control::commit per spec §3.4
+    Serial.println("[ble] committing...");
+    if (!chr_ctl->writeValue(&commit_action, 1, /*response=*/true)) {
+        Serial.println("[ble] commit write FAILED (config may have applied though)");
+        client->disconnect();
+        NimBLEDevice::deleteClient(client);
+        return ConfigureResult::CommitFailed;
+    }
+
+    Serial.println("[ble] configure OK");
+    client->disconnect();
+    NimBLEDevice::deleteClient(client);
+    return ConfigureResult::Ok;
 }
 
 #else  // !ARDUINO
@@ -568,11 +863,10 @@ bool BleService::begin(Role role, Host host, uint8_t pair_win_s) {
     for (uint8_t i = 0; i < 6; ++i) bt_mac_[i] = static_cast<uint8_t>(0xA0 + i);
     const int n = std::snprintf(
         adv_name_, sizeof(adv_name_),
-        "NCTN-%s-%02X%02X%02X",
-        role_label(role_),
+        "NTN%02X%02X%X",
         static_cast<unsigned>(bt_mac_[3]),
         static_cast<unsigned>(bt_mac_[4]),
-        static_cast<unsigned>(bt_mac_[5]));
+        static_cast<unsigned>((bt_mac_[5] >> 4) & 0x0F));
     (void)n;
     active_             = true;
     pairing_state_      = PairingState::Open;
@@ -600,8 +894,35 @@ void BleService::on_pairing_control_write(uint8_t action) {
 
 void BleService::on_config_write_success() { write_seen_ = true; }
 
+void BleService::on_client_connected() {
+    client_connected_ = true;
+    connected_at_ms_  = 0;
+}
+void BleService::on_client_disconnected() {
+    client_connected_ = false;
+}
+
 uint32_t BleService::seconds_remaining() const {
     return active_ && pairing_state_ == PairingState::Open ? pair_win_s_ : 0;
+}
+
+// Central-role stubs — enough for higher-level code to link natively.
+// The blocking Bluetooth work is Arduino-only.
+bool BleService::start_scan(uint32_t /*duration_ms*/) {
+    scan_state_       = ScanState::Done;
+    discovered_count_ = 0;
+    return true;
+}
+void BleService::stop_scan() { scan_state_ = ScanState::Idle; }
+void BleService::on_scan_result(const uint8_t /*mac*/[6],
+                                uint8_t /*addr_type*/,
+                                const char* /*name*/,
+                                int8_t /*rssi*/) {}
+void BleService::on_scan_complete() { scan_state_ = ScanState::Done; }
+ConfigureResult BleService::configure_lume(const DiscoveredLume& /*target*/,
+                                           const uint8_t* /*bag*/,
+                                           size_t /*bag_len*/) {
+    return ConfigureResult::Ok;
 }
 
 #endif  // ARDUINO

@@ -16,12 +16,19 @@
 #include "hal/hal.h"
 #include "output_bindings/output_binding.h"
 
-// Compile-time gate on the Atom-Lite Btn1 LongPressed group-cycle
-// gesture. Set to 0 in build_flags to lock the group at flash-time -
-// the handler compiles out entirely and only NOCT_DEFAULT_LUME_GROUP
-// / clearing NVS can change slv_group.
-#ifndef NOCT_LUME_GROUP_LONGPRESS_ENABLED
-#define NOCT_LUME_GROUP_LONGPRESS_ENABLED 1
+// Epic 20 B7: Btn1 LongPressed on display-less hosts (Atom Lite) opens
+// a BLE pairing window. Set to 0 to disable the pairing gesture
+// entirely (button becomes inert on Atom Lite; only .ini build-time
+// defaults + a reflash reach the settings).
+//
+// Bench 2026-09-19: the pre-Epic-20 group-cycle behaviour was removed
+// entirely at this point. It duplicated what BLE now covers cleanly
+// and was fighting for the same button gesture. If someone wants it
+// back for a headless / no-BLE deployment, revive the old
+// NOCT_LUME_GROUP_LONGPRESS_ENABLED block from before commit
+// ba248e3 in the git history.
+#ifndef NOCT_LUME_BLE_PAIR_GESTURE_ENABLED
+#define NOCT_LUME_BLE_PAIR_GESTURE_ENABLED 1
 #endif
 #include "output_bindings/output_binding_context.h"
 #include "transport/espnow/frame.h"
@@ -142,13 +149,29 @@ private:
     // PixMob protocol's IR group code).
     uint8_t   lume_group_            = 0;
 
-    // Btn1-LongPressed group-cycle confirmation. flash_group_remaining_
-    // = N pulses left in the sequence; each pair of ticks toggles
-    // flash_on_ and decrements on the off half.
-    uint8_t   flash_group_remaining_  = 0;
-    uint32_t  flash_next_edge_ms_     = 0;
-    bool      flash_on_               = false;
-    static constexpr uint32_t kGroupFlashHalfPeriodMs = 250;
+    // BLE pairing gesture (Epic 20 B7). Btn1 LongPress on display-less
+    // hosts activates BleService; loop_tick drives the LED animation
+    // and polls the pairing state machine until it terminates. The
+    // strip is entirely ours while the window is open (BLE and ESP-NOW
+    // don't coexist in v0x01), so we can commandeer every pixel without
+    // fighting show frames.
+    void enter_ble_pair();
+    void exit_ble_pair();
+    void tick_ble_pair(uint32_t now);
+    void draw_ble_pair_led(uint32_t now);
+
+    bool     ble_pair_active_          = false;
+    uint32_t ble_pair_led_next_edge_ms_ = 0;
+    bool     ble_pair_led_on_          = false;
+    // Terminal state waiting to be shown. 0 = Open (still pulsing);
+    // 1 = Committed, 2 = Sleeping, 3 = Aborted (matches enum from
+    // ble::PairingState numerically for readability, but we don't
+    // include the header here — keep enum -> uint8_t bridging in the
+    // .cpp).
+    uint8_t  ble_pair_terminal_        = 0;
+    uint32_t ble_pair_return_after_ms_ = 0;
+    static constexpr uint32_t kBlePairPulseHalfPeriodMs = 500;
+    static constexpr uint32_t kBlePairTerminalHoldMs    = 500;
 
     // Transport-agnostic - could feed off any sequenced protocol.
     transport::SignalQuality quality_;

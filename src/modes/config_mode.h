@@ -78,6 +78,10 @@ private:
         // "BLE Pair" entry; hosts a countdown + advertising-name
         // display and drives BleService lifecycle.
         BlePair,
+        // Epic 20 B10 - BLE central-role configurator. Reached from
+        // the Top "Config Lumes" entry; scans for nearby Lumes and
+        // walks the operator through a mini-editor to write config.
+        ConfigLumes,
     };
 
     // Within the PixMob submenu, drilling into one of its items enters a
@@ -93,10 +97,11 @@ private:
     //       a level-2 picker; or
     //   (c) a leaf submenu: target is the leaf, drill straight in.
     enum class TopAction : uint8_t {
-        Drill,       // descend into target (picker or leaf)
-        GroupId,     // direct action: increment slv_group 0..6 (UI cap; wire allows 0..255) — moved to System (Epic 20 B4)
-        CalmToggle,  // direct action: flip dir_calm on/off (Epic 19)
-        BlePair,     // direct action: drill into the BLE pairing screen (Epic 20 B4)
+        Drill,        // descend into target (picker or leaf)
+        GroupId,      // direct action: increment slv_group 0..6 (UI cap; wire allows 0..255) — moved to System (Epic 20 B4)
+        CalmToggle,   // direct action: flip dir_calm on/off (Epic 19)
+        BlePair,      // direct action: drill into the BLE pairing screen (Epic 20 B4)
+        ConfigLumes,  // direct action: drill into BLE central-role Lume configurator (Epic 20 B10)
     };
     struct TopEntry {
         SubMenu     target;
@@ -106,13 +111,16 @@ private:
     // Epic 20 B4: Top shrinks to 5 items — Group and Show move into
     // System submenu (Q1 answer, 2026-09-19) to free vertical space
     // for the BLE Pair entry. Existing scroll_offset() in draw_top
-    // handles overflow at any future growth.
-    static constexpr TopEntry kTop[5] = {
-        { SubMenu::None,         TopAction::CalmToggle, "Calm"         },
-        { SubMenu::None,         TopAction::BlePair,    "BLE Pair"     },
-        { SubMenu::Connectivity, TopAction::Drill,      "Connectivity" },
-        { SubMenu::Utilities,    TopAction::Drill,      "Utilities"    },
-        { SubMenu::System,       TopAction::Drill,      "System"       },
+    // handles overflow at any future growth. Epic 20 B10 adds
+    // "Config Lumes" as a sibling to BLE Pair — same BLE stack, this
+    // one scans + configures other Lumes (central role).
+    static constexpr TopEntry kTop[6] = {
+        { SubMenu::None,         TopAction::CalmToggle,  "Calm"         },
+        { SubMenu::None,         TopAction::BlePair,     "BLE Pair"     },
+        { SubMenu::None,         TopAction::ConfigLumes, "Config Lumes" },
+        { SubMenu::Connectivity, TopAction::Drill,       "Connectivity" },
+        { SubMenu::Utilities,    TopAction::Drill,       "Utilities"    },
+        { SubMenu::System,       TopAction::Drill,       "System"       },
     };
     static constexpr size_t kTopCount = sizeof(kTop) / sizeof(kTop[0]);
 
@@ -436,6 +444,27 @@ private:
         Sleeping  = 3,
     };
     BlePairScreen ble_pair_screen_ = BlePairScreen::Countdown;
+
+    // Epic 20 B10 - BLE central-role Config Lumes sub-mode.
+    void handle_config_lumes(const dal::ButtonPressEvent& ev);
+    void draw_config_lumes();
+    void enter_config_lumes();
+    void exit_config_lumes();
+
+    enum class ConfigLumesScreen : uint8_t {
+        Scanning    = 0,  // 5 s scan window; list builds
+        Empty       = 1,  // scan done, no Lumes found
+        Browsing    = 2,  // list of discovered Lumes; operator picks one
+        Editing     = 3,  // group editor for the selected Lume
+        Writing     = 4,  // brief spinner while configure_lume runs
+        Success     = 5,  // "Written!" flash -> Browsing
+        Failed      = 6,  // "Failed" flash -> Browsing (err text next to it)
+    };
+    ConfigLumesScreen cl_screen_        = ConfigLumesScreen::Scanning;
+    size_t            cl_selected_      = 0;   // index into ble_service().discovered()
+    uint8_t           cl_edit_group_    = 0;   // value being cycled in the editor
+    uint32_t          cl_return_after_  = 0;   // linger + auto-return for flash states
+    uint8_t           cl_last_error_    = 0;   // ConfigureResult from the last write
 
     static const char* mode_label_short(ModeId m);
 

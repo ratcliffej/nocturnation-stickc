@@ -8,6 +8,7 @@
 #include "output_bindings/pixmob_ir.h"
 #include "output_bindings/lume_led_strip.h"
 #include "output_bindings/lume_text.h"
+#include "../ble/ble_service.h"
 
 #include <cstdio>
 #include <cstring>
@@ -155,6 +156,12 @@ void LumeMode::enter() {
 }
 
 void LumeMode::exit() {
+    // Defensive: tear BLE down if the operator switched modes mid-
+    // pairing (rare on Atom Lite where there's no menu to switch from,
+    // but the mode machine can be driven from elsewhere).
+    if (ble_pair_active_) {
+        exit_ble_pair();
+    }
     if (radio_active_) {
         if (auto* radio = hal::HAL::esp_now()) radio->end();
         radio_active_ = false;
@@ -177,6 +184,16 @@ void LumeMode::exit() {
 
 void LumeMode::loop_tick() {
     const uint32_t now = millis();
+
+    // BLE pairing window (Epic 20 B7): while active, we own the LED
+    // strip and skip the normal Lume rendering / receive path. BLE and
+    // ESP-NOW don't share the radio in v0x01, so there's nothing to
+    // fan out anyway. tick_ble_pair() drives the state machine and the
+    // LED animation until the window terminates, then returns us here.
+    if (ble_pair_active_) {
+        tick_ble_pair(now);
+        return;
+    }
 
     // Pump every binding's tick() at main-loop cadence (~20 Hz) for
     // tick-driven animations (e.g. text scroll).
@@ -319,25 +336,13 @@ void LumeMode::loop_tick() {
     //   Searching     -> flashing green at 1 Hz, 50 % duty
     //   FreshlyLocked -> solid green for kFreshLockMs
     //   Active        -> overlay off; pixel 0 belongs to the wash
+    // Pre-Epic-20 also carried a group-cycle confirmation flash here;
+    // dropped alongside the group-cycle button gesture — the strip
+    // now belongs to the BLE pairing screen when a pairing window is
+    // open (handled ahead of this block by tick_ble_pair).
     if (hal::HAL::led_strip() != nullptr && hal::HAL::display() == nullptr) {
         auto* strip_drv = led_strip_driver_instance();
-        if (flash_group_remaining_ > 0) {
-            // Group-cycle confirmation: N white pulses on pixel 0.
-            // Off half decrements the remaining counter, giving exactly
-            // N on/off pairs regardless of signal state.
-            if (now >= flash_next_edge_ms_) {
-                flash_on_ = !flash_on_;
-                strip_drv->set_overlay_pixel_0(
-                    flash_on_ ? 192 : 0,
-                    flash_on_ ? 192 : 0,
-                    flash_on_ ? 192 : 0,
-                    true);
-                flash_next_edge_ms_ = now + kGroupFlashHalfPeriodMs;
-                if (!flash_on_ && --flash_group_remaining_ == 0) {
-                    strip_drv->set_overlay_pixel_0(0, 0, 0, false);
-                }
-            }
-        } else if (no_signal_ || rx_count_ == 0) {
+        if (no_signal_ || rx_count_ == 0) {
             const uint32_t phase = now % kIndicatorFlashPeriodMs;
             const bool     lit   = phase < (kIndicatorFlashPeriodMs / 2);
             strip_drv->set_overlay_pixel_0(0, lit ? 96 : 0, 0, true);
@@ -355,24 +360,33 @@ void LumeMode::on_button_event(const ButtonPressEvent& ev) {
         return;
     }
 
-    // Btn1 LongPressed on display-less hosts cycles group 1->2->3->1.
-    // (g % 3) + 1 also pulls values outside {1,2,3} back into the cycle.
-    // Confirms visually with a pixel-0 flash sequence.
-#if NOCT_LUME_GROUP_LONGPRESS_ENABLED
+    // Epic 20 B7: Btn1 LongPressed on display-less hosts (Atom Lite is
+    // the primary target — no on-device menu to reach settings) opens
+    // the BLE pairing window. The pre-Epic-20 group-cycle behaviour has
+    // been removed entirely — it duplicated what BLE now covers cleanly
+    // and was fighting for the same button gesture (bench 2026-09-19).
+    //
+    // Bench 2026-09-20: a second Btn1 LongPress WHILE pairing is active
+    // cancels the window (tears BLE down + returns to Lume operation).
+    // Gives the display-less operator a manual escape hatch — matches
+    // the StickC's B-hold-cancel + covers the "forgot to cancel + phone
+    // is stuck connected" case.
+#if NOCT_LUME_BLE_PAIR_GESTURE_ENABLED
     if (ev.id == ButtonId::Btn1
         && ev.kind == ButtonEvent::LongPressed
         && hal::HAL::display() == nullptr
         && hal::HAL::led_strip() != nullptr) {
-        lume_group_ = static_cast<uint8_t>((lume_group_ % 3) + 1);
-        persistence::save_lume_group(lume_group_);
-        flash_group_remaining_ = lume_group_;
-        flash_next_edge_ms_    = millis();
-        flash_on_              = false;
+        if (ble_pair_active_) {
 #ifdef ARDUINO
-        Serial.printf("[lume] group -> %u (flash %u pulses)\n",
-                      (unsigned)lume_group_,
-                      (unsigned)flash_group_remaining_);
+            Serial.println("[lume] Btn1 LongPress while active -> cancel");
 #endif
+            exit_ble_pair();
+        } else {
+#ifdef ARDUINO
+            Serial.println("[lume] Btn1 LongPress -> enter pairing");
+#endif
+            enter_ble_pair();
+        }
         return;
     }
 #endif
@@ -1081,6 +1095,194 @@ void LumeMode::draw_no_signal_body() {
 
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         kDiagX, 122, "B-hold: menu", WHITE, BLACK, 1});
+}
+
+// ============================================================================
+// Epic 20 B7 - BLE pairing gesture (display-less hosts)
+// ============================================================================
+//
+// Same underlying BleService + property-bag characteristics as the StickC
+// Config pairing screen; different UX because Atom Lite has no display.
+// The operator sees the phone's scan list (advertising as NCTN-Lume-XXXXXX)
+// and confirms the state visually via the LED strip:
+//
+//   Open       - pixel 0 slow-pulse blue (~1 Hz)
+//   Committed  - whole strip solid green for kBlePairTerminalHoldMs
+//   Sleeping   - whole strip solid green for a longer beat then return
+//   Aborted    - whole strip solid red for kBlePairTerminalHoldMs
+//
+// Colours are hard-capped at 10 % brightness raw so we respect the
+// Atom Lite fleet cap without going through LedStripDriver (which
+// would apply another multiplier on top).
+
+namespace {
+constexpr uint8_t kBlePairIntensity = 25;   // ~10 % of 255 — matches Atom fleet cap
+}  // namespace
+
+void LumeMode::enter_ble_pair() {
+    if (ble_pair_active_) return;
+    ble_pair_active_          = true;
+    ble_pair_led_next_edge_ms_ = millis();
+    ble_pair_led_on_          = false;
+    ble_pair_terminal_        = 0;
+    ble_pair_return_after_ms_ = 0;
+
+    // Clear the strip so the pulse indicator has nothing beneath it.
+    if (auto* strip = hal::HAL::led_strip()) {
+        strip->clear();
+        strip->show();
+    }
+
+    // Bench 2026-09-20: shut ESP-NOW / WiFi down before bringing BLE
+    // up. Both share the 2.4 GHz radio on the ESP32 and while
+    // coexistence is officially supported, an active WiFi STA + live
+    // ESP-NOW receive path was starving BLE's connection-request
+    // window — the StickC's central-role connect() attempt kept
+    // timing out. During pairing the Lume ignores ESP-NOW frames
+    // anyway (loop_tick early-returns), so tearing the radio down is
+    // free. Restored in exit_ble_pair below.
+    if (radio_active_) {
+        if (auto* radio = hal::HAL::esp_now()) radio->end();
+        radio_active_ = false;
+    }
+#ifdef ARDUINO
+    // ESPNowAtomLite::end() only calls esp_now_deinit() — WiFi STA
+    // stays up, which continues to steal 2.4 GHz airtime from BLE.
+    // Explicit WIFI_OFF releases the radio entirely so BLE gets a
+    // clean coexistence slot for the whole pairing window.
+    WiFi.mode(WIFI_OFF);
+#endif
+
+    // Fire up BLE with the Lume role + compile-time host id.
+#ifndef NOCT_BLE_HOST_ID
+#define NOCT_BLE_HOST_ID 0x01
+#endif
+    ble::ble_service().begin(
+        ble::Role::Lume,
+        static_cast<ble::Host>(NOCT_BLE_HOST_ID),
+        persistence::load_pair_win_s());
+#ifdef ARDUINO
+    Serial.println("[lume] BLE pairing window OPEN (ESP-NOW paused)");
+#endif
+}
+
+void LumeMode::exit_ble_pair() {
+    ble::ble_service().end();
+    ble_pair_active_          = false;
+    ble_pair_terminal_        = 0;
+    ble_pair_return_after_ms_ = 0;
+    ble_pair_led_on_          = false;
+    if (auto* strip = hal::HAL::led_strip()) {
+        strip->clear();
+        strip->show();
+    }
+    // Restore ESP-NOW receive so the Lume resumes normal operation.
+    if (auto* radio = hal::HAL::esp_now()) {
+        radio->set_recv_callback([this](const hal::ESPNowMessage& m) {
+            this->on_recv(m);
+        });
+        radio_active_ = radio->begin(current_listen_chan_);
+    }
+#ifdef ARDUINO
+    Serial.printf("[lume] BLE pairing window CLOSED (ESP-NOW %s)\n",
+                  radio_active_ ? "resumed" : "resume FAILED");
+#endif
+}
+
+void LumeMode::tick_ble_pair(uint32_t now) {
+    // Post-terminal linger: hold the colour, then close the window.
+    if (ble_pair_return_after_ms_ != 0 && now >= ble_pair_return_after_ms_) {
+#ifdef ARDUINO
+        Serial.printf("[lume] tick_ble_pair -> exit (terminal=%u, linger elapsed)\n",
+                      (unsigned)ble_pair_terminal_);
+#endif
+        exit_ble_pair();
+        return;
+    }
+
+    // Still open? Poll BleService for state transitions.
+    if (ble_pair_terminal_ == 0) {
+        const ble::PairingState st = ble::ble_service().tick();
+        if (st == ble::PairingState::Committed) {
+            ble_pair_terminal_        = 1;
+            ble_pair_return_after_ms_ = now + kBlePairTerminalHoldMs;
+#ifdef ARDUINO
+            Serial.println("[lume] tick_ble_pair: state -> Committed");
+#endif
+        } else if (st == ble::PairingState::Sleeping) {
+            ble_pair_terminal_        = 2;
+            ble_pair_return_after_ms_ = now + kBlePairTerminalHoldMs * 2;
+#ifdef ARDUINO
+            Serial.println("[lume] tick_ble_pair: state -> Sleeping");
+#endif
+        } else if (st == ble::PairingState::Aborted) {
+            ble_pair_terminal_        = 3;
+            ble_pair_return_after_ms_ = now + kBlePairTerminalHoldMs;
+#ifdef ARDUINO
+            Serial.println("[lume] tick_ble_pair: state -> Aborted");
+#endif
+        }
+    }
+
+    draw_ble_pair_led(now);
+}
+
+void LumeMode::draw_ble_pair_led(uint32_t now) {
+    auto* strip = hal::HAL::led_strip();
+    if (!strip) return;
+    const size_t n = strip->pixel_count();
+
+    switch (ble_pair_terminal_) {
+        case 1:   // Committed - solid green
+            for (size_t i = 0; i < n; ++i) {
+                strip->set_pixel(i, 0, kBlePairIntensity, 0);
+            }
+            strip->show();
+            break;
+        case 2:   // Sleeping - solid green (deep-sleep intent honoured
+                  // behaviourally per Epic 20 B4 note; true esp_deep_sleep
+                  // pending an IRAM trim).
+            for (size_t i = 0; i < n; ++i) {
+                strip->set_pixel(i, 0, kBlePairIntensity, 0);
+            }
+            strip->show();
+            break;
+        case 3:   // Aborted - solid red
+            for (size_t i = 0; i < n; ++i) {
+                strip->set_pixel(i, kBlePairIntensity, 0, 0);
+            }
+            strip->show();
+            break;
+        case 0:
+        default: {
+            // Open, with two sub-states driven by the peer connection
+            // (bench 2026-09-20: operators need a visible cue that a
+            // Director / phone is actually talking to this Lume — the
+            // pulsing indicator alone doesn't distinguish "waiting" from
+            // "mid-write"):
+            //   client connected  -> pixel 0 SOLID blue (write in progress)
+            //   no client         -> pixel 0 slow-pulses blue (idle)
+            // Solid variant also serves as the "don't power-cycle me yet"
+            // hint during the ~1-3 s configure_lume blocking write.
+            if (ble::ble_service().client_connected()) {
+                if (!ble_pair_led_on_) {
+                    ble_pair_led_on_ = true;
+                    strip->clear();
+                    strip->set_pixel(0, 0, 0, kBlePairIntensity);
+                    strip->show();
+                }
+            } else if (now >= ble_pair_led_next_edge_ms_) {
+                ble_pair_led_on_          = !ble_pair_led_on_;
+                ble_pair_led_next_edge_ms_ = now + kBlePairPulseHalfPeriodMs;
+                strip->clear();
+                if (ble_pair_led_on_) {
+                    strip->set_pixel(0, 0, 0, kBlePairIntensity);
+                }
+                strip->show();
+            }
+            break;
+        }
+    }
 }
 
 }  // namespace modes
