@@ -532,6 +532,8 @@ PairingState BleService::tick() {
         const uint32_t elapsed_ms = ::millis() - window_started_ms_;
         if (elapsed_ms >= static_cast<uint32_t>(pair_win_s_) * 1000u) {
             pairing_state_ = PairingState::Aborted;
+            Serial.printf("[ble] tick -> Aborted (elapsed=%lu ms, pair_win_s=%u)\n",
+                          (unsigned long)elapsed_ms, (unsigned)pair_win_s_);
         }
     }
     return pairing_state_;
@@ -589,21 +591,25 @@ void BleService::on_pairing_control_write(uint8_t action) {
 void BleService::on_client_connected() {
     client_connected_ = true;
     connected_at_ms_  = ::millis();
-    Serial.println("[ble] client connected — window paused");
+    const uint16_t count = (s_server ? s_server->getConnectedCount() : 0);
+    Serial.printf("[ble] client connected — window paused (getConnectedCount=%u)\n",
+                  (unsigned)count);
 }
 
 void BleService::on_client_disconnected() {
+    uint32_t connected_for = 0;
     if (client_connected_ && pairing_state_ == PairingState::Open) {
         // Shift the window origin forward by the "connected" duration so
         // the operator gets the full remaining window back after the
         // client drops. Guards against the client-flapping case where a
         // phone connects, disconnects, connects again — the window
         // pauses/resumes rather than accumulating drift.
-        const uint32_t connected_for = ::millis() - connected_at_ms_;
+        connected_for = ::millis() - connected_at_ms_;
         window_started_ms_ += connected_for;
     }
     client_connected_ = false;
-    Serial.println("[ble] client disconnected — window resumed");
+    Serial.printf("[ble] client disconnected — window resumed (connected_for=%lu ms, window shifted)\n",
+                  (unsigned long)connected_for);
 }
 
 void BleService::on_config_write_success() {

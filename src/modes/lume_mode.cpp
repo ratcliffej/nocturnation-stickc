@@ -377,8 +377,14 @@ void LumeMode::on_button_event(const ButtonPressEvent& ev) {
         && hal::HAL::display() == nullptr
         && hal::HAL::led_strip() != nullptr) {
         if (ble_pair_active_) {
+#ifdef ARDUINO
+            Serial.println("[lume] Btn1 LongPress while active -> cancel");
+#endif
             exit_ble_pair();
         } else {
+#ifdef ARDUINO
+            Serial.println("[lume] Btn1 LongPress -> enter pairing");
+#endif
             enter_ble_pair();
         }
         return;
@@ -1139,6 +1145,13 @@ void LumeMode::enter_ble_pair() {
         if (auto* radio = hal::HAL::esp_now()) radio->end();
         radio_active_ = false;
     }
+#ifdef ARDUINO
+    // ESPNowAtomLite::end() only calls esp_now_deinit() — WiFi STA
+    // stays up, which continues to steal 2.4 GHz airtime from BLE.
+    // Explicit WIFI_OFF releases the radio entirely so BLE gets a
+    // clean coexistence slot for the whole pairing window.
+    WiFi.mode(WIFI_OFF);
+#endif
 
     // Fire up BLE with the Lume role + compile-time host id.
 #ifndef NOCT_BLE_HOST_ID
@@ -1179,6 +1192,10 @@ void LumeMode::exit_ble_pair() {
 void LumeMode::tick_ble_pair(uint32_t now) {
     // Post-terminal linger: hold the colour, then close the window.
     if (ble_pair_return_after_ms_ != 0 && now >= ble_pair_return_after_ms_) {
+#ifdef ARDUINO
+        Serial.printf("[lume] tick_ble_pair -> exit (terminal=%u, linger elapsed)\n",
+                      (unsigned)ble_pair_terminal_);
+#endif
         exit_ble_pair();
         return;
     }
@@ -1189,12 +1206,21 @@ void LumeMode::tick_ble_pair(uint32_t now) {
         if (st == ble::PairingState::Committed) {
             ble_pair_terminal_        = 1;
             ble_pair_return_after_ms_ = now + kBlePairTerminalHoldMs;
+#ifdef ARDUINO
+            Serial.println("[lume] tick_ble_pair: state -> Committed");
+#endif
         } else if (st == ble::PairingState::Sleeping) {
             ble_pair_terminal_        = 2;
             ble_pair_return_after_ms_ = now + kBlePairTerminalHoldMs * 2;
+#ifdef ARDUINO
+            Serial.println("[lume] tick_ble_pair: state -> Sleeping");
+#endif
         } else if (st == ble::PairingState::Aborted) {
             ble_pair_terminal_        = 3;
             ble_pair_return_after_ms_ = now + kBlePairTerminalHoldMs;
+#ifdef ARDUINO
+            Serial.println("[lume] tick_ble_pair: state -> Aborted");
+#endif
         }
     }
 
