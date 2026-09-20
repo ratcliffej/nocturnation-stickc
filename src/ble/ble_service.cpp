@@ -783,12 +783,24 @@ ConfigureResult BleService::configure_lume(const DiscoveredLume& target,
     NimBLEAddress addr(nimble_mac, target.addr_type);
 
     NimBLEClient* client = NimBLEDevice::createClient();
-    Serial.printf("[ble] connecting to %s...\n", target.adv_name);
-    if (!client->connect(addr, /*deleteAttribute=*/false)) {
-        Serial.println("[ble] connect FAILED");
+    // Explicit timeout so a stuck peer doesn't wedge the UI for the
+    // full 30 s NimBLE default. 8 s is enough for a healthy connect
+    // and short enough that a bench operator sees the failure quickly.
+    client->setConnectTimeout(8);
+    Serial.printf("[ble] connecting to %s (type=%u)...\n",
+                  target.adv_name, (unsigned)target.addr_type);
+    const uint32_t t_connect_start = ::millis();
+    // Pass deleteAttribute=true so any cached GATT state from a
+    // previous session is discarded — safer than reusing potentially-
+    // stale attribute handles across pairing cycles.
+    if (!client->connect(addr, /*deleteAttribute=*/true)) {
+        Serial.printf("[ble] connect FAILED after %lu ms\n",
+                      (unsigned long)(::millis() - t_connect_start));
         NimBLEDevice::deleteClient(client);
         return ConfigureResult::ConnectFailed;
     }
+    Serial.printf("[ble] connected in %lu ms\n",
+                  (unsigned long)(::millis() - t_connect_start));
 
     NimBLERemoteService* svc = client->getService(NimBLEUUID(uuid::kService));
     if (!svc) {
@@ -797,6 +809,7 @@ ConfigureResult BleService::configure_lume(const DiscoveredLume& target,
         NimBLEDevice::deleteClient(client);
         return ConfigureResult::ServiceNotFound;
     }
+    Serial.println("[ble] service resolved");
 
     NimBLERemoteCharacteristic* chr_cfg = svc->getCharacteristic(NimBLEUUID(uuid::kConfig));
     NimBLERemoteCharacteristic* chr_ctl = svc->getCharacteristic(NimBLEUUID(uuid::kPairingControl));
@@ -809,14 +822,17 @@ ConfigureResult BleService::configure_lume(const DiscoveredLume& target,
 
     // Write the property bag first, then the commit action. Both
     // writes-with-response so we know the peer acknowledged them.
+    Serial.printf("[ble] writing config (%u bytes)...\n", (unsigned)bag_len);
     if (!chr_cfg->writeValue(bag_tlv, bag_len, /*response=*/true)) {
         Serial.println("[ble] config write FAILED");
         client->disconnect();
         NimBLEDevice::deleteClient(client);
         return ConfigureResult::WriteFailed;
     }
+    Serial.println("[ble] config write OK");
 
     uint8_t commit_action = 0x01;   // pairing_control::commit per spec §3.4
+    Serial.println("[ble] committing...");
     if (!chr_ctl->writeValue(&commit_action, 1, /*response=*/true)) {
         Serial.println("[ble] commit write FAILED (config may have applied though)");
         client->disconnect();
