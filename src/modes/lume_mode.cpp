@@ -365,13 +365,22 @@ void LumeMode::on_button_event(const ButtonPressEvent& ev) {
     // the BLE pairing window. The pre-Epic-20 group-cycle behaviour has
     // been removed entirely — it duplicated what BLE now covers cleanly
     // and was fighting for the same button gesture (bench 2026-09-19).
+    //
+    // Bench 2026-09-20: a second Btn1 LongPress WHILE pairing is active
+    // cancels the window (tears BLE down + returns to Lume operation).
+    // Gives the display-less operator a manual escape hatch — matches
+    // the StickC's B-hold-cancel + covers the "forgot to cancel + phone
+    // is stuck connected" case.
 #if NOCT_LUME_BLE_PAIR_GESTURE_ENABLED
     if (ev.id == ButtonId::Btn1
         && ev.kind == ButtonEvent::LongPressed
         && hal::HAL::display() == nullptr
-        && hal::HAL::led_strip() != nullptr
-        && !ble_pair_active_) {
-        enter_ble_pair();
+        && hal::HAL::led_strip() != nullptr) {
+        if (ble_pair_active_) {
+            exit_ble_pair();
+        } else {
+            enter_ble_pair();
+        }
         return;
     }
 #endif
@@ -1199,8 +1208,23 @@ void LumeMode::draw_ble_pair_led(uint32_t now) {
             break;
         case 0:
         default: {
-            // Open - slow blue pulse on pixel 0.
-            if (now >= ble_pair_led_next_edge_ms_) {
+            // Open, with two sub-states driven by the peer connection
+            // (bench 2026-09-20: operators need a visible cue that a
+            // Director / phone is actually talking to this Lume — the
+            // pulsing indicator alone doesn't distinguish "waiting" from
+            // "mid-write"):
+            //   client connected  -> pixel 0 SOLID blue (write in progress)
+            //   no client         -> pixel 0 slow-pulses blue (idle)
+            // Solid variant also serves as the "don't power-cycle me yet"
+            // hint during the ~1-3 s configure_lume blocking write.
+            if (ble::ble_service().client_connected()) {
+                if (!ble_pair_led_on_) {
+                    ble_pair_led_on_ = true;
+                    strip->clear();
+                    strip->set_pixel(0, 0, 0, kBlePairIntensity);
+                    strip->show();
+                }
+            } else if (now >= ble_pair_led_next_edge_ms_) {
                 ble_pair_led_on_          = !ble_pair_led_on_;
                 ble_pair_led_next_edge_ms_ = now + kBlePairPulseHalfPeriodMs;
                 strip->clear();
