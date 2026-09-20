@@ -151,6 +151,10 @@ public:
     uint32_t     seconds_remaining() const;
     bool         should_sleep()  const { return pairing_state_ == PairingState::Sleeping; }
     bool         write_seen()    const { return write_seen_; }
+    // True while a BLE central is connected to us. Set by NimBLE server
+    // callbacks; consumers use it for LED/screen "someone's talking"
+    // indication and the pairing-window pause (see tick()).
+    bool         client_connected() const { return client_connected_; }
 
     // Advertised name for the current begin() call. Format:
     //     NCTN-<Director|Lume>-<hex(bt_mac[3..5])>
@@ -169,6 +173,13 @@ public:
     // them without friend declarations; not for firmware external use.
     void on_pairing_control_write(uint8_t action);
     void on_config_write_success();
+    // Called from NimBLE server callbacks on client connect / disconnect.
+    // Pauses the pairing-window timeout while a client is talking to us
+    // (so a slow phone / laptop CLI walking the config doesn't fall off
+    // the window mid-write) and drives the "connected" LED / screen
+    // indication.
+    void on_client_connected();
+    void on_client_disconnected();
 
     // ---- BLE central role (Epic 20 B10) ----
     // Scan for NocturNation Lume peripherals for up to duration_ms.
@@ -213,6 +224,15 @@ private:
     PairingState pairing_state_ = PairingState::Closed;
     uint32_t     window_started_ms_ = 0;
     bool         write_seen_        = false;
+    // BLE-client-attached state (bench 2026-09-20: pairing window was
+    // firing timeout mid-config because the operator was still
+    // interacting with the phone / another Director). Track connect
+    // state so tick() can pause the timeout while a client is present.
+    bool         client_connected_  = false;
+    // Timestamp of the last disconnect so tick() can shift
+    // window_started_ms_ forward by the "connected" duration and give
+    // the operator the full window back once the client drops.
+    uint32_t     connected_at_ms_   = 0;
 
     // Central-role scan state (Epic 20 B10).
     ScanState      scan_state_       = ScanState::Idle;

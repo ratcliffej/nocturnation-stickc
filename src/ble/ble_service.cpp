@@ -380,6 +380,19 @@ public:
     }
 };
 
+// Server-level callbacks — receive connect / disconnect edges so the
+// service can pause its window timeout while a client is talking (bench
+// 2026-09-20: pairing window was firing timeout mid-config write).
+class ServerCallbacks : public NimBLEServerCallbacks {
+public:
+    void onConnect(NimBLEServer* /*srv*/) override {
+        ble_service().on_client_connected();
+    }
+    void onDisconnect(NimBLEServer* /*srv*/) override {
+        ble_service().on_client_disconnected();
+    }
+};
+
 // Static instances so the callback pointers stay valid for the service
 // lifetime. NimBLE holds the pointer — no ownership transfer.
 DeviceInfoCallbacks       s_cb_device_info;
@@ -387,6 +400,7 @@ ConfigCallbacks           s_cb_config;
 StatusCallbacks           s_cb_status;
 PairingControlCallbacks   s_cb_pair_ctrl;
 ShowPassthroughCallbacks  s_cb_show_pt;
+ServerCallbacks           s_cb_server;
 
 // Bench-observed 2026-09-19: `NimBLEDevice::deinit(clearAll=true)` on
 // end() reliably crashes + reboots the Stick when the operator cancels
@@ -421,6 +435,7 @@ bool BleService::begin(Role role, Host host, uint8_t pair_win_s) {
         }
 
         s_server = NimBLEDevice::createServer();
+        s_server->setCallbacks(&s_cb_server);
         NimBLEService* svc = s_server->createService(uuid::kService);
 
         s_char_device_info = svc->createCharacteristic(uuid::kDeviceInfo,
@@ -476,6 +491,10 @@ bool BleService::begin(Role role, Host host, uint8_t pair_win_s) {
     pairing_state_      = PairingState::Open;
     window_started_ms_  = ::millis();
     write_seen_         = false;
+    // Fresh session — reset connect-tracking state so a lingering flag
+    // from a previous session doesn't fool tick() into pausing forever.
+    client_connected_   = false;
+    connected_at_ms_    = 0;
     Serial.printf("[ble] up: name=%s uuid=%s window=%us\n",
                   adv_name_, uuid::kService, (unsigned)pair_win_s_);
     return true;
@@ -488,8 +507,10 @@ PairingState BleService::tick() {
     // If the client signalled commit/commit_and_sleep/abort, keep the
     // state as-is; the caller's UI acts on it. The Open→timeout path
     // auto-closes to Aborted so a walk-away operator doesn't leave a
-    // stray advertising session running.
-    if (pairing_state_ == PairingState::Open) {
+    // stray advertising session running — but PAUSED while a client
+    // is connected, so a phone/laptop walking the config isn't ejected
+    // mid-write (bench 2026-09-20).
+    if (pairing_state_ == PairingState::Open && !client_connected_) {
         const uint32_t elapsed_ms = ::millis() - window_started_ms_;
         if (elapsed_ms >= static_cast<uint32_t>(pair_win_s_) * 1000u) {
             pairing_state_ = PairingState::Aborted;
@@ -529,6 +550,8 @@ void BleService::end() {
     // fair trade for a crash-free cancel gesture.
     active_             = false;
     pairing_state_      = PairingState::Closed;
+    client_connected_   = false;
+    connected_at_ms_    = 0;
     Serial.println("[ble] down (advertising stopped; stack retained)");
 }
 
@@ -543,6 +566,26 @@ void BleService::on_pairing_control_write(uint8_t action) {
     Serial.printf("[ble] pair_ctrl action=0x%02X -> state=%u\n",
                   static_cast<unsigned>(action),
                   static_cast<unsigned>(pairing_state_));
+}
+
+void BleService::on_client_connected() {
+    client_connected_ = true;
+    connected_at_ms_  = ::millis();
+    Serial.println("[ble] client connected — window paused");
+}
+
+void BleService::on_client_disconnected() {
+    if (client_connected_ && pairing_state_ == PairingState::Open) {
+        // Shift the window origin forward by the "connected" duration so
+        // the operator gets the full remaining window back after the
+        // client drops. Guards against the client-flapping case where a
+        // phone connects, disconnects, connects again — the window
+        // pauses/resumes rather than accumulating drift.
+        const uint32_t connected_for = ::millis() - connected_at_ms_;
+        window_started_ms_ += connected_for;
+    }
+    client_connected_ = false;
+    Serial.println("[ble] client disconnected — window resumed");
 }
 
 void BleService::on_config_write_success() {
@@ -797,6 +840,14 @@ void BleService::on_pairing_control_write(uint8_t action) {
 }
 
 void BleService::on_config_write_success() { write_seen_ = true; }
+
+void BleService::on_client_connected() {
+    client_connected_ = true;
+    connected_at_ms_  = 0;
+}
+void BleService::on_client_disconnected() {
+    client_connected_ = false;
+}
 
 uint32_t BleService::seconds_remaining() const {
     return active_ && pairing_state_ == PairingState::Open ? pair_win_s_ : 0;

@@ -1792,14 +1792,23 @@ void ConfigMode::draw_ble_pair() {
             DAL::fire_display_show_text("local", DisplayShowTextEvent{
                 10, 48, nm, YELLOW, BLACK, 2});
 
-            char l3[28];
-            std::snprintf(l3, sizeof(l3), "Time: %us",
-                          (unsigned)svc.seconds_remaining());
-            DAL::fire_display_show_text("local", DisplayShowTextEvent{
-                10, 76, l3, WHITE, BLACK, 2});
-
-            DAL::fire_display_show_text("local", DisplayShowTextEvent{
-                10, 100, "Open your app to pair", WHITE, BLACK, 1});
+            if (svc.client_connected()) {
+                // Window is paused (see BleService::tick) while a
+                // client is attached — surface that so the operator
+                // knows the timeout won't fire mid-write.
+                DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                    10, 76, "Connected!", GREEN, BLACK, 2});
+                DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                    10, 100, "Config in progress...", WHITE, BLACK, 1});
+            } else {
+                char l3[28];
+                std::snprintf(l3, sizeof(l3), "Time: %us",
+                              (unsigned)svc.seconds_remaining());
+                DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                    10, 76, l3, WHITE, BLACK, 2});
+                DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                    10, 100, "Open your app to pair", WHITE, BLACK, 1});
+            }
             break;
         }
         case BlePairScreen::Success:
