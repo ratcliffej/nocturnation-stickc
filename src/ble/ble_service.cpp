@@ -457,10 +457,22 @@ bool BleService::begin(Role role, Host host, uint8_t pair_win_s) {
         svc->start();
 
         NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
-        adv->addServiceUUID(uuid::kService);
-        adv->setScanResponse(false);
         adv->setMinInterval(0x20);
         adv->setMaxInterval(0x40);
+        // Bench 2026-09-20: a 128-bit service UUID (18 bytes) plus a
+        // 16-char local name (18 bytes) plus flags (3 bytes) = 39 bytes,
+        // but a primary ADV packet caps at 31. NimBLE truncated the
+        // name to "NCTN-Lum" (Jason saw "TCTN-Lum" — same 8-char
+        // truncation with a display-side transcription slip). Fix:
+        // put the service UUID in the scan-response so the primary
+        // ADV carries only Flags + full Local Name (fits comfortably),
+        // and clients that need the UUID pick it up via the follow-up
+        // scan request. `isAdvertisingService()` on the discovering
+        // end combines both packets so filtering still works.
+        adv->setScanResponse(true);
+        NimBLEAdvertisementData scanResp;
+        scanResp.setCompleteServices(NimBLEUUID(uuid::kService));
+        adv->setScanResponseData(scanResp);
 
         s_stack_initialized = true;
     } else {
@@ -643,7 +655,13 @@ public:
             mac[0] = p[5]; mac[1] = p[4]; mac[2] = p[3];
             mac[3] = p[2]; mac[4] = p[1]; mac[5] = p[0];
         }
-        ble_service().on_scan_result(mac, name, dev->getRSSI());
+        // Bench 2026-09-20: capture the address TYPE too. Assuming
+        // BLE_ADDR_PUBLIC in configure_lume() would target a
+        // non-existent peer for any Lume advertising with a random-
+        // static address, which is common — ESP32 defaults to public
+        // for us, but the safer path is to echo whatever the peer
+        // announced.
+        ble_service().on_scan_result(mac, addr.getType(), name, dev->getRSSI());
     }
 };
 ScanCallbacks s_scan_callbacks;
@@ -700,13 +718,15 @@ void BleService::stop_scan() {
 }
 
 void BleService::on_scan_result(const uint8_t bt_mac[6],
+                                uint8_t addr_type,
                                 const char* adv_name,
                                 int8_t rssi) {
     // De-duplicate by MAC.
     for (size_t i = 0; i < discovered_count_; ++i) {
         if (std::memcmp(discovered_[i].bt_mac, bt_mac, 6) == 0) {
             // Refresh RSSI + adv_name in case it changed since first hit.
-            discovered_[i].rssi = rssi;
+            discovered_[i].rssi      = rssi;
+            discovered_[i].addr_type = addr_type;
             if (adv_name && adv_name[0]) {
                 std::strncpy(discovered_[i].adv_name, adv_name,
                              sizeof(discovered_[i].adv_name) - 1);
@@ -719,6 +739,7 @@ void BleService::on_scan_result(const uint8_t bt_mac[6],
 
     DiscoveredLume& slot = discovered_[discovered_count_];
     std::memcpy(slot.bt_mac, bt_mac, 6);
+    slot.addr_type = addr_type;
     if (adv_name && adv_name[0]) {
         std::strncpy(slot.adv_name, adv_name, sizeof(slot.adv_name) - 1);
         slot.adv_name[sizeof(slot.adv_name) - 1] = '\0';
@@ -732,8 +753,9 @@ void BleService::on_scan_result(const uint8_t bt_mac[6],
     slot.rssi  = rssi;
     slot.valid = true;
     ++discovered_count_;
-    Serial.printf("[ble] found %s rssi=%d (%u total)\n",
-                  slot.adv_name, (int)rssi, (unsigned)discovered_count_);
+    Serial.printf("[ble] found %s type=%u rssi=%d (%u total)\n",
+                  slot.adv_name, (unsigned)addr_type,
+                  (int)rssi, (unsigned)discovered_count_);
 }
 
 void BleService::on_scan_complete() {
@@ -750,12 +772,16 @@ ConfigureResult BleService::configure_lume(const DiscoveredLume& target,
     if (!bag_tlv || bag_len == 0) return ConfigureResult::WriteFailed;
 
     // Build the NimBLEAddress from our big-endian MAC (reverse for
-    // NimBLE's native little-endian format).
+    // NimBLE's native little-endian format). Use the address TYPE
+    // captured from the advertisement — assuming BLE_ADDR_PUBLIC here
+    // would target a non-existent peer whenever the Lume advertises
+    // with a random-static address (bench 2026-09-20: connections
+    // silently no-op'd on the Atom for this reason).
     uint8_t nimble_mac[6] = {
         target.bt_mac[5], target.bt_mac[4], target.bt_mac[3],
         target.bt_mac[2], target.bt_mac[1], target.bt_mac[0],
     };
-    NimBLEAddress addr(nimble_mac, BLE_ADDR_PUBLIC);
+    NimBLEAddress addr(nimble_mac, target.addr_type);
 
     NimBLEClient* client = NimBLEDevice::createClient();
     Serial.printf("[ble] connecting to %s...\n", target.adv_name);
@@ -869,6 +895,7 @@ bool BleService::start_scan(uint32_t /*duration_ms*/) {
 }
 void BleService::stop_scan() { scan_state_ = ScanState::Idle; }
 void BleService::on_scan_result(const uint8_t /*mac*/[6],
+                                uint8_t /*addr_type*/,
                                 const char* /*name*/,
                                 int8_t /*rssi*/) {}
 void BleService::on_scan_complete() { scan_state_ = ScanState::Done; }

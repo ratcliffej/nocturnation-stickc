@@ -98,7 +98,9 @@ enum class ScanState : uint8_t {
 
 // One discovered Lume peripheral (Epic 20 B10).
 struct DiscoveredLume {
-    uint8_t bt_mac[6];        // BLE peripheral address for connect()
+    uint8_t bt_mac[6];        // BLE peripheral address (big-endian, for display) for connect()
+    uint8_t addr_type;        // BLE_ADDR_PUBLIC / _RANDOM / etc. Captured from ADV so
+                              // configure_lume() rebuilds the correct NimBLEAddress.
     char    adv_name[24];     // Advertising name as seen on-air; NUL-terminated
     int8_t  rssi;             // Signal strength at last advertisement
     bool    valid;            // Slot occupied
@@ -199,6 +201,7 @@ public:
     // device into the list. Public for the same friend-avoidance
     // reason as the pairing callbacks.
     void on_scan_result(const uint8_t bt_mac[6],
+                        uint8_t addr_type,
                         const char* adv_name,
                         int8_t rssi);
     void on_scan_complete();
