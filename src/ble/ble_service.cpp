@@ -455,23 +455,13 @@ bool BleService::begin(Role role, Host host, uint8_t pair_win_s) {
 
         svc->start();
 
-        NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
-        adv->setMinInterval(0x20);
-        adv->setMaxInterval(0x40);
-        // Bench 2026-09-20: keep the service UUID in the primary ADV
-        // and skip the scan-response entirely. Previous attempt split
-        // UUID to scan-response (motivated by NCTN-Lume-XXXXXX name
-        // overflow), but that path left the StickC's central-role
-        // connect() timing out at 8 s with NimBLE status=13 — the
-        // Atom advertised but wasn't accepting connections. Now that
-        // the name is 8 chars ("NTNXXXXX"), the whole thing fits:
-        // Flags(3) + LocalName(2+8=10) + UUID(2+16=18) = 31 bytes,
-        // exactly at the primary ADV cap.
-        adv->setScanResponse(false);
-        adv->addServiceUUID(NimBLEUUID(uuid::kService));
-        // Explicit connectable-undirected mode so there's no ambiguity
-        // about whether central-role peers can connect.
-        adv->setAdvertisementType(BLE_GAP_CONN_MODE_UND);
+        NimBLEAdvertising* adv0 = NimBLEDevice::getAdvertising();
+        adv0->setMinInterval(0x20);
+        adv0->setMaxInterval(0x40);
+        adv0->setScanResponse(false);
+        // Explicit connectable-undirected mode so there's zero
+        // ambiguity about whether central-role peers can connect.
+        adv0->setAdvertisementType(BLE_GAP_CONN_MODE_UND);
 
         s_stack_initialized = true;
     } else {
@@ -488,11 +478,23 @@ bool BleService::begin(Role role, Host host, uint8_t pair_win_s) {
     // next one.
     compose_adv_name(adv_name_, sizeof(adv_name_), bt_mac_);
     NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
-    adv->setName(adv_name_);
+    // Bench 2026-09-20: build the primary ADV explicitly rather than
+    // relying on NimBLE's auto-composer. Previous attempts using
+    // setName()+addServiceUUID() left status=13 connect timeouts on
+    // the central side — the peripheral advertised but wasn't
+    // accepting connections. Hand-composing forces every AD element
+    // and the connectable flag into a known-good state.
+    NimBLEAdvertisementData advData;
+    advData.setFlags(BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP);
+    advData.setName(adv_name_);
+    advData.setCompleteServices(NimBLEUUID(uuid::kService));
+    adv->setAdvertisementData(advData);
+    adv->setName(adv_name_);   // belt-and-braces: also set the top-level name
     if (!adv->start()) {
         Serial.println("[ble] advertising start FAILED");
         return false;
     }
+    Serial.println("[ble] adv started with explicit ADV data (bench 2026-09-20 v3)");
 
     active_             = true;
     pairing_state_      = PairingState::Open;
