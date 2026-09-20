@@ -1127,6 +1127,19 @@ void LumeMode::enter_ble_pair() {
         strip->show();
     }
 
+    // Bench 2026-09-20: shut ESP-NOW / WiFi down before bringing BLE
+    // up. Both share the 2.4 GHz radio on the ESP32 and while
+    // coexistence is officially supported, an active WiFi STA + live
+    // ESP-NOW receive path was starving BLE's connection-request
+    // window — the StickC's central-role connect() attempt kept
+    // timing out. During pairing the Lume ignores ESP-NOW frames
+    // anyway (loop_tick early-returns), so tearing the radio down is
+    // free. Restored in exit_ble_pair below.
+    if (radio_active_) {
+        if (auto* radio = hal::HAL::esp_now()) radio->end();
+        radio_active_ = false;
+    }
+
     // Fire up BLE with the Lume role + compile-time host id.
 #ifndef NOCT_BLE_HOST_ID
 #define NOCT_BLE_HOST_ID 0x01
@@ -1136,7 +1149,7 @@ void LumeMode::enter_ble_pair() {
         static_cast<ble::Host>(NOCT_BLE_HOST_ID),
         persistence::load_pair_win_s());
 #ifdef ARDUINO
-    Serial.println("[lume] BLE pairing window OPEN");
+    Serial.println("[lume] BLE pairing window OPEN (ESP-NOW paused)");
 #endif
 }
 
@@ -1150,8 +1163,16 @@ void LumeMode::exit_ble_pair() {
         strip->clear();
         strip->show();
     }
+    // Restore ESP-NOW receive so the Lume resumes normal operation.
+    if (auto* radio = hal::HAL::esp_now()) {
+        radio->set_recv_callback([this](const hal::ESPNowMessage& m) {
+            this->on_recv(m);
+        });
+        radio_active_ = radio->begin(current_listen_chan_);
+    }
 #ifdef ARDUINO
-    Serial.println("[lume] BLE pairing window CLOSED");
+    Serial.printf("[lume] BLE pairing window CLOSED (ESP-NOW %s)\n",
+                  radio_active_ ? "resumed" : "resume FAILED");
 #endif
 }
 
