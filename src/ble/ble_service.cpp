@@ -788,11 +788,31 @@ ConfigureResult BleService::configure_lume(const DiscoveredLume& target,
     };
     NimBLEAddress addr(nimble_mac, target.addr_type);
 
+    // Bench 2026-09-21: ensure the scan session is fully released
+    // before initiating a connection. NimBLE-Arduino's blocking-scan
+    // returns when the duration expires but the host-side scan state
+    // can linger for another controller cycle; a connect attempted
+    // during that window silently no-ops on ESP32-to-ESP32 links.
+    if (auto* scan = NimBLEDevice::getScan()) {
+        scan->stop();
+        scan->clearResults();
+    }
+    delay(100);
+
     NimBLEClient* client = NimBLEDevice::createClient();
-    // Explicit timeout so a stuck peer doesn't wedge the UI for the
-    // full 30 s NimBLE default. 8 s is enough for a healthy connect
-    // and short enough that a bench operator sees the failure quickly.
-    client->setConnectTimeout(8);
+    if (!client) {
+        Serial.println("[ble] createClient returned null");
+        return ConfigureResult::ConnectFailed;
+    }
+    // Explicit connection parameters. ESP32-to-ESP32 links routinely
+    // fail to negotiate if we leave everything at NimBLE defaults;
+    // the controller times out before the peer settles on a slot.
+    // 24 * 1.25 ms = 30 ms interval, 0 latency, 2000 ms supervision.
+    client->setConnectionParams(24, 24, 0, 200);
+    // Bump the connect timeout to 15 s: an ESP32 peripheral coming
+    // out of an active advertising cycle can take up to ~10 s to
+    // acknowledge the first connect request when the phy is contended.
+    client->setConnectTimeout(15);
     Serial.printf("[ble] connecting to %s (type=%u)...\n",
                   target.adv_name, (unsigned)target.addr_type);
     const uint32_t t_connect_start = ::millis();
