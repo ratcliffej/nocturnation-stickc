@@ -1146,6 +1146,13 @@ void LumeMode::enter_ble_pair() {
         radio_active_ = false;
     }
 
+    // Bench 2026-09-21: silence the DAL's LedStripDriver for the
+    // duration of the pairing window. Its loop_tick() otherwise
+    // renders every ~20 ms and overwrites the blue pulse we paint
+    // in draw_ble_pair_led — visible on the Atom as a completely
+    // dark onboard LED during pairing.
+    DAL::set_driver_enabled("led-strip", false);
+
     // Fire up BLE with the Lume role + compile-time host id.
 #ifndef NOCT_BLE_HOST_ID
 #define NOCT_BLE_HOST_ID 0x01
@@ -1169,6 +1176,9 @@ void LumeMode::exit_ble_pair() {
         strip->clear();
         strip->show();
     }
+    // Re-enable the DAL LED strip renderer (paused for the pairing
+    // window in enter_ble_pair) so subsequent washes render again.
+    DAL::set_driver_enabled("led-strip", true);
     // Restore ESP-NOW receive so the Lume resumes normal operation.
     if (auto* radio = hal::HAL::esp_now()) {
         radio->set_recv_callback([this](const hal::ESPNowMessage& m) {
