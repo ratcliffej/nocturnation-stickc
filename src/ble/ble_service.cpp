@@ -776,16 +776,16 @@ ConfigureResult BleService::configure_lume(const DiscoveredLume& target,
                                            size_t bag_len) {
     if (!bag_tlv || bag_len == 0) return ConfigureResult::WriteFailed;
 
-    // Build the NimBLEAddress from our big-endian MAC (reverse for
-    // NimBLE's native little-endian format). Use the address TYPE
-    // captured from the advertisement — assuming BLE_ADDR_PUBLIC here
-    // would target a non-existent peer whenever the Lume advertises
-    // with a random-static address (bench 2026-09-20: connections
-    // silently no-op'd on the Atom for this reason).
-    uint8_t nimble_mac[6] = {
-        target.bt_mac[5], target.bt_mac[4], target.bt_mac[3],
-        target.bt_mac[2], target.bt_mac[1], target.bt_mac[0],
-    };
+    // Build the NimBLEAddress from our big-endian MAC. NimBLE's
+    // NimBLEAddress(uint8_t[6], type) constructor already reverses
+    // the input into its little-endian internal storage, so pass
+    // target.bt_mac (MSB first) directly. Bench 2026-09-21 bug: we
+    // were pre-reversing, so the constructor's built-in reverse
+    // ended up storing MSB-first bytes while NimBLE compares LSB-
+    // first — memcmp in getDevice() always missed and the raw
+    // connect() sent a bit-reversed CONNECT_REQ PDU (15 s timeout).
+    uint8_t nimble_mac[6];
+    std::memcpy(nimble_mac, target.bt_mac, 6);
     // Bench 2026-09-21: re-scan for the target immediately before
     // connect and drive connect() via the NimBLEAdvertisedDevice
     // pointer instead of a raw NimBLEAddress. Motivation:
