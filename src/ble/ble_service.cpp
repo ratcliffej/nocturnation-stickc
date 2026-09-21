@@ -786,18 +786,43 @@ ConfigureResult BleService::configure_lume(const DiscoveredLume& target,
         target.bt_mac[5], target.bt_mac[4], target.bt_mac[3],
         target.bt_mac[2], target.bt_mac[1], target.bt_mac[0],
     };
+    // Bench 2026-09-21: re-scan for the target immediately before
+    // connect and drive connect() via the NimBLEAdvertisedDevice
+    // pointer instead of a raw NimBLEAddress. Motivation:
+    //   1. Verifies the peer is still advertising right now (if the
+    //      operator picked group + hit Write after the Atom's pairing
+    //      window already closed, the earlier connect() would time
+    //      out silently — this returns a clear ConnectFailed with a
+    //      "not advertising" log line).
+    //   2. connect(NimBLEAdvertisedDevice*) is the more reliable
+    //      overload on NimBLE-Arduino: it preserves the raw ADV
+    //      context (own_addr_type, adv address type flags) the
+    //      controller uses to build the CONNECT_REQ PDU. The raw
+    //      (address, addr_type) overload has been failing ESP32-to-
+    //      ESP32 with status=13 at full timeout — bench evidence.
     NimBLEAddress addr(nimble_mac, target.addr_type);
 
-    // Bench 2026-09-21: ensure the scan session is fully released
-    // before initiating a connection. NimBLE-Arduino's blocking-scan
-    // returns when the duration expires but the host-side scan state
-    // can linger for another controller cycle; a connect attempted
-    // during that window silently no-ops on ESP32-to-ESP32 links.
     if (auto* scan = NimBLEDevice::getScan()) {
         scan->stop();
         scan->clearResults();
     }
     delay(100);
+
+    Serial.printf("[ble] re-scanning to re-acquire %s...\n", target.adv_name);
+    NimBLEScan* scan = NimBLEDevice::getScan();
+    scan->setActiveScan(true);
+    scan->setInterval(0x50);
+    scan->setWindow(0x30);
+    NimBLEScanResults results = scan->start(3, /*is_continue=*/false);
+    scan->stop();
+
+    NimBLEAdvertisedDevice* adv_dev = results.getDevice(addr);
+    if (!adv_dev) {
+        Serial.println("[ble] target not seen in re-scan — pairing window closed?");
+        return ConfigureResult::ConnectFailed;
+    }
+    Serial.printf("[ble] re-acquired %s (rssi=%d)\n",
+                  target.adv_name, (int)adv_dev->getRSSI());
 
     NimBLEClient* client = NimBLEDevice::createClient();
     if (!client) {
@@ -809,17 +834,11 @@ ConfigureResult BleService::configure_lume(const DiscoveredLume& target,
     // the controller times out before the peer settles on a slot.
     // 24 * 1.25 ms = 30 ms interval, 0 latency, 2000 ms supervision.
     client->setConnectionParams(24, 24, 0, 200);
-    // Bump the connect timeout to 15 s: an ESP32 peripheral coming
-    // out of an active advertising cycle can take up to ~10 s to
-    // acknowledge the first connect request when the phy is contended.
     client->setConnectTimeout(15);
     Serial.printf("[ble] connecting to %s (type=%u)...\n",
                   target.adv_name, (unsigned)target.addr_type);
     const uint32_t t_connect_start = ::millis();
-    // Pass deleteAttribute=true so any cached GATT state from a
-    // previous session is discarded — safer than reusing potentially-
-    // stale attribute handles across pairing cycles.
-    if (!client->connect(addr, /*deleteAttribute=*/true)) {
+    if (!client->connect(adv_dev, /*deleteAttribute=*/true)) {
         Serial.printf("[ble] connect FAILED after %lu ms\n",
                       (unsigned long)(::millis() - t_connect_start));
         NimBLEDevice::deleteClient(client);
