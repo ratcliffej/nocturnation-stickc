@@ -455,16 +455,38 @@ private:
         Scanning    = 0,  // 5 s scan window; list builds
         Empty       = 1,  // scan done, no Lumes found
         Browsing    = 2,  // list of discovered Lumes; operator picks one
-        Editing     = 3,  // group editor for the selected Lume
-        Writing     = 4,  // brief spinner while configure_lume runs
-        Success     = 5,  // "Written!" flash -> Browsing
-        Failed      = 6,  // "Failed" flash -> Browsing (err text next to it)
+        Reading     = 3,  // B11: connect + read current config bag
+        Editing     = 4,  // group editor pre-populated from the read (B11)
+        Writing     = 5,  // brief spinner while configure_lume runs
+        Success     = 6,  // "Written!" flash -> Browsing
+        Failed      = 7,  // "Failed" flash -> Browsing (err text next to it)
+        ReadFailed  = 8,  // B11: read on selection failed; flash + return
     };
     ConfigLumesScreen cl_screen_        = ConfigLumesScreen::Scanning;
     size_t            cl_selected_      = 0;   // index into ble_service().discovered()
     uint8_t           cl_edit_group_    = 0;   // value being cycled in the editor
     uint32_t          cl_return_after_  = 0;   // linger + auto-return for flash states
     uint8_t           cl_last_error_    = 0;   // ConfigureResult from the last write
+
+public:
+    // Snapshot of the selected Lume's current property bag, populated on
+    // Browsing -> Reading -> Editing transition (Epic 20 B11). All fields
+    // are echoed back into the write on commit so unchanged keys are
+    // preserved verbatim ("full-set write" per B11 design). Public so
+    // the anonymous-namespace decode callback in config_mode.cpp can
+    // reach it via a void* — not intended for external firmware use.
+    struct LumeCurrent {
+        uint8_t  group;
+        uint8_t  led_power;
+        uint8_t  channel_pref;
+        uint16_t strip_chain;
+        uint8_t  strip_group_size;
+        uint8_t  pair_win_s;
+        char     friendly_name[21];   // ≤20 chars + NUL
+        bool     has_friendly_name;
+    };
+private:
+    LumeCurrent cl_current_ = {};
 
     static const char* mode_label_short(ModeId m);
 

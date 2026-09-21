@@ -1851,6 +1851,44 @@ namespace {
 constexpr uint8_t kConfigLumesGroupMax = 6;
 constexpr uint32_t kConfigLumesScanMs   = 5000;
 constexpr uint32_t kConfigLumesFlashMs  = 1200;
+
+// TLV decoder callback: populate ConfigMode::LumeCurrent from a
+// property bag read back off a Lume's config characteristic (B11).
+// Unknown keys are ignored (forward-compat), value-type mismatches
+// on known keys are silently skipped rather than aborting the walk.
+bool populate_current(const ble::TlvEntry& e, void* raw_ctx) {
+    auto* cur = static_cast<ConfigMode::LumeCurrent*>(raw_ctx);
+    char keybuf[32] = {};
+    const size_t klen = e.key_len < sizeof(keybuf) - 1 ? e.key_len : sizeof(keybuf) - 1;
+    std::memcpy(keybuf, e.key, klen);
+    keybuf[klen] = '\0';
+
+    auto u8 = [&](uint8_t& out) {
+        if (e.type == ble::ValueType::U8 && e.value_len == 1 && e.value) {
+            out = e.value[0];
+        }
+    };
+    if (std::strcmp(keybuf, ble::key::kGroup) == 0)          { u8(cur->group); }
+    else if (std::strcmp(keybuf, ble::key::kLedPower) == 0)  { u8(cur->led_power); }
+    else if (std::strcmp(keybuf, ble::key::kChannelPref) == 0) { u8(cur->channel_pref); }
+    else if (std::strcmp(keybuf, ble::key::kStripGroupSize) == 0) { u8(cur->strip_group_size); }
+    else if (std::strcmp(keybuf, ble::key::kPairWinS) == 0)  { u8(cur->pair_win_s); }
+    else if (std::strcmp(keybuf, ble::key::kStripChain) == 0) {
+        if (e.type == ble::ValueType::U16 && e.value_len == 2 && e.value) {
+            cur->strip_chain = static_cast<uint16_t>(e.value[0])
+                             | (static_cast<uint16_t>(e.value[1]) << 8);
+        }
+    } else if (std::strcmp(keybuf, ble::key::kFriendlyName) == 0) {
+        if (e.type == ble::ValueType::Utf8 && e.value) {
+            const size_t n = e.value_len < sizeof(cur->friendly_name) - 1
+                             ? e.value_len : sizeof(cur->friendly_name) - 1;
+            std::memcpy(cur->friendly_name, e.value, n);
+            cur->friendly_name[n] = '\0';
+            cur->has_friendly_name = (n > 0);
+        }
+    }
+    return true;
+}
 }  // namespace
 
 void ConfigMode::enter_config_lumes() {
@@ -1911,8 +1949,28 @@ void ConfigMode::handle_config_lumes(const ButtonPressEvent& ev) {
                 cl_selected_ = (cl_selected_ + 1) % svc.discovered_count();
                 draw();
             } else if (ev.id == ButtonId::Btn1) {
+                // B11: connect + read the current bag before opening
+                // the editor. Blocks ~500 ms; the Reading screen shows
+                // a spinner while we're on the BLE link.
+                cl_screen_ = ConfigLumesScreen::Reading;
+                draw();
+                cl_current_ = LumeCurrent{};
+                uint8_t bag[240] = {};
+                size_t  bag_len   = sizeof(bag);
+                const auto& target = svc.discovered()[cl_selected_];
+                const auto rr = ble::ble_service().read_lume_config(
+                    target, bag, bag_len);
+                if (rr != ble::ConfigureResult::Ok || bag_len == 0) {
+                    cl_last_error_    = static_cast<uint8_t>(rr);
+                    cl_screen_        = ConfigLumesScreen::ReadFailed;
+                    cl_return_after_  = millis() + kConfigLumesFlashMs;
+                    draw();
+                    break;
+                }
+                ble::decode_property_bag(bag, bag_len, populate_current,
+                                          &cl_current_);
+                cl_edit_group_ = cl_current_.group;
                 cl_screen_     = ConfigLumesScreen::Editing;
-                cl_edit_group_ = 0;   // start at broadcast-only
                 draw();
             }
             break;
@@ -1924,10 +1982,23 @@ void ConfigMode::handle_config_lumes(const ButtonPressEvent& ev) {
             } else if (ev.id == ButtonId::Btn1) {
                 cl_screen_ = ConfigLumesScreen::Writing;
                 draw();
-                // Build a single-entry property bag: { group: u8 }.
-                uint8_t bag[16] = {};
+                // B11: write the FULL property bag back — every key we
+                // read is echoed verbatim, only `group` reflects the
+                // operator's edit. This preserves fields the current
+                // menu doesn't expose (led_power, strip_chain, …) so
+                // Config Lumes never silently reverts them to defaults.
+                uint8_t bag[240] = {};
                 ble::TlvEncoder enc(bag, sizeof(bag));
-                enc.add_u8(ble::key::kGroup, cl_edit_group_);
+                enc.add_u8 (ble::key::kGroup,          cl_edit_group_);
+                enc.add_u8 (ble::key::kLedPower,       cl_current_.led_power);
+                enc.add_u8 (ble::key::kChannelPref,    cl_current_.channel_pref);
+                enc.add_u16(ble::key::kStripChain,     cl_current_.strip_chain);
+                enc.add_u8 (ble::key::kStripGroupSize, cl_current_.strip_group_size);
+                enc.add_u8 (ble::key::kPairWinS,       cl_current_.pair_win_s);
+                if (cl_current_.has_friendly_name) {
+                    enc.add_utf8(ble::key::kFriendlyName,
+                                  cl_current_.friendly_name);
+                }
                 const auto& target = svc.discovered()[cl_selected_];
                 const auto result = ble::ble_service().configure_lume(
                     target, bag, enc.size());
@@ -1941,10 +2012,13 @@ void ConfigMode::handle_config_lumes(const ButtonPressEvent& ev) {
                 draw();
             }
             break;
+        case ConfigLumesScreen::Reading:
         case ConfigLumesScreen::Writing:
         case ConfigLumesScreen::Success:
         case ConfigLumesScreen::Failed:
-            // Terminal states; loop_tick will auto-return.
+        case ConfigLumesScreen::ReadFailed:
+            // Terminal / in-flight states; loop_tick will auto-return
+            // (Reading returns via the synchronous read call above).
             break;
     }
 }
@@ -1994,19 +2068,42 @@ void ConfigMode::draw_config_lumes() {
                 WHITE, BLACK, 1});
             break;
         }
+        case ConfigLumesScreen::Reading:
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 50, "Reading...", WHITE, BLACK, 2});
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 76, "(fetching current)", WHITE, BLACK, 1});
+            break;
         case ConfigLumesScreen::Editing: {
             char line1[32];
             std::snprintf(line1, sizeof(line1), "%s",
                           svc.discovered()[cl_selected_].adv_name);
             DAL::fire_display_show_text("local", DisplayShowTextEvent{
                 10, 32, line1, WHITE, BLACK, 2});
+            // Show the edited value plus the original (from the read)
+            // so the operator sees the delta at a glance.
             char line2[32];
-            std::snprintf(line2, sizeof(line2), "Group: %u",
-                          (unsigned)cl_edit_group_);
+            if (cl_edit_group_ == cl_current_.group) {
+                std::snprintf(line2, sizeof(line2), "Group: %u",
+                              (unsigned)cl_edit_group_);
+            } else {
+                std::snprintf(line2, sizeof(line2), "Group: %u (was %u)",
+                              (unsigned)cl_edit_group_,
+                              (unsigned)cl_current_.group);
+            }
             DAL::fire_display_show_text("local", DisplayShowTextEvent{
                 10, 58, line2, YELLOW, BLACK, 2});
+            // Second line surfaces the other read-back values so the
+            // operator knows what the full-set write will echo back.
+            char line3[32];
+            std::snprintf(line3, sizeof(line3), "LED %u%%  ch%u  chain%u",
+                          (unsigned)cl_current_.led_power,
+                          (unsigned)cl_current_.channel_pref,
+                          (unsigned)cl_current_.strip_chain);
             DAL::fire_display_show_text("local", DisplayShowTextEvent{
-                10, 90, "B: cycle  A: write", WHITE, BLACK, 1});
+                10, 86, line3, WHITE, BLACK, 1});
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 100, "B: cycle  A: write", WHITE, BLACK, 1});
             DAL::fire_display_show_text("local", DisplayShowTextEvent{
                 10, 122, "B-hold: back to list", WHITE, BLACK, 1});
             break;
@@ -2021,15 +2118,18 @@ void ConfigMode::draw_config_lumes() {
             DAL::fire_display_show_text("local", DisplayShowTextEvent{
                 10, 50, "Written!", GREEN, BLACK, 2});
             break;
-        case ConfigLumesScreen::Failed: {
+        case ConfigLumesScreen::Failed:
+        case ConfigLumesScreen::ReadFailed: {
+            const bool read_side = (cl_screen_ == ConfigLumesScreen::ReadFailed);
             DAL::fire_display_show_text("local", DisplayShowTextEvent{
-                10, 40, "Failed", RED, BLACK, 2});
+                10, 40, read_side ? "Read failed" : "Failed",
+                RED, BLACK, 2});
             const char* reason = "unknown";
             switch (cl_last_error_) {
                 case 1: reason = "connect failed";  break;
                 case 2: reason = "service missing"; break;
                 case 3: reason = "char missing";    break;
-                case 4: reason = "write refused";   break;
+                case 4: reason = "read/write refused";   break;
                 case 5: reason = "commit refused";  break;
             }
             DAL::fire_display_show_text("local", DisplayShowTextEvent{
