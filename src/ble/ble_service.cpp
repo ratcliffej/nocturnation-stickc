@@ -458,20 +458,20 @@ bool BleService::begin(Role role, Host host, uint8_t pair_win_s) {
         NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
         adv->setMinInterval(0x20);
         adv->setMaxInterval(0x40);
-        // Bench 2026-09-20: a 128-bit service UUID (18 bytes) plus a
-        // 16-char local name (18 bytes) plus flags (3 bytes) = 39 bytes,
-        // but a primary ADV packet caps at 31. NimBLE truncated the
-        // name to "NCTN-Lum" (Jason saw "TCTN-Lum" — same 8-char
-        // truncation with a display-side transcription slip). Fix:
-        // put the service UUID in the scan-response so the primary
-        // ADV carries only Flags + full Local Name (fits comfortably),
-        // and clients that need the UUID pick it up via the follow-up
-        // scan request. `isAdvertisingService()` on the discovering
-        // end combines both packets so filtering still works.
-        adv->setScanResponse(true);
-        NimBLEAdvertisementData scanResp;
-        scanResp.setCompleteServices(NimBLEUUID(uuid::kService));
-        adv->setScanResponseData(scanResp);
+        // Bench 2026-09-20: keep the service UUID in the primary ADV
+        // and skip the scan-response entirely. Previous attempt split
+        // UUID to scan-response (motivated by NCTN-Lume-XXXXXX name
+        // overflow), but that path left the StickC's central-role
+        // connect() timing out at 8 s with NimBLE status=13 — the
+        // Atom advertised but wasn't accepting connections. Now that
+        // the name is 8 chars ("NTNXXXXX"), the whole thing fits:
+        // Flags(3) + LocalName(2+8=10) + UUID(2+16=18) = 31 bytes,
+        // exactly at the primary ADV cap.
+        adv->setScanResponse(false);
+        adv->addServiceUUID(NimBLEUUID(uuid::kService));
+        // Explicit connectable-undirected mode so there's no ambiguity
+        // about whether central-role peers can connect.
+        adv->setAdvertisementType(BLE_GAP_CONN_MODE_UND);
 
         s_stack_initialized = true;
     } else {
@@ -776,30 +776,69 @@ ConfigureResult BleService::configure_lume(const DiscoveredLume& target,
                                            size_t bag_len) {
     if (!bag_tlv || bag_len == 0) return ConfigureResult::WriteFailed;
 
-    // Build the NimBLEAddress from our big-endian MAC (reverse for
-    // NimBLE's native little-endian format). Use the address TYPE
-    // captured from the advertisement — assuming BLE_ADDR_PUBLIC here
-    // would target a non-existent peer whenever the Lume advertises
-    // with a random-static address (bench 2026-09-20: connections
-    // silently no-op'd on the Atom for this reason).
-    uint8_t nimble_mac[6] = {
-        target.bt_mac[5], target.bt_mac[4], target.bt_mac[3],
-        target.bt_mac[2], target.bt_mac[1], target.bt_mac[0],
-    };
+    // Build the NimBLEAddress from our big-endian MAC. NimBLE's
+    // NimBLEAddress(uint8_t[6], type) constructor already reverses
+    // the input into its little-endian internal storage, so pass
+    // target.bt_mac (MSB first) directly. Bench 2026-09-21 bug: we
+    // were pre-reversing, so the constructor's built-in reverse
+    // ended up storing MSB-first bytes while NimBLE compares LSB-
+    // first — memcmp in getDevice() always missed and the raw
+    // connect() sent a bit-reversed CONNECT_REQ PDU (15 s timeout).
+    uint8_t nimble_mac[6];
+    std::memcpy(nimble_mac, target.bt_mac, 6);
+    // Bench 2026-09-21: re-scan for the target immediately before
+    // connect and drive connect() via the NimBLEAdvertisedDevice
+    // pointer instead of a raw NimBLEAddress. Motivation:
+    //   1. Verifies the peer is still advertising right now (if the
+    //      operator picked group + hit Write after the Atom's pairing
+    //      window already closed, the earlier connect() would time
+    //      out silently — this returns a clear ConnectFailed with a
+    //      "not advertising" log line).
+    //   2. connect(NimBLEAdvertisedDevice*) is the more reliable
+    //      overload on NimBLE-Arduino: it preserves the raw ADV
+    //      context (own_addr_type, adv address type flags) the
+    //      controller uses to build the CONNECT_REQ PDU. The raw
+    //      (address, addr_type) overload has been failing ESP32-to-
+    //      ESP32 with status=13 at full timeout — bench evidence.
     NimBLEAddress addr(nimble_mac, target.addr_type);
 
+    if (auto* scan = NimBLEDevice::getScan()) {
+        scan->stop();
+        scan->clearResults();
+    }
+    delay(100);
+
+    Serial.printf("[ble] re-scanning to re-acquire %s...\n", target.adv_name);
+    NimBLEScan* scan = NimBLEDevice::getScan();
+    scan->setActiveScan(true);
+    scan->setInterval(0x50);
+    scan->setWindow(0x30);
+    NimBLEScanResults results = scan->start(3, /*is_continue=*/false);
+    scan->stop();
+
+    NimBLEAdvertisedDevice* adv_dev = results.getDevice(addr);
+    if (!adv_dev) {
+        Serial.println("[ble] target not seen in re-scan — pairing window closed?");
+        return ConfigureResult::ConnectFailed;
+    }
+    Serial.printf("[ble] re-acquired %s (rssi=%d)\n",
+                  target.adv_name, (int)adv_dev->getRSSI());
+
     NimBLEClient* client = NimBLEDevice::createClient();
-    // Explicit timeout so a stuck peer doesn't wedge the UI for the
-    // full 30 s NimBLE default. 8 s is enough for a healthy connect
-    // and short enough that a bench operator sees the failure quickly.
-    client->setConnectTimeout(8);
+    if (!client) {
+        Serial.println("[ble] createClient returned null");
+        return ConfigureResult::ConnectFailed;
+    }
+    // Explicit connection parameters. ESP32-to-ESP32 links routinely
+    // fail to negotiate if we leave everything at NimBLE defaults;
+    // the controller times out before the peer settles on a slot.
+    // 24 * 1.25 ms = 30 ms interval, 0 latency, 2000 ms supervision.
+    client->setConnectionParams(24, 24, 0, 200);
+    client->setConnectTimeout(15);
     Serial.printf("[ble] connecting to %s (type=%u)...\n",
                   target.adv_name, (unsigned)target.addr_type);
     const uint32_t t_connect_start = ::millis();
-    // Pass deleteAttribute=true so any cached GATT state from a
-    // previous session is discarded — safer than reusing potentially-
-    // stale attribute handles across pairing cycles.
-    if (!client->connect(addr, /*deleteAttribute=*/true)) {
+    if (!client->connect(adv_dev, /*deleteAttribute=*/true)) {
         Serial.printf("[ble] connect FAILED after %lu ms\n",
                       (unsigned long)(::millis() - t_connect_start));
         NimBLEDevice::deleteClient(client);
