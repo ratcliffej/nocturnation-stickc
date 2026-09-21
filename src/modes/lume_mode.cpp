@@ -1133,25 +1133,18 @@ void LumeMode::enter_ble_pair() {
         strip->show();
     }
 
-    // Bench 2026-09-20: shut ESP-NOW / WiFi down before bringing BLE
-    // up. Both share the 2.4 GHz radio on the ESP32 and while
-    // coexistence is officially supported, an active WiFi STA + live
-    // ESP-NOW receive path was starving BLE's connection-request
-    // window — the StickC's central-role connect() attempt kept
-    // timing out. During pairing the Lume ignores ESP-NOW frames
-    // anyway (loop_tick early-returns), so tearing the radio down is
-    // free. Restored in exit_ble_pair below.
+    // Bench 2026-09-21: pause ESP-NOW during pairing so it doesn't
+    // fight BLE for the 2.4 GHz radio. Deliberately DO NOT touch
+    // WiFi.mode(WIFI_OFF) — bench evidence: the previous WIFI_OFF
+    // path left the Atom's BLE controller unable to actually
+    // transmit (advertising "started" per NimBLE but the device was
+    // invisible to LightBlue) and corrupted state so re-entering
+    // pairing crashed. The StickC's Config > BLE Pair path never
+    // touches WiFi and works cleanly; matching that here.
     if (radio_active_) {
         if (auto* radio = hal::HAL::esp_now()) radio->end();
         radio_active_ = false;
     }
-#ifdef ARDUINO
-    // ESPNowAtomLite::end() only calls esp_now_deinit() — WiFi STA
-    // stays up, which continues to steal 2.4 GHz airtime from BLE.
-    // Explicit WIFI_OFF releases the radio entirely so BLE gets a
-    // clean coexistence slot for the whole pairing window.
-    WiFi.mode(WIFI_OFF);
-#endif
 
     // Fire up BLE with the Lume role + compile-time host id.
 #ifndef NOCT_BLE_HOST_ID
