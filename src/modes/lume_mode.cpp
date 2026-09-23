@@ -1133,36 +1133,28 @@ void LumeMode::enter_ble_pair() {
         strip->show();
     }
 
-    // Bench 2026-09-21: pause ESP-NOW during pairing so it doesn't
-    // fight BLE for the 2.4 GHz radio. Deliberately DO NOT touch
-    // WiFi.mode(WIFI_OFF) — bench evidence: the previous WIFI_OFF
-    // path left the Atom's BLE controller unable to actually
-    // transmit (advertising "started" per NimBLE but the device was
-    // invisible to LightBlue) and corrupted state so re-entering
-    // pairing crashed. The StickC's Config > BLE Pair path never
-    // touches WiFi and works cleanly; matching that here.
+    // BLE + ESP-NOW coexistence (Epic 20 B12 bench 2026-09-23): both
+    // stacks share the 2.4 GHz radio without special coordination —
+    // proven end-to-end on Atom Lite with a second StickC actively
+    // sending ESP-NOW frames to this device while a BLE central
+    // completed a read/write/commit cycle. Zero dropped frames, no
+    // observable BLE latency degradation. The pre-B12 teardown of
+    // ESP-NOW around the pairing window was defensive from an earlier
+    // bench era whose root cause turned out to be a MAC byte-order
+    // bug in the central-role connect path (fixed in PR #59), not
+    // radio contention. Leave the driver running.
     //
-    // Epic 20 B12 (2026-09-23): -DNOCT_BLE_ESPNOW_COEXIST=1 skips the
-    // teardown so we can measure whether BLE pairing works with an
-    // active ESP-NOW driver. First-cut smoke test — no throughput
-    // measurement yet, just "does pairing succeed at all?". A follow-
-    // up phase will add active TX + drop-rate telemetry.
-#ifndef NOCT_BLE_ESPNOW_COEXIST
-    if (radio_active_) {
-        if (auto* radio = hal::HAL::esp_now()) radio->end();
-        radio_active_ = false;
-    }
-#else
-#ifdef ARDUINO
-    Serial.println("[lume] COEXIST_TEST: leaving ESP-NOW running through BLE pairing");
-#endif
-#endif
+    // WiFi.mode(WIFI_OFF) is also deliberately NOT called: bench
+    // evidence showed it left the Atom's BLE controller in a state
+    // where advertising "started" per NimBLE but the device was
+    // invisible to scanners, and corrupted state so re-entering
+    // pairing crashed.
 
-    // Bench 2026-09-21: silence the DAL's LedStripDriver for the
-    // duration of the pairing window. Its loop_tick() otherwise
-    // renders every ~20 ms and overwrites the blue pulse we paint
-    // in draw_ble_pair_led — visible on the Atom as a completely
-    // dark onboard LED during pairing.
+    // Silence the DAL's LedStripDriver for the duration of the
+    // pairing window. Its loop_tick() otherwise renders every ~20 ms
+    // and overwrites the blue pulse we paint in draw_ble_pair_led —
+    // visible on the Atom as a completely dark onboard LED during
+    // pairing.
     DAL::set_driver_enabled("led-strip", false);
 
     // Fire up BLE with the Lume role + compile-time host id.
@@ -1174,11 +1166,7 @@ void LumeMode::enter_ble_pair() {
         static_cast<ble::Host>(NOCT_BLE_HOST_ID),
         persistence::load_pair_win_s());
 #ifdef ARDUINO
-#ifdef NOCT_BLE_ESPNOW_COEXIST
-    Serial.println("[lume] BLE pairing window OPEN (ESP-NOW still running — COEXIST_TEST build)");
-#else
-    Serial.println("[lume] BLE pairing window OPEN (ESP-NOW paused)");
-#endif
+    Serial.println("[lume] BLE pairing window OPEN (ESP-NOW coexists)");
 #endif
 }
 
@@ -1194,21 +1182,11 @@ void LumeMode::exit_ble_pair() {
     }
     // Re-enable the DAL LED strip renderer (paused for the pairing
     // window in enter_ble_pair) so subsequent washes render again.
+    // ESP-NOW was never torn down (see enter_ble_pair note) — nothing
+    // to restore on the radio side.
     DAL::set_driver_enabled("led-strip", true);
-    // Restore ESP-NOW receive so the Lume resumes normal operation.
-    // Under NOCT_BLE_ESPNOW_COEXIST the radio was never torn down,
-    // so radio_active_ is still true and there's nothing to restore.
-#ifndef NOCT_BLE_ESPNOW_COEXIST
-    if (auto* radio = hal::HAL::esp_now()) {
-        radio->set_recv_callback([this](const hal::ESPNowMessage& m) {
-            this->on_recv(m);
-        });
-        radio_active_ = radio->begin(current_listen_chan_);
-    }
-#endif
 #ifdef ARDUINO
-    Serial.printf("[lume] BLE pairing window CLOSED (ESP-NOW %s)\n",
-                  radio_active_ ? "resumed" : "resume FAILED");
+    Serial.println("[lume] BLE pairing window CLOSED");
 #endif
 }
 
