@@ -771,35 +771,18 @@ void BleService::on_scan_complete() {
                   (unsigned)discovered_count_);
 }
 
-ConfigureResult BleService::configure_lume(const DiscoveredLume& target,
-                                           const uint8_t* bag_tlv,
-                                           size_t bag_len) {
-    if (!bag_tlv || bag_len == 0) return ConfigureResult::WriteFailed;
-
-    // Build the NimBLEAddress from our big-endian MAC. NimBLE's
-    // NimBLEAddress(uint8_t[6], type) constructor already reverses
-    // the input into its little-endian internal storage, so pass
-    // target.bt_mac (MSB first) directly. Bench 2026-09-21 bug: we
-    // were pre-reversing, so the constructor's built-in reverse
-    // ended up storing MSB-first bytes while NimBLE compares LSB-
-    // first — memcmp in getDevice() always missed and the raw
-    // connect() sent a bit-reversed CONNECT_REQ PDU (15 s timeout).
+// Shared connect helper: re-scan for the target, connect via
+// NimBLEAdvertisedDevice*, resolve the NocturNation service. Returns
+// non-null client on success (caller owns it — must disconnect +
+// deleteClient), sets err_out on failure. `out_service` receives the
+// resolved remote service so callers avoid a second lookup.
+static NimBLEClient* acquire_and_connect(const DiscoveredLume& target,
+                                          NimBLERemoteService*& out_service,
+                                          ConfigureResult& err_out) {
+    // NimBLEAddress(uint8_t[6], type) reverses input into its LE store,
+    // so pass target.bt_mac (MSB first) as-is.
     uint8_t nimble_mac[6];
     std::memcpy(nimble_mac, target.bt_mac, 6);
-    // Bench 2026-09-21: re-scan for the target immediately before
-    // connect and drive connect() via the NimBLEAdvertisedDevice
-    // pointer instead of a raw NimBLEAddress. Motivation:
-    //   1. Verifies the peer is still advertising right now (if the
-    //      operator picked group + hit Write after the Atom's pairing
-    //      window already closed, the earlier connect() would time
-    //      out silently — this returns a clear ConnectFailed with a
-    //      "not advertising" log line).
-    //   2. connect(NimBLEAdvertisedDevice*) is the more reliable
-    //      overload on NimBLE-Arduino: it preserves the raw ADV
-    //      context (own_addr_type, adv address type flags) the
-    //      controller uses to build the CONNECT_REQ PDU. The raw
-    //      (address, addr_type) overload has been failing ESP32-to-
-    //      ESP32 with status=13 at full timeout — bench evidence.
     NimBLEAddress addr(nimble_mac, target.addr_type);
 
     if (auto* scan = NimBLEDevice::getScan()) {
@@ -819,7 +802,8 @@ ConfigureResult BleService::configure_lume(const DiscoveredLume& target,
     NimBLEAdvertisedDevice* adv_dev = results.getDevice(addr);
     if (!adv_dev) {
         Serial.println("[ble] target not seen in re-scan — pairing window closed?");
-        return ConfigureResult::ConnectFailed;
+        err_out = ConfigureResult::ConnectFailed;
+        return nullptr;
     }
     Serial.printf("[ble] re-acquired %s (rssi=%d)\n",
                   target.adv_name, (int)adv_dev->getRSSI());
@@ -827,12 +811,9 @@ ConfigureResult BleService::configure_lume(const DiscoveredLume& target,
     NimBLEClient* client = NimBLEDevice::createClient();
     if (!client) {
         Serial.println("[ble] createClient returned null");
-        return ConfigureResult::ConnectFailed;
+        err_out = ConfigureResult::ConnectFailed;
+        return nullptr;
     }
-    // Explicit connection parameters. ESP32-to-ESP32 links routinely
-    // fail to negotiate if we leave everything at NimBLE defaults;
-    // the controller times out before the peer settles on a slot.
-    // 24 * 1.25 ms = 30 ms interval, 0 latency, 2000 ms supervision.
     client->setConnectionParams(24, 24, 0, 200);
     client->setConnectTimeout(15);
     Serial.printf("[ble] connecting to %s (type=%u)...\n",
@@ -842,19 +823,33 @@ ConfigureResult BleService::configure_lume(const DiscoveredLume& target,
         Serial.printf("[ble] connect FAILED after %lu ms\n",
                       (unsigned long)(::millis() - t_connect_start));
         NimBLEDevice::deleteClient(client);
-        return ConfigureResult::ConnectFailed;
+        err_out = ConfigureResult::ConnectFailed;
+        return nullptr;
     }
     Serial.printf("[ble] connected in %lu ms\n",
                   (unsigned long)(::millis() - t_connect_start));
 
-    NimBLERemoteService* svc = client->getService(NimBLEUUID(uuid::kService));
-    if (!svc) {
+    out_service = client->getService(NimBLEUUID(uuid::kService));
+    if (!out_service) {
         Serial.println("[ble] service not found on peer");
         client->disconnect();
         NimBLEDevice::deleteClient(client);
-        return ConfigureResult::ServiceNotFound;
+        err_out = ConfigureResult::ServiceNotFound;
+        return nullptr;
     }
     Serial.println("[ble] service resolved");
+    return client;
+}
+
+ConfigureResult BleService::configure_lume(const DiscoveredLume& target,
+                                           const uint8_t* bag_tlv,
+                                           size_t bag_len) {
+    if (!bag_tlv || bag_len == 0) return ConfigureResult::WriteFailed;
+
+    NimBLERemoteService* svc = nullptr;
+    ConfigureResult err = ConfigureResult::Ok;
+    NimBLEClient* client = acquire_and_connect(target, svc, err);
+    if (!client) return err;
 
     NimBLERemoteCharacteristic* chr_cfg = svc->getCharacteristic(NimBLEUUID(uuid::kConfig));
     NimBLERemoteCharacteristic* chr_ctl = svc->getCharacteristic(NimBLEUUID(uuid::kPairingControl));
@@ -886,6 +881,50 @@ ConfigureResult BleService::configure_lume(const DiscoveredLume& target,
     }
 
     Serial.println("[ble] configure OK");
+    client->disconnect();
+    NimBLEDevice::deleteClient(client);
+    return ConfigureResult::Ok;
+}
+
+ConfigureResult BleService::read_lume_config(const DiscoveredLume& target,
+                                              uint8_t* out_bag,
+                                              size_t& in_out_len) {
+    const size_t cap = in_out_len;
+    in_out_len = 0;
+    if (!out_bag || cap == 0) return ConfigureResult::WriteFailed;
+
+    NimBLERemoteService* svc = nullptr;
+    ConfigureResult err = ConfigureResult::Ok;
+    NimBLEClient* client = acquire_and_connect(target, svc, err);
+    if (!client) return err;
+
+    NimBLERemoteCharacteristic* chr_cfg = svc->getCharacteristic(NimBLEUUID(uuid::kConfig));
+    if (!chr_cfg) {
+        Serial.println("[ble] config characteristic missing on peer");
+        client->disconnect();
+        NimBLEDevice::deleteClient(client);
+        return ConfigureResult::CharacteristicNotFound;
+    }
+
+    Serial.println("[ble] reading config...");
+    std::string value = chr_cfg->readValue();
+    if (value.empty()) {
+        Serial.println("[ble] config read returned empty");
+        client->disconnect();
+        NimBLEDevice::deleteClient(client);
+        return ConfigureResult::WriteFailed;
+    }
+    if (value.size() > cap) {
+        Serial.printf("[ble] config read %u bytes exceeds buffer %u\n",
+                      (unsigned)value.size(), (unsigned)cap);
+        client->disconnect();
+        NimBLEDevice::deleteClient(client);
+        return ConfigureResult::WriteFailed;
+    }
+    std::memcpy(out_bag, value.data(), value.size());
+    in_out_len = value.size();
+    Serial.printf("[ble] config read OK (%u bytes)\n", (unsigned)value.size());
+
     client->disconnect();
     NimBLEDevice::deleteClient(client);
     return ConfigureResult::Ok;
@@ -961,6 +1000,12 @@ void BleService::on_scan_complete() { scan_state_ = ScanState::Done; }
 ConfigureResult BleService::configure_lume(const DiscoveredLume& /*target*/,
                                            const uint8_t* /*bag*/,
                                            size_t /*bag_len*/) {
+    return ConfigureResult::Ok;
+}
+ConfigureResult BleService::read_lume_config(const DiscoveredLume& /*target*/,
+                                              uint8_t* /*out_bag*/,
+                                              size_t& in_out_len) {
+    in_out_len = 0;
     return ConfigureResult::Ok;
 }
 

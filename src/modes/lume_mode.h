@@ -163,6 +163,14 @@ private:
     bool     ble_pair_active_          = false;
     uint32_t ble_pair_led_next_edge_ms_ = 0;
     bool     ble_pair_led_on_          = false;
+    // Solid-blue latch (Epic 20 B11 bench 2026-09-23): a StickC-driven
+    // read/write connect is only ~200 ms on the air, well short of the
+    // 500 ms pulse half-period. Without a latch the connected cue is
+    // indistinguishable from the pulse. Hold solid blue for at least
+    // kBlePairConnectedLatchMs after any connect edge so the operator
+    // sees a clear "someone's talking to me" indication.
+    uint32_t ble_pair_connected_until_ms_ = 0;
+    static constexpr uint32_t kBlePairConnectedLatchMs = 1500;
     // Terminal state waiting to be shown. 0 = Open (still pulsing);
     // 1 = Committed, 2 = Sleeping, 3 = Aborted (matches enum from
     // ble::PairingState numerically for readability, but we don't

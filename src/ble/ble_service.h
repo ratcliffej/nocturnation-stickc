@@ -64,7 +64,7 @@ constexpr uint8_t kServiceVersion = 0x01;
 // as the first-boot value. Build-flag override:
 //     -DBLE_PAIRING_WINDOW_S_DEFAULT=N
 #ifndef BLE_PAIRING_WINDOW_S_DEFAULT
-#define BLE_PAIRING_WINDOW_S_DEFAULT 30
+#define BLE_PAIRING_WINDOW_S_DEFAULT 180
 #endif
 constexpr uint8_t kPairingWindowSecondsDefault = BLE_PAIRING_WINDOW_S_DEFAULT;
 
@@ -214,6 +214,17 @@ public:
     ConfigureResult configure_lume(const DiscoveredLume& target,
                                    const uint8_t* bag_tlv,
                                    size_t bag_len);
+
+    // Connect to a discovered Lume as BLE central, read the current
+    // property bag from the config characteristic, disconnect (Epic 20
+    // B11). Blocking; takes ~500 ms. On Ok, `out_bag` holds the raw
+    // TLV bytes and `in_out_len` is updated to the actual byte count.
+    // On any error `in_out_len` is set to 0. Uses the same connect
+    // hardening as configure_lume (re-scan, connect-by-device, explicit
+    // connection params).
+    ConfigureResult read_lume_config(const DiscoveredLume& target,
+                                     uint8_t* out_bag,
+                                     size_t& in_out_len);
 
 private:
     // role_label was removed 2026-09-20 alongside the "NTN" short-name
