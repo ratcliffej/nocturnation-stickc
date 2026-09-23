@@ -1141,10 +1141,22 @@ void LumeMode::enter_ble_pair() {
     // invisible to LightBlue) and corrupted state so re-entering
     // pairing crashed. The StickC's Config > BLE Pair path never
     // touches WiFi and works cleanly; matching that here.
+    //
+    // Epic 20 B12 (2026-09-23): -DNOCT_BLE_ESPNOW_COEXIST=1 skips the
+    // teardown so we can measure whether BLE pairing works with an
+    // active ESP-NOW driver. First-cut smoke test — no throughput
+    // measurement yet, just "does pairing succeed at all?". A follow-
+    // up phase will add active TX + drop-rate telemetry.
+#ifndef NOCT_BLE_ESPNOW_COEXIST
     if (radio_active_) {
         if (auto* radio = hal::HAL::esp_now()) radio->end();
         radio_active_ = false;
     }
+#else
+#ifdef ARDUINO
+    Serial.println("[lume] COEXIST_TEST: leaving ESP-NOW running through BLE pairing");
+#endif
+#endif
 
     // Bench 2026-09-21: silence the DAL's LedStripDriver for the
     // duration of the pairing window. Its loop_tick() otherwise
@@ -1162,7 +1174,11 @@ void LumeMode::enter_ble_pair() {
         static_cast<ble::Host>(NOCT_BLE_HOST_ID),
         persistence::load_pair_win_s());
 #ifdef ARDUINO
+#ifdef NOCT_BLE_ESPNOW_COEXIST
+    Serial.println("[lume] BLE pairing window OPEN (ESP-NOW still running — COEXIST_TEST build)");
+#else
     Serial.println("[lume] BLE pairing window OPEN (ESP-NOW paused)");
+#endif
 #endif
 }
 
@@ -1180,12 +1196,16 @@ void LumeMode::exit_ble_pair() {
     // window in enter_ble_pair) so subsequent washes render again.
     DAL::set_driver_enabled("led-strip", true);
     // Restore ESP-NOW receive so the Lume resumes normal operation.
+    // Under NOCT_BLE_ESPNOW_COEXIST the radio was never torn down,
+    // so radio_active_ is still true and there's nothing to restore.
+#ifndef NOCT_BLE_ESPNOW_COEXIST
     if (auto* radio = hal::HAL::esp_now()) {
         radio->set_recv_callback([this](const hal::ESPNowMessage& m) {
             this->on_recv(m);
         });
         radio_active_ = radio->begin(current_listen_chan_);
     }
+#endif
 #ifdef ARDUINO
     Serial.printf("[lume] BLE pairing window CLOSED (ESP-NOW %s)\n",
                   radio_active_ ? "resumed" : "resume FAILED");
