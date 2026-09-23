@@ -1852,6 +1852,54 @@ constexpr uint8_t kConfigLumesGroupMax = 6;
 constexpr uint32_t kConfigLumesScanMs   = 5000;
 constexpr uint32_t kConfigLumesFlashMs  = 1200;
 
+// Per-field cycle helpers (Epic 20 B11 bench 2026-09-23). Each returns
+// the next value in that field's discrete cycle wrapping back to the
+// start. Values chosen for bench-usable coverage without endless taps.
+uint8_t next_led_power(uint8_t v) {
+    // 5..100 in steps of 5. Fleet cap ~10 % so we start at 5.
+    if (v < 5)  return 5;
+    uint8_t n = v + 5;
+    if (n > 100) return 5;
+    return n;
+}
+uint8_t next_channel_pref(uint8_t v) {
+    // Wire-legal ESP-NOW channels: 0 (auto), 1, 6, 11.
+    static constexpr uint8_t kCh[] = {0, 1, 6, 11};
+    for (size_t i = 0; i < sizeof(kCh); ++i) {
+        if (kCh[i] == v) return kCh[(i + 1) % sizeof(kCh)];
+    }
+    return kCh[0];
+}
+uint16_t next_strip_chain(uint16_t v) {
+    // Bench-usable strip lengths (grove drives up to ~288 SK6812 pixels
+    // per M5Stack TypeC2Grove Unit topology; step density concentrated
+    // in the common short-strip range).
+    static constexpr uint16_t kChain[] =
+        {1, 5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 240, 288};
+    for (size_t i = 0; i < sizeof(kChain)/sizeof(kChain[0]); ++i) {
+        if (kChain[i] == v) return kChain[(i + 1) % (sizeof(kChain)/sizeof(kChain[0]))];
+    }
+    return kChain[0];
+}
+uint8_t next_strip_group_size(uint8_t v) {
+    // Chance-roll group size. 1 = fully independent per-pixel, higher
+    // values coalesce pixels into blocks (Epic 12 wash contract).
+    static constexpr uint8_t kGrp[] = {1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 30};
+    for (size_t i = 0; i < sizeof(kGrp); ++i) {
+        if (kGrp[i] == v) return kGrp[(i + 1) % sizeof(kGrp)];
+    }
+    return kGrp[0];
+}
+uint8_t next_pair_win_s(uint8_t v) {
+    // Pairing-window duration. 15 s minimum (quick single-write), up to
+    // 240 s for bench work where the operator is walking between devices.
+    static constexpr uint8_t kWin[] = {15, 30, 60, 90, 120, 180, 240};
+    for (size_t i = 0; i < sizeof(kWin); ++i) {
+        if (kWin[i] == v) return kWin[(i + 1) % sizeof(kWin)];
+    }
+    return kWin[0];
+}
+
 // TLV decoder callback: populate ConfigMode::LumeCurrent from a
 // property bag read back off a Lume's config characteristic (B11).
 // Unknown keys are ignored (forward-compat), value-type mismatches
@@ -1900,7 +1948,7 @@ void ConfigMode::enter_config_lumes() {
     confirm_until_ms_ = 0;
     cl_screen_       = ConfigLumesScreen::Scanning;
     cl_selected_     = 0;
-    cl_edit_group_   = 0;
+    cl_edit_selected_ = 0;
     cl_return_after_ = 0;
     cl_last_error_   = 0;
     // Kick off the scan. NimBLE-Arduino's scan->start(secs, false)
@@ -1969,47 +2017,77 @@ void ConfigMode::handle_config_lumes(const ButtonPressEvent& ev) {
                 }
                 ble::decode_property_bag(bag, bag_len, populate_current,
                                           &cl_current_);
-                cl_edit_group_ = cl_current_.group;
-                cl_screen_     = ConfigLumesScreen::Editing;
+                cl_edit_selected_ = 0;    // start on Group row
+                cl_screen_        = ConfigLumesScreen::Editing;
                 draw();
             }
             break;
         case ConfigLumesScreen::Editing:
             if (ev.id == ButtonId::Btn2) {
-                cl_edit_group_ = static_cast<uint8_t>(
-                    (cl_edit_group_ + 1) % (kConfigLumesGroupMax + 1));
+                // List navigation — Btn2 cycles the selected row,
+                // mirroring handle_system's pattern.
+                cl_edit_selected_ = (cl_edit_selected_ + 1) % kLumeEditItemCount;
                 draw();
             } else if (ev.id == ButtonId::Btn1) {
-                cl_screen_ = ConfigLumesScreen::Writing;
-                draw();
-                // B11: write the FULL property bag back — every key we
-                // read is echoed verbatim, only `group` reflects the
-                // operator's edit. This preserves fields the current
-                // menu doesn't expose (led_power, strip_chain, …) so
-                // Config Lumes never silently reverts them to defaults.
-                uint8_t bag[240] = {};
-                ble::TlvEncoder enc(bag, sizeof(bag));
-                enc.add_u8 (ble::key::kGroup,          cl_edit_group_);
-                enc.add_u8 (ble::key::kLedPower,       cl_current_.led_power);
-                enc.add_u8 (ble::key::kChannelPref,    cl_current_.channel_pref);
-                enc.add_u16(ble::key::kStripChain,     cl_current_.strip_chain);
-                enc.add_u8 (ble::key::kStripGroupSize, cl_current_.strip_group_size);
-                enc.add_u8 (ble::key::kPairWinS,       cl_current_.pair_win_s);
-                if (cl_current_.has_friendly_name) {
-                    enc.add_utf8(ble::key::kFriendlyName,
-                                  cl_current_.friendly_name);
+                // Btn1 cycles the selected row's value in place, or
+                // fires the write when the Write row is highlighted.
+                switch (static_cast<LumeEditItem>(cl_edit_selected_)) {
+                    case LumeEditItem::Group:
+                        cl_current_.group = static_cast<uint8_t>(
+                            (cl_current_.group + 1) % (kConfigLumesGroupMax + 1));
+                        draw();
+                        break;
+                    case LumeEditItem::LedPower:
+                        cl_current_.led_power = next_led_power(cl_current_.led_power);
+                        draw();
+                        break;
+                    case LumeEditItem::ChannelPref:
+                        cl_current_.channel_pref = next_channel_pref(cl_current_.channel_pref);
+                        draw();
+                        break;
+                    case LumeEditItem::StripChain:
+                        cl_current_.strip_chain = next_strip_chain(cl_current_.strip_chain);
+                        draw();
+                        break;
+                    case LumeEditItem::StripGroupSize:
+                        cl_current_.strip_group_size = next_strip_group_size(cl_current_.strip_group_size);
+                        draw();
+                        break;
+                    case LumeEditItem::PairWinS:
+                        cl_current_.pair_win_s = next_pair_win_s(cl_current_.pair_win_s);
+                        draw();
+                        break;
+                    case LumeEditItem::Write: {
+                        cl_screen_ = ConfigLumesScreen::Writing;
+                        draw();
+                        // Full-set write: emit every read-back key so
+                        // fields the menu didn't touch this session
+                        // (friendly_name, and anything future the menu
+                        // predates) round-trip unchanged.
+                        uint8_t bag[240] = {};
+                        ble::TlvEncoder enc(bag, sizeof(bag));
+                        enc.add_u8 (ble::key::kGroup,          cl_current_.group);
+                        enc.add_u8 (ble::key::kLedPower,       cl_current_.led_power);
+                        enc.add_u8 (ble::key::kChannelPref,    cl_current_.channel_pref);
+                        enc.add_u16(ble::key::kStripChain,     cl_current_.strip_chain);
+                        enc.add_u8 (ble::key::kStripGroupSize, cl_current_.strip_group_size);
+                        enc.add_u8 (ble::key::kPairWinS,       cl_current_.pair_win_s);
+                        if (cl_current_.has_friendly_name) {
+                            enc.add_utf8(ble::key::kFriendlyName,
+                                          cl_current_.friendly_name);
+                        }
+                        const auto& target = svc.discovered()[cl_selected_];
+                        const auto result = ble::ble_service().configure_lume(
+                            target, bag, enc.size());
+                        cl_last_error_ = static_cast<uint8_t>(result);
+                        cl_screen_ = (result == ble::ConfigureResult::Ok)
+                                     ? ConfigLumesScreen::Success
+                                     : ConfigLumesScreen::Failed;
+                        cl_return_after_ = millis() + kConfigLumesFlashMs;
+                        draw();
+                        break;
+                    }
                 }
-                const auto& target = svc.discovered()[cl_selected_];
-                const auto result = ble::ble_service().configure_lume(
-                    target, bag, enc.size());
-                cl_last_error_ = static_cast<uint8_t>(result);
-                if (result == ble::ConfigureResult::Ok) {
-                    cl_screen_ = ConfigLumesScreen::Success;
-                } else {
-                    cl_screen_ = ConfigLumesScreen::Failed;
-                }
-                cl_return_after_ = millis() + kConfigLumesFlashMs;
-                draw();
             }
             break;
         case ConfigLumesScreen::Reading:
@@ -2075,37 +2153,50 @@ void ConfigMode::draw_config_lumes() {
                 10, 76, "(fetching current)", WHITE, BLACK, 1});
             break;
         case ConfigLumesScreen::Editing: {
-            char line1[32];
-            std::snprintf(line1, sizeof(line1), "%s",
-                          svc.discovered()[cl_selected_].adv_name);
+            // Header: device name (compact so the list gets more rows).
             DAL::fire_display_show_text("local", DisplayShowTextEvent{
-                10, 32, line1, WHITE, BLACK, 2});
-            // Show the edited value plus the original (from the read)
-            // so the operator sees the delta at a glance.
-            char line2[32];
-            if (cl_edit_group_ == cl_current_.group) {
-                std::snprintf(line2, sizeof(line2), "Group: %u",
-                              (unsigned)cl_edit_group_);
-            } else {
-                std::snprintf(line2, sizeof(line2), "Group: %u (was %u)",
-                              (unsigned)cl_edit_group_,
-                              (unsigned)cl_current_.group);
+                10, 26, svc.discovered()[cl_selected_].adv_name,
+                WHITE, BLACK, 1});
+            // Scrolling list of fields + Write action. Btn2 cycles the
+            // selected row; Btn1 cycles that row's value in place or
+            // fires the Write action.
+            char rows[kLumeEditItemCount][40];
+            std::snprintf(rows[0], sizeof(rows[0]), "Group: %u",
+                          (unsigned)cl_current_.group);
+            std::snprintf(rows[1], sizeof(rows[1]), "LED: %u%%",
+                          (unsigned)cl_current_.led_power);
+            std::snprintf(rows[2], sizeof(rows[2]), "Channel: %u",
+                          (unsigned)cl_current_.channel_pref);
+            std::snprintf(rows[3], sizeof(rows[3]), "Chain: %u",
+                          (unsigned)cl_current_.strip_chain);
+            std::snprintf(rows[4], sizeof(rows[4]), "Grp size: %u",
+                          (unsigned)cl_current_.strip_group_size);
+            std::snprintf(rows[5], sizeof(rows[5]), "Pair win: %us",
+                          (unsigned)cl_current_.pair_win_s);
+            std::snprintf(rows[6], sizeof(rows[6]), "Write >>");
+
+            constexpr int  kRowY0     = 40;
+            const size_t   max_visible = static_cast<size_t>(
+                (kBodyBottomLimit - kRowY0) / kRowStride);
+            const size_t   first      = scroll_offset(
+                cl_edit_selected_, kLumeEditItemCount, max_visible);
+            const size_t   last_excl  = (first + max_visible > kLumeEditItemCount)
+                                        ? kLumeEditItemCount
+                                        : first + max_visible;
+            for (size_t i = first; i < last_excl; ++i) {
+                const bool sel = (i == cl_edit_selected_);
+                char buf[48];
+                std::snprintf(buf, sizeof(buf), "%s %s",
+                              sel ? ">" : " ", rows[i]);
+                const uint16_t fg =
+                    (i == (size_t)LumeEditItem::Write) ? GREEN
+                    : (sel ? YELLOW : WHITE);
+                DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                    10, kRowY0 + static_cast<int>(i - first) * kRowStride,
+                    buf, fg, BLACK, 2});
             }
             DAL::fire_display_show_text("local", DisplayShowTextEvent{
-                10, 58, line2, YELLOW, BLACK, 2});
-            // Second line surfaces the other read-back values so the
-            // operator knows what the full-set write will echo back.
-            char line3[32];
-            std::snprintf(line3, sizeof(line3), "LED %u%%  ch%u  chain%u",
-                          (unsigned)cl_current_.led_power,
-                          (unsigned)cl_current_.channel_pref,
-                          (unsigned)cl_current_.strip_chain);
-            DAL::fire_display_show_text("local", DisplayShowTextEvent{
-                10, 86, line3, WHITE, BLACK, 1});
-            DAL::fire_display_show_text("local", DisplayShowTextEvent{
-                10, 100, "B: cycle  A: write", WHITE, BLACK, 1});
-            DAL::fire_display_show_text("local", DisplayShowTextEvent{
-                10, 122, "B-hold: back to list", WHITE, BLACK, 1});
+                10, 122, "B: next  A: change/write", WHITE, BLACK, 1});
             break;
         }
         case ConfigLumesScreen::Writing:

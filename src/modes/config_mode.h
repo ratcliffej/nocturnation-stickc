@@ -464,9 +464,25 @@ private:
     };
     ConfigLumesScreen cl_screen_        = ConfigLumesScreen::Scanning;
     size_t            cl_selected_      = 0;   // index into ble_service().discovered()
-    uint8_t           cl_edit_group_    = 0;   // value being cycled in the editor
     uint32_t          cl_return_after_  = 0;   // linger + auto-return for flash states
     uint8_t           cl_last_error_    = 0;   // ConfigureResult from the last write
+
+    // Edit-screen (Epic 20 B11 bench 2026-09-23): each row is a
+    // property-bag field or the Write action. Btn2 cycles the row
+    // selection (list navigation), Btn1 cycles the highlighted row's
+    // value in place — or, on Write, kicks off the configure_lume
+    // call. Mirrors handle_system's list-of-actions pattern.
+    enum class LumeEditItem : uint8_t {
+        Group          = 0,
+        LedPower       = 1,
+        ChannelPref    = 2,
+        StripChain     = 3,
+        StripGroupSize = 4,
+        PairWinS       = 5,
+        Write          = 6,
+    };
+    static constexpr size_t kLumeEditItemCount = 7;
+    size_t cl_edit_selected_ = 0;   // row index into LumeEditItem
 
 public:
     // Snapshot of the selected Lume's current property bag, populated on

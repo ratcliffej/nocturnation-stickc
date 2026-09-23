@@ -64,7 +64,7 @@ constexpr uint8_t kServiceVersion = 0x01;
 // as the first-boot value. Build-flag override:
 //     -DBLE_PAIRING_WINDOW_S_DEFAULT=N
 #ifndef BLE_PAIRING_WINDOW_S_DEFAULT
-#define BLE_PAIRING_WINDOW_S_DEFAULT 30
+#define BLE_PAIRING_WINDOW_S_DEFAULT 180
 #endif
 constexpr uint8_t kPairingWindowSecondsDefault = BLE_PAIRING_WINDOW_S_DEFAULT;
 
