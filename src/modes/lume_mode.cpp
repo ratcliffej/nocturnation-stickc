@@ -1174,7 +1174,11 @@ void LumeMode::enter_ble_pair() {
         static_cast<ble::Host>(NOCT_BLE_HOST_ID),
         persistence::load_pair_win_s());
 #ifdef ARDUINO
+#ifdef NOCT_BLE_ESPNOW_COEXIST
+    Serial.println("[lume] BLE pairing window OPEN (ESP-NOW still running — COEXIST_TEST build)");
+#else
     Serial.println("[lume] BLE pairing window OPEN (ESP-NOW paused)");
+#endif
 #endif
 }
 
