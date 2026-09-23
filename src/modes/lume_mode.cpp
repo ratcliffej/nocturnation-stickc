@@ -1267,7 +1267,14 @@ void LumeMode::draw_ble_pair_led(uint32_t now) {
             //   no client         -> pixel 0 slow-pulses blue (idle)
             // Solid variant also serves as the "don't power-cycle me yet"
             // hint during the ~1-3 s configure_lume blocking write.
+            // Extend the solid-blue latch every tick a client is
+            // present. The latch survives the disconnect edge by
+            // kBlePairConnectedLatchMs so a ~200 ms StickC read cycle
+            // still registers as a clearly-visible solid indication.
             if (ble::ble_service().client_connected()) {
+                ble_pair_connected_until_ms_ = now + kBlePairConnectedLatchMs;
+            }
+            if (now < ble_pair_connected_until_ms_) {
                 if (!ble_pair_led_on_) {
                     ble_pair_led_on_ = true;
                     strip->clear();
