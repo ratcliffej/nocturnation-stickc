@@ -53,6 +53,12 @@ constexpr const char* kStatus          = "52a398a9-2c10-4291-885e-2a98a8f4d54e";
 constexpr const char* kPairingControl  = "72678cdb-1b65-417c-8744-751eff153bf0";
 constexpr const char* kShowPassthrough = "17cc926e-f45e-41d8-ab61-1cb71d744c35";
 constexpr const char* kDiagnostics     = "2b53e72d-0e3d-4083-9f76-d5d472a26356";
+// Epic 21 B2. 16-byte per-device HMAC secret, read-only, gated on
+// the pairing window being Open (same gate as config writes). Along-
+// side the UID that now lives in device_info bytes 18-21, this is the
+// pair of values a Director (or future phone-app) captures during
+// pairing and uses to sign CONFIG_WRITE frames over ESP-NOW.
+constexpr const char* kDeviceSecret    = "e14f56cf-733d-4ed3-868b-4102a5e9864f";
 }  // namespace uuid
 
 // Service-version byte reported by device_info. Bump on any incompatible
