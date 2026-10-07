@@ -14,8 +14,11 @@
 
 #include <Arduino.h>
 
+#include <WiFi.h>
+
 #include "dal/dal.h"
 #include "modes/mode_machine.h"
+#include "modes/persistence.h"
 #include "shows/show_registry.h"
 #include "shows/simple_beat_show.h"
 #include "shows/dynamic_show.h"
@@ -73,6 +76,18 @@ void setup() {
         Serial.flush();   // make sure the banner reaches the host
                           // even if the next init phase crashes hard.
     }
+
+    // Epic 21 B1: bring up the WiFi driver in station mode once so the
+    // ESP32's hardware RNG is seeded before ensure_identity() runs. The
+    // hardware RNG is only properly fed from PHY noise once WiFi (or
+    // BT) is initialised; before that, esp_random() falls back to a
+    // weakly-seeded PRNG. We're going to need WiFi up for ESP-NOW
+    // anyway shortly - just bringing it up now explicitly so the one
+    // first-boot secret-generation call hits a well-seeded RNG.
+    WiFi.mode(WIFI_STA);
+    nocturnation::modes::persistence::ensure_identity();
+    Serial.printf("[noct] boot uid=%08X\n",
+                  (unsigned)nocturnation::modes::persistence::load_device_uid());
 
     nocturnation::dal::DAL::begin();
 
