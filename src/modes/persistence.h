@@ -97,6 +97,36 @@ void             save_pair_win_s(uint8_t seconds);
 size_t           load_friendly_name(char* buf, size_t buflen);
 void             save_friendly_name(const char* name);
 
+// Device identity (Epic 21 B1). Two values that together define a
+// Lume's fleet-wide identity + authentication credential for the
+// MAC-addressed config-over-ESP-NOW path:
+//
+//   dev_uid    (u32): CRC32 of the device's STA MAC. Deterministic -
+//                     a given chip always produces the same UID. Serves
+//                     as the fleet-wide address in CONFIG_WRITE frames.
+//                     Also exposed over BLE in device_info bytes 18-21.
+//   dev_secret (16 bytes): random, generated once at first boot via
+//                     esp_random() and persisted. The HMAC-SHA256 key
+//                     the receiver uses to authenticate CONFIG_WRITE
+//                     frames. Never leaves NVS except during an
+//                     intentional pairing capture event (BLE
+//                     device_secret characteristic read, ESP-NOW
+//                     UID_ANNOUNCE emission, or operator-triggered
+//                     QR render in a future block).
+//
+// `ensure_identity()` is the first-boot gate - call it ONCE during
+// setup(), AFTER WiFi or BT has been brought up so the hardware RNG
+// is properly seeded (per ESP-IDF docs; esp_random() reverts to a
+// weakly-seeded PRNG before radio init). It writes both NVS entries
+// if they're missing, and is a no-op on subsequent boots.
+//
+// `compute_uid_from_mac()` is a pure function exposed for native tests
+// to exercise the CRC32 derivation without an ESP32 to hand.
+uint32_t         load_device_uid();
+void             load_device_secret(uint8_t out[16]);
+void             ensure_identity();
+uint32_t         compute_uid_from_mac(const uint8_t mac[6]);
+
 uint8_t          load_director_channel();
 void             save_director_channel(uint8_t c);
 

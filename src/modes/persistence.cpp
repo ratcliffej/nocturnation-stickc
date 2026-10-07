@@ -9,6 +9,7 @@
 #include <Arduino.h>
 #include <Preferences.h>
 #include <esp_random.h>
+#include <esp_mac.h>
 #endif
 
 #include <cstring>
@@ -16,6 +17,24 @@
 namespace nocturnation {
 namespace modes {
 namespace persistence {
+
+// Device identity (Epic 21 B1). CRC32-of-MAC UID + random secret.
+// See persistence.h for the full rationale. Pure function - shared
+// between Arduino + native so the exact same bits are produced on
+// both (bit-identical reference for the native test vector).
+//
+// IEEE 802.3 CRC-32 (reflected, 0xEDB88320). Written out longhand
+// rather than pulling esp_crc.h so there's one source of truth.
+uint32_t compute_uid_from_mac(const uint8_t mac[6]) {
+    uint32_t crc = 0xFFFFFFFFu;
+    for (size_t i = 0; i < 6; ++i) {
+        crc ^= mac[i];
+        for (int b = 0; b < 8; ++b) {
+            crc = (crc >> 1) ^ (0xEDB88320u & -(crc & 1u));
+        }
+    }
+    return ~crc;
+}
 
 bool is_persisted_runtime_mode(ModeId m) {
     // DmxBridge is intentionally NOT persisted: per Q4 (revised
@@ -200,6 +219,53 @@ void save_friendly_name(const char* name) {
         clipped[i] = '\0';
         prefs.putString("friendly_name", clipped);
     }
+    prefs.end();
+}
+
+uint32_t load_device_uid() {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/true);
+    uint32_t uid = prefs.getUInt("dev_uid", 0);
+    prefs.end();
+    return uid;
+}
+
+void load_device_secret(uint8_t out[16]) {
+    std::memset(out, 0, 16);
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/true);
+    if (prefs.getBytesLength("dev_secret") == 16) {
+        prefs.getBytes("dev_secret", out, 16);
+    }
+    prefs.end();
+}
+
+void ensure_identity() {
+    // Must be called AFTER WiFi/BT init so esp_random() draws from the
+    // hardware RNG rather than the weakly-seeded pre-radio PRNG. See
+    // persistence.h for the detail.
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/false);
+
+    if (prefs.getUInt("dev_uid", 0) == 0) {
+        uint8_t mac[6] = {};
+        esp_read_mac(mac, ESP_MAC_WIFI_STA);
+        const uint32_t uid = compute_uid_from_mac(mac);
+        prefs.putUInt("dev_uid", uid);
+    }
+
+    if (prefs.getBytesLength("dev_secret") != 16) {
+        uint8_t secret[16];
+        for (size_t i = 0; i < 16; i += 4) {
+            const uint32_t r = esp_random();
+            secret[i    ] = (uint8_t)(r      );
+            secret[i + 1] = (uint8_t)(r >>  8);
+            secret[i + 2] = (uint8_t)(r >> 16);
+            secret[i + 3] = (uint8_t)(r >> 24);
+        }
+        prefs.putBytes("dev_secret", secret, 16);
+    }
+
     prefs.end();
 }
 
@@ -735,6 +801,32 @@ uint8_t          load_lume_group()                       { return s_native_lume_
 void             save_lume_group(uint8_t g)              {
     s_native_lume_group     = g;
     s_native_lume_group_set = true;
+}
+
+// Device identity native stubs (Epic 21 B1). The CRC32 compute path
+// is the live Arduino implementation above; native tests exercise it
+// directly. load/ensure here fake NVS with process-static state so
+// the native_dal tests can round-trip without a real Preferences.
+namespace {
+uint32_t s_native_dev_uid    = 0;
+uint8_t  s_native_dev_secret[16] = {};
+bool     s_native_dev_secret_set = false;
+uint8_t  s_native_fake_sta_mac[6] = {0x24, 0x0A, 0xC4, 0x12, 0xC1, 0x58};
+}  // namespace
+uint32_t         load_device_uid()                        { return s_native_dev_uid; }
+void             load_device_secret(uint8_t out[16])     {
+    if (s_native_dev_secret_set) std::memcpy(out, s_native_dev_secret, 16);
+    else                         std::memset(out, 0, 16);
+}
+void             ensure_identity()                        {
+    if (s_native_dev_uid == 0) {
+        s_native_dev_uid = compute_uid_from_mac(s_native_fake_sta_mac);
+    }
+    if (!s_native_dev_secret_set) {
+        // Deterministic for native tests - real random live on-device.
+        for (size_t i = 0; i < 16; ++i) s_native_dev_secret[i] = (uint8_t)(0xA0 + i);
+        s_native_dev_secret_set = true;
+    }
 }
 
 namespace {
