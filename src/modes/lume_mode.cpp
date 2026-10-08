@@ -9,6 +9,8 @@
 #include "output_bindings/lume_led_strip.h"
 #include "output_bindings/lume_text.h"
 #include "../ble/ble_service.h"
+#include "../ble/config_apply.h"
+#include "../ble/config_rx.h"
 
 #include <cstdio>
 #include <cstring>
@@ -162,6 +164,9 @@ void LumeMode::exit() {
     if (ble_pair_active_) {
         exit_ble_pair();
     }
+    if (pairing_burst_active_) {
+        exit_pairing_burst();
+    }
     if (radio_active_) {
         if (auto* radio = hal::HAL::esp_now()) radio->end();
         radio_active_ = false;
@@ -192,6 +197,10 @@ void LumeMode::loop_tick() {
     // LED animation until the window terminates, then returns us here.
     if (ble_pair_active_) {
         tick_ble_pair(now);
+        return;
+    }
+    if (pairing_burst_active_) {
+        tick_pairing_burst(now);
         return;
     }
 
@@ -342,7 +351,12 @@ void LumeMode::loop_tick() {
     // open (handled ahead of this block by tick_ble_pair).
     if (hal::HAL::led_strip() != nullptr && hal::HAL::display() == nullptr) {
         auto* strip_drv = led_strip_driver_instance();
-        if (no_signal_ || rx_count_ == 0) {
+        if (now < ack_flash_end_ms_) {
+            // Epic 21 B3e: visible confirmation of a successful
+            // CONFIG_WRITE apply. Takes priority over the normal
+            // signal-state indicator for its short duration.
+            strip_drv->set_overlay_pixel_0(255, 255, 255, true);
+        } else if (no_signal_ || rx_count_ == 0) {
             const uint32_t phase = now % kIndicatorFlashPeriodMs;
             const bool     lit   = phase < (kIndicatorFlashPeriodMs / 2);
             strip_drv->set_overlay_pixel_0(0, lit ? 96 : 0, 0, true);
@@ -700,6 +714,49 @@ void LumeMode::on_recv(const hal::ESPNowMessage& m) {
     // Silently ignore repeater census (Director telemetry only) instead
     // of running it through TOFU which would log an RXdrop per second.
     if (hdr.message_type == MessageType::RepeaterHeartbeat) return;
+
+    // Epic 21: config channel frames bypass TOFU, hop_count check, and
+    // the rx_count/signal path. They're management traffic from
+    // Directors we may not be bound to (TOFU would drop them) and they
+    // don't represent "the show is live". Dispatch straight to
+    // process_config_write and ignore our own echoes.
+    if (hdr.message_type == MessageType::UidAnnounce ||
+        hdr.message_type == MessageType::ConfigAck) {
+        // Lumes don't consume these - they're Director-facing. Drop.
+        return;
+    }
+    if (hdr.message_type == MessageType::ConfigWrite) {
+        using namespace nocturnation::ble;
+        uint8_t secret[16];
+        modes::persistence::load_device_secret(secret);
+        const uint32_t self_uid = modes::persistence::load_device_uid();
+        ApplyCtx actx{ Role::Lume, /*value_out_of_range=*/false };
+        const auto detail = process_config_write(
+            m.data, m.len, self_uid, secret,
+            config_numonces_,
+            apply_config_entry,
+            &actx);
+        if (detail.result == ConfigRxResult::Accepted) {
+            const uint8_t status = actx.value_out_of_range ? 0x82 : 0x00;
+            emit_config_ack(detail.numonce, status, detail.applied_keys);
+            ack_flash_end_ms_ = millis() + kAckFlashDurationMs;
+#ifdef ARDUINO
+            Serial.printf("[config] applied src=%04X numonce=%lu keys=%u status=%02X\n",
+                          (unsigned)hdr.source_id,
+                          (unsigned long)detail.numonce,
+                          (unsigned)detail.applied_keys,
+                          (unsigned)status);
+#endif
+        }
+#ifdef ARDUINO
+        else {
+            Serial.printf("[config] dropped result=%u src=%04X\n",
+                          static_cast<unsigned>(detail.result),
+                          (unsigned)hdr.source_id);
+        }
+#endif
+        return;   // config frames never fall through to render paths
+    }
 
     // Spec §4.3: drop before admission so a hop-mangled attacker frame
     // can't establish a false TOFU lock. Frames at exactly kMaxHopCount
@@ -1290,6 +1347,107 @@ void LumeMode::draw_ble_pair_led(uint32_t now) {
             }
             break;
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Epic 21 B3e: UID_ANNOUNCE pairing-burst lifecycle + CONFIG_ACK emit.
+// ---------------------------------------------------------------------------
+
+void LumeMode::enter_pairing_burst() {
+    if (pairing_burst_active_) return;
+    if (ble_pair_active_) return;   // defer; the two gestures are exclusive
+    pairing_burst_active_         = true;
+    pairing_burst_end_ms_         = millis() + kPairingBurstDurationMs;
+    pairing_burst_next_emit_ms_   = millis();   // emit on entry
+    pairing_burst_next_led_edge_ms_ = millis();
+    pairing_burst_led_on_         = false;
+    if (auto* strip = hal::HAL::led_strip()) { strip->clear(); strip->show(); }
+    // Own the strip for the window - same pattern as enter_ble_pair.
+    DAL::set_driver_enabled("led-strip", false);
+#ifdef ARDUINO
+    Serial.println("[lume] UID_ANNOUNCE pairing-burst OPEN");
+#endif
+}
+
+void LumeMode::exit_pairing_burst() {
+    if (!pairing_burst_active_) return;
+    pairing_burst_active_ = false;
+    if (auto* strip = hal::HAL::led_strip()) { strip->clear(); strip->show(); }
+    DAL::set_driver_enabled("led-strip", true);
+#ifdef ARDUINO
+    Serial.println("[lume] UID_ANNOUNCE pairing-burst CLOSED");
+#endif
+}
+
+void LumeMode::tick_pairing_burst(uint32_t now) {
+    if (now >= pairing_burst_end_ms_) {
+        exit_pairing_burst();
+        return;
+    }
+    if (now >= pairing_burst_next_emit_ms_) {
+        emit_uid_announce();
+        pairing_burst_next_emit_ms_ = now + kPairingBurstEmitPeriodMs;
+    }
+    if (now >= pairing_burst_next_led_edge_ms_) {
+        pairing_burst_led_on_ = !pairing_burst_led_on_;
+        pairing_burst_next_led_edge_ms_ = now + kPairingBurstLedHalfPeriodMs;
+        if (auto* strip = hal::HAL::led_strip()) {
+            strip->clear();
+            if (pairing_burst_led_on_) {
+                strip->set_pixel(0, 0, 0, kBlePairIntensity);
+            }
+            strip->show();
+        }
+    }
+}
+
+void LumeMode::emit_uid_announce() {
+    using namespace nocturnation::transport::espnow;
+    UidAnnouncePayload p = {};
+    p.uid = modes::persistence::load_device_uid();
+    modes::persistence::load_device_secret(p.secret);
+    p.role = static_cast<uint8_t>(ble::Role::Lume);
+#ifndef NOCT_BLE_HOST_ID
+#define NOCT_BLE_HOST_ID 0x01
+#endif
+    p.host = NOCT_BLE_HOST_ID;
+    char fn[21] = {};
+    const size_t fn_len = modes::persistence::load_friendly_name(fn, sizeof(fn));
+    p.friendly_name_len = static_cast<uint8_t>(fn_len);
+    if (fn_len > 0) std::memcpy(p.friendly_name, fn, fn_len);
+
+    Header hdr = {};
+    hdr.source_id       = static_cast<uint16_t>(p.uid & 0xFFFF);   // synthetic sender id
+    hdr.sequence_number = (config_tx_seq_ == 0xFF) ? (config_tx_seq_ = 1) : (++config_tx_seq_);
+    hdr.hop_count       = 0;
+
+    uint8_t buf[kHeaderSize + kUidAnnounceMaxPayloadLen];
+    const size_t n = encode_uid_announce(buf, sizeof(buf), hdr, p);
+    if (n > 0 && hal::HAL::esp_now()) {
+        hal::HAL::esp_now()->send_broadcast(buf, n);
+    }
+}
+
+void LumeMode::emit_config_ack(uint64_t numonce, uint8_t status, uint8_t applied_keys) {
+    using namespace nocturnation::transport::espnow;
+    ConfigAckPayload p = {};
+    p.responder_uid = modes::persistence::load_device_uid();
+    for (size_t i = 0; i < 8; ++i) {
+        p.responder_numonce[i] = static_cast<uint8_t>((numonce >> (i * 8)) & 0xFF);
+    }
+    p.status       = status;
+    p.applied_keys = applied_keys;
+
+    Header hdr = {};
+    hdr.source_id       = static_cast<uint16_t>(p.responder_uid & 0xFFFF);
+    hdr.sequence_number = (config_tx_seq_ == 0xFF) ? (config_tx_seq_ = 1) : (++config_tx_seq_);
+    hdr.hop_count       = 0;
+
+    uint8_t buf[kHeaderSize + kConfigAckPayloadLen];
+    const size_t n = encode_config_ack(buf, sizeof(buf), hdr, p);
+    if (n > 0 && hal::HAL::esp_now()) {
+        hal::HAL::esp_now()->send_broadcast(buf, n);
     }
 }
 
