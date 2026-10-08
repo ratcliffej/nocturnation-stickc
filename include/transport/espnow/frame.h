@@ -498,7 +498,7 @@ struct UidAnnouncePayload {
     char     friendly_name[kUidAnnounceMaxFriendlyNameLen]; // bytes 0..friendly_name_len-1 valid
 };
 
-// CONFIG_WRITE wire layout: target_uid(4) + nonce(8) + bag_len(1) +
+// CONFIG_WRITE wire layout: target_uid(4) + numonce(8) + bag_len(1) +
 // bag_tlv(0..kConfigWriteMaxBagLen) + hmac(8). The HMAC covers all
 // preceding bytes INCLUDING the header - the sender computes it over
 // [envelope_header .. end_of_bag_tlv] and writes the result into the
@@ -511,7 +511,7 @@ constexpr uint16_t kConfigWriteMaxPayloadLen = kConfigWriteFixedOverhead + kConf
 
 struct ConfigWritePayload {
     uint32_t target_uid;                             // which Lume this is for
-    uint8_t  nonce[8];                               // monotonic per sender; receiver tracks last-seen in LRU
+    uint8_t  numonce[8];                               // monotonic per sender; receiver tracks last-seen in LRU
     uint8_t  bag_len;                                // 0..kConfigWriteMaxBagLen
     uint8_t  bag_tlv[kConfigWriteMaxBagLen];         // property-bag TLV from the Epic 20 B3b codec
     uint8_t  hmac[kConfigWriteHmacLen];              // caller fills zeros, signs, overwrites; see config_tx
@@ -520,11 +520,11 @@ struct ConfigWritePayload {
 // CONFIG_ACK payload (fixed 14 bytes). Emitted by a Lume on a
 // successful CONFIG_WRITE apply. Not authenticated - an attacker
 // forging acks only confuses the operator UI; no state changes.
-constexpr uint8_t kConfigAckPayloadLen = 14;   // uid(4) + nonce(8) + status(1) + applied_keys(1)
+constexpr uint8_t kConfigAckPayloadLen = 14;   // uid(4) + numonce(8) + status(1) + applied_keys(1)
 
 struct ConfigAckPayload {
     uint32_t responder_uid;                          // the Lume's own UID
-    uint8_t  responder_nonce[8];                     // echoes the write's nonce so the sender correlates
+    uint8_t  responder_numonce[8];                     // echoes the write's numonce so the sender correlates
     uint8_t  status;                                 // 0x00 = applied, 0x82 = value-out-of-range on at least one key, 0x81 = reserved
     uint8_t  applied_keys;                           // count of property-bag entries successfully applied (debug aid)
 };

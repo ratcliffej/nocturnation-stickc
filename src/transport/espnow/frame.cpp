@@ -325,7 +325,7 @@ size_t encode_config_write(uint8_t* buf, size_t buf_len, const Header& hdr,
     // payload_len fits in u8 since kConfigWriteMaxPayloadLen <= 241.
     write_header(buf, hdr, MessageType::ConfigWrite, static_cast<uint8_t>(payload_len));
     write_u32_le(buf + kHeaderSize + 0, p.target_uid);
-    std::memcpy(buf + kHeaderSize + 4, p.nonce, 8);
+    std::memcpy(buf + kHeaderSize + 4, p.numonce, 8);
     buf[kHeaderSize + 12] = bag_len;
     if (bag_len > 0) {
         std::memcpy(buf + kHeaderSize + 13, p.bag_tlv, bag_len);
@@ -340,7 +340,7 @@ size_t encode_config_ack(uint8_t* buf, size_t buf_len, const Header& hdr,
     if (buf_len < total) return 0;
     write_header(buf, hdr, MessageType::ConfigAck, kConfigAckPayloadLen);
     write_u32_le(buf + kHeaderSize + 0, p.responder_uid);
-    std::memcpy(buf + kHeaderSize + 4, p.responder_nonce, 8);
+    std::memcpy(buf + kHeaderSize + 4, p.responder_numonce, 8);
     buf[kHeaderSize + 12] = p.status;
     buf[kHeaderSize + 13] = p.applied_keys;
     return total;
@@ -701,7 +701,7 @@ DecodeResult decode_config_write(const Header& hdr,
         return DecodeResult::PayloadLenMismatch;
     }
     out.target_uid = read_u32_le(payload + 0);
-    std::memcpy(out.nonce, payload + 4, 8);
+    std::memcpy(out.numonce, payload + 4, 8);
     out.bag_len = bag_len;
     std::memset(out.bag_tlv, 0, sizeof(out.bag_tlv));
     if (bag_len > 0) {
@@ -722,7 +722,7 @@ DecodeResult decode_config_ack(const Header& hdr,
         return DecodeResult::PayloadLenMismatch;
     }
     out.responder_uid = read_u32_le(payload + 0);
-    std::memcpy(out.responder_nonce, payload + 4, 8);
+    std::memcpy(out.responder_numonce, payload + 4, 8);
     out.status        = payload[12];
     out.applied_keys  = payload[13];
     return DecodeResult::Ok;

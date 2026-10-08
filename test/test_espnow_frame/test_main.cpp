@@ -1240,7 +1240,7 @@ static void test_config_write_round_trip_small_bag(void) {
     uint8_t buf[128] = {};
     ConfigWritePayload p = {};
     p.target_uid = 0x2AF215C8u;
-    for (size_t i = 0; i < 8; ++i) p.nonce[i] = (uint8_t)(i + 1);
+    for (size_t i = 0; i < 8; ++i) p.numonce[i] = (uint8_t)(i + 1);
     const uint8_t bag[] = {0x01, 0x05, 'g','r','o','u','p', 0x00, 0x01, 0x03};
     p.bag_len = sizeof(bag);
     std::memcpy(p.bag_tlv, bag, sizeof(bag));
@@ -1258,7 +1258,7 @@ static void test_config_write_round_trip_small_bag(void) {
     TEST_ASSERT_EQUAL(DecodeResult::Ok,
         decode_config_write(hdr_out, buf + kHeaderSize, hdr_out.payload_len, out));
     TEST_ASSERT_EQUAL_HEX32(p.target_uid, out.target_uid);
-    TEST_ASSERT_EQUAL_MEMORY(p.nonce, out.nonce, 8);
+    TEST_ASSERT_EQUAL_MEMORY(p.numonce, out.numonce, 8);
     TEST_ASSERT_EQUAL_UINT8(p.bag_len, out.bag_len);
     TEST_ASSERT_EQUAL_MEMORY(p.bag_tlv, out.bag_tlv, p.bag_len);
     TEST_ASSERT_EQUAL_MEMORY(p.hmac, out.hmac, kConfigWriteHmacLen);
@@ -1304,7 +1304,7 @@ static void test_config_ack_round_trip(void) {
     uint8_t buf[32] = {};
     ConfigAckPayload p = {};
     p.responder_uid = 0x2AF215C8u;
-    for (size_t i = 0; i < 8; ++i) p.responder_nonce[i] = (uint8_t)(0x10 + i);
+    for (size_t i = 0; i < 8; ++i) p.responder_numonce[i] = (uint8_t)(0x10 + i);
     p.status = 0x00;
     p.applied_keys = 5;
 
@@ -1320,7 +1320,7 @@ static void test_config_ack_round_trip(void) {
     TEST_ASSERT_EQUAL(DecodeResult::Ok,
         decode_config_ack(hdr_out, buf + kHeaderSize, hdr_out.payload_len, out));
     TEST_ASSERT_EQUAL_HEX32(p.responder_uid, out.responder_uid);
-    TEST_ASSERT_EQUAL_MEMORY(p.responder_nonce, out.responder_nonce, 8);
+    TEST_ASSERT_EQUAL_MEMORY(p.responder_numonce, out.responder_numonce, 8);
     TEST_ASSERT_EQUAL_UINT8(p.status, out.status);
     TEST_ASSERT_EQUAL_UINT8(p.applied_keys, out.applied_keys);
 }
