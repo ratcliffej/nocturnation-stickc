@@ -86,6 +86,9 @@ bool is_known_message_type(uint8_t raw) {
         case static_cast<uint8_t>(MessageType::BitmapPlane):
         case static_cast<uint8_t>(MessageType::ClearScreen):
         case static_cast<uint8_t>(MessageType::RepeaterHeartbeat):
+        case static_cast<uint8_t>(MessageType::UidAnnounce):
+        case static_cast<uint8_t>(MessageType::ConfigWrite):
+        case static_cast<uint8_t>(MessageType::ConfigAck):
         case static_cast<uint8_t>(MessageType::Extension):
             return true;
         default:
@@ -287,6 +290,59 @@ size_t encode_clear_screen(uint8_t* buf, size_t buf_len, const Header& hdr,
     write_u16_le(buf + kHeaderSize + 0, p.target_group);   // v3: 2 bytes
     buf[kHeaderSize + 2] = p.clear_text ? 1 : 0;
     buf[kHeaderSize + 3] = p.clear_bitmap ? 1 : 0;
+    return total;
+}
+
+// Epic 21: authenticated config channel.
+size_t encode_uid_announce(uint8_t* buf, size_t buf_len, const Header& hdr,
+                           const UidAnnouncePayload& p) {
+    const uint8_t fn_len = (p.friendly_name_len > kUidAnnounceMaxFriendlyNameLen)
+                           ? kUidAnnounceMaxFriendlyNameLen
+                           : p.friendly_name_len;
+    const uint8_t payload_len = static_cast<uint8_t>(kUidAnnounceFixedPrefixLen + fn_len);
+    const size_t total = static_cast<size_t>(kHeaderSize) + payload_len;
+    if (buf_len < total) return 0;
+    write_header(buf, hdr, MessageType::UidAnnounce, payload_len);
+    write_u32_le(buf + kHeaderSize + 0, p.uid);
+    std::memcpy(buf + kHeaderSize + 4, p.secret, 16);
+    buf[kHeaderSize + 20] = p.role;
+    buf[kHeaderSize + 21] = p.host;
+    buf[kHeaderSize + 22] = fn_len;
+    if (fn_len > 0) {
+        std::memcpy(buf + kHeaderSize + 23, p.friendly_name, fn_len);
+    }
+    return total;
+}
+
+size_t encode_config_write(uint8_t* buf, size_t buf_len, const Header& hdr,
+                           const ConfigWritePayload& p) {
+    const uint8_t bag_len = (p.bag_len > kConfigWriteMaxBagLen)
+                            ? kConfigWriteMaxBagLen
+                            : p.bag_len;
+    const uint16_t payload_len = static_cast<uint16_t>(kConfigWriteFixedOverhead + bag_len);
+    const size_t total = static_cast<size_t>(kHeaderSize) + payload_len;
+    if (buf_len < total) return 0;
+    // payload_len fits in u8 since kConfigWriteMaxPayloadLen <= 241.
+    write_header(buf, hdr, MessageType::ConfigWrite, static_cast<uint8_t>(payload_len));
+    write_u32_le(buf + kHeaderSize + 0, p.target_uid);
+    std::memcpy(buf + kHeaderSize + 4, p.numonce, 8);
+    buf[kHeaderSize + 12] = bag_len;
+    if (bag_len > 0) {
+        std::memcpy(buf + kHeaderSize + 13, p.bag_tlv, bag_len);
+    }
+    std::memcpy(buf + kHeaderSize + 13 + bag_len, p.hmac, kConfigWriteHmacLen);
+    return total;
+}
+
+size_t encode_config_ack(uint8_t* buf, size_t buf_len, const Header& hdr,
+                         const ConfigAckPayload& p) {
+    constexpr size_t total = kHeaderSize + kConfigAckPayloadLen;
+    if (buf_len < total) return 0;
+    write_header(buf, hdr, MessageType::ConfigAck, kConfigAckPayloadLen);
+    write_u32_le(buf + kHeaderSize + 0, p.responder_uid);
+    std::memcpy(buf + kHeaderSize + 4, p.responder_numonce, 8);
+    buf[kHeaderSize + 12] = p.status;
+    buf[kHeaderSize + 13] = p.applied_keys;
     return total;
 }
 
@@ -586,6 +642,89 @@ DecodeResult decode_clear_screen(const Header& hdr,
     out.target_group = read_u16_le(payload + 0);   // v3: 2 bytes
     out.clear_text   = payload[2];
     out.clear_bitmap = payload[3];
+    return DecodeResult::Ok;
+}
+
+// Epic 21: authenticated config channel.
+DecodeResult decode_uid_announce(const Header& hdr,
+                                 const uint8_t* payload, size_t payload_len,
+                                 UidAnnouncePayload& out) {
+    if (hdr.message_type != MessageType::UidAnnounce) {
+        return DecodeResult::InvalidMessageType;
+    }
+    if (hdr.payload_len != payload_len) {
+        return DecodeResult::PayloadLenMismatch;
+    }
+    if (payload_len < kUidAnnounceMinPayloadLen ||
+        payload_len > kUidAnnounceMaxPayloadLen) {
+        return DecodeResult::PayloadLenMismatch;
+    }
+    const uint8_t fn_len = payload[22];
+    if (fn_len > kUidAnnounceMaxFriendlyNameLen) {
+        return DecodeResult::PayloadLenMismatch;
+    }
+    if (payload_len != static_cast<size_t>(kUidAnnounceFixedPrefixLen + fn_len)) {
+        return DecodeResult::PayloadLenMismatch;
+    }
+    out.uid  = read_u32_le(payload + 0);
+    std::memcpy(out.secret, payload + 4, 16);
+    out.role = payload[20];
+    out.host = payload[21];
+    out.friendly_name_len = fn_len;
+    // Zero the full buffer first so the trailing bytes past fn_len are
+    // deterministic regardless of what the struct's prior state was.
+    std::memset(out.friendly_name, 0, sizeof(out.friendly_name));
+    if (fn_len > 0) {
+        std::memcpy(out.friendly_name, payload + 23, fn_len);
+    }
+    return DecodeResult::Ok;
+}
+
+DecodeResult decode_config_write(const Header& hdr,
+                                 const uint8_t* payload, size_t payload_len,
+                                 ConfigWritePayload& out) {
+    if (hdr.message_type != MessageType::ConfigWrite) {
+        return DecodeResult::InvalidMessageType;
+    }
+    if (hdr.payload_len != payload_len) {
+        return DecodeResult::PayloadLenMismatch;
+    }
+    if (payload_len < kConfigWriteMinPayloadLen ||
+        payload_len > kConfigWriteMaxPayloadLen) {
+        return DecodeResult::PayloadLenMismatch;
+    }
+    const uint8_t bag_len = payload[12];
+    if (bag_len > kConfigWriteMaxBagLen) {
+        return DecodeResult::PayloadLenMismatch;
+    }
+    if (payload_len != static_cast<size_t>(kConfigWriteFixedOverhead + bag_len)) {
+        return DecodeResult::PayloadLenMismatch;
+    }
+    out.target_uid = read_u32_le(payload + 0);
+    std::memcpy(out.numonce, payload + 4, 8);
+    out.bag_len = bag_len;
+    std::memset(out.bag_tlv, 0, sizeof(out.bag_tlv));
+    if (bag_len > 0) {
+        std::memcpy(out.bag_tlv, payload + 13, bag_len);
+    }
+    std::memcpy(out.hmac, payload + 13 + bag_len, kConfigWriteHmacLen);
+    return DecodeResult::Ok;
+}
+
+DecodeResult decode_config_ack(const Header& hdr,
+                               const uint8_t* payload, size_t payload_len,
+                               ConfigAckPayload& out) {
+    if (hdr.message_type != MessageType::ConfigAck) {
+        return DecodeResult::InvalidMessageType;
+    }
+    if (hdr.payload_len != kConfigAckPayloadLen ||
+        payload_len     != kConfigAckPayloadLen) {
+        return DecodeResult::PayloadLenMismatch;
+    }
+    out.responder_uid = read_u32_le(payload + 0);
+    std::memcpy(out.responder_numonce, payload + 4, 8);
+    out.status        = payload[12];
+    out.applied_keys  = payload[13];
     return DecodeResult::Ok;
 }
 

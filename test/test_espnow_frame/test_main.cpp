@@ -1165,6 +1165,175 @@ static void test_v4_repeat_mask_pack_unpack_boundaries(void) {
 }
 
 // ---------------------------------------------------------------------------
+// Epic 21 — authenticated config channel frames
+// ---------------------------------------------------------------------------
+
+static void test_uid_announce_round_trip_with_friendly_name(void) {
+    uint8_t buf[64] = {};
+    UidAnnouncePayload p = {};
+    p.uid = 0x12345678u;
+    for (size_t i = 0; i < 16; ++i) p.secret[i] = (uint8_t)(0xA0 + i);
+    p.role = 0x02;
+    p.host = 0x03;
+    const char* name = "Front Left";
+    p.friendly_name_len = (uint8_t)std::strlen(name);
+    std::memcpy(p.friendly_name, name, p.friendly_name_len);
+
+    const Header hdr = make_header(/*source_id=*/0x1234, /*seq=*/5, /*hops=*/0);
+    const size_t n = encode_uid_announce(buf, sizeof(buf), hdr, p);
+    TEST_ASSERT_EQUAL_size_t(kHeaderSize + kUidAnnounceFixedPrefixLen + p.friendly_name_len, n);
+
+    Header hdr_out = {};
+    TEST_ASSERT_EQUAL(DecodeResult::Ok, decode_header(buf, n, hdr_out));
+    TEST_ASSERT_EQUAL(MessageType::UidAnnounce, hdr_out.message_type);
+
+    UidAnnouncePayload out = {};
+    TEST_ASSERT_EQUAL(DecodeResult::Ok,
+        decode_uid_announce(hdr_out, buf + kHeaderSize, hdr_out.payload_len, out));
+    TEST_ASSERT_EQUAL_HEX32(p.uid, out.uid);
+    TEST_ASSERT_EQUAL_MEMORY(p.secret, out.secret, 16);
+    TEST_ASSERT_EQUAL_UINT8(p.role, out.role);
+    TEST_ASSERT_EQUAL_UINT8(p.host, out.host);
+    TEST_ASSERT_EQUAL_UINT8(p.friendly_name_len, out.friendly_name_len);
+    TEST_ASSERT_EQUAL_MEMORY(p.friendly_name, out.friendly_name, p.friendly_name_len);
+}
+
+static void test_uid_announce_round_trip_empty_friendly_name(void) {
+    uint8_t buf[64] = {};
+    UidAnnouncePayload p = {};
+    p.uid = 0xDEADBEEFu;
+    p.role = 0x02;
+    p.host = 0x03;
+    p.friendly_name_len = 0;
+
+    const Header hdr = make_header();
+    const size_t n = encode_uid_announce(buf, sizeof(buf), hdr, p);
+    TEST_ASSERT_EQUAL_size_t(kHeaderSize + kUidAnnounceFixedPrefixLen, n);
+
+    Header hdr_out = {};
+    TEST_ASSERT_EQUAL(DecodeResult::Ok, decode_header(buf, n, hdr_out));
+    UidAnnouncePayload out = {};
+    TEST_ASSERT_EQUAL(DecodeResult::Ok,
+        decode_uid_announce(hdr_out, buf + kHeaderSize, hdr_out.payload_len, out));
+    TEST_ASSERT_EQUAL_UINT8(0, out.friendly_name_len);
+}
+
+static void test_uid_announce_rejects_oversize_friendly_name_claim(void) {
+    // Craft a payload byte-stream where the friendly_name_len claims
+    // more than the max. Decoder must reject rather than reading past
+    // the allocated struct buffer.
+    uint8_t buf[64] = {};
+    const Header hdr = make_header();
+    UidAnnouncePayload p = {};
+    p.uid = 1; p.role = 2; p.host = 3; p.friendly_name_len = 0;
+    const size_t n = encode_uid_announce(buf, sizeof(buf), hdr, p);
+    // Tamper: claim 100 bytes of friendly_name even though we only encoded 0.
+    buf[kHeaderSize + 22] = 100;
+    Header hdr_out = {};
+    TEST_ASSERT_EQUAL(DecodeResult::Ok, decode_header(buf, n, hdr_out));
+    UidAnnouncePayload out = {};
+    TEST_ASSERT_EQUAL(DecodeResult::PayloadLenMismatch,
+        decode_uid_announce(hdr_out, buf + kHeaderSize, hdr_out.payload_len, out));
+}
+
+static void test_config_write_round_trip_small_bag(void) {
+    uint8_t buf[128] = {};
+    ConfigWritePayload p = {};
+    p.target_uid = 0x2AF215C8u;
+    for (size_t i = 0; i < 8; ++i) p.numonce[i] = (uint8_t)(i + 1);
+    const uint8_t bag[] = {0x01, 0x05, 'g','r','o','u','p', 0x00, 0x01, 0x03};
+    p.bag_len = sizeof(bag);
+    std::memcpy(p.bag_tlv, bag, sizeof(bag));
+    for (size_t i = 0; i < kConfigWriteHmacLen; ++i) p.hmac[i] = (uint8_t)(0x80 + i);
+
+    const Header hdr = make_header(/*source_id=*/0x4001);
+    const size_t n = encode_config_write(buf, sizeof(buf), hdr, p);
+    TEST_ASSERT_EQUAL_size_t(kHeaderSize + kConfigWriteFixedOverhead + p.bag_len, n);
+
+    Header hdr_out = {};
+    TEST_ASSERT_EQUAL(DecodeResult::Ok, decode_header(buf, n, hdr_out));
+    TEST_ASSERT_EQUAL(MessageType::ConfigWrite, hdr_out.message_type);
+
+    ConfigWritePayload out = {};
+    TEST_ASSERT_EQUAL(DecodeResult::Ok,
+        decode_config_write(hdr_out, buf + kHeaderSize, hdr_out.payload_len, out));
+    TEST_ASSERT_EQUAL_HEX32(p.target_uid, out.target_uid);
+    TEST_ASSERT_EQUAL_MEMORY(p.numonce, out.numonce, 8);
+    TEST_ASSERT_EQUAL_UINT8(p.bag_len, out.bag_len);
+    TEST_ASSERT_EQUAL_MEMORY(p.bag_tlv, out.bag_tlv, p.bag_len);
+    TEST_ASSERT_EQUAL_MEMORY(p.hmac, out.hmac, kConfigWriteHmacLen);
+}
+
+static void test_config_write_round_trip_empty_bag(void) {
+    uint8_t buf[64] = {};
+    ConfigWritePayload p = {};
+    p.target_uid = 0xAAAA5555u;
+    p.bag_len = 0;
+    for (size_t i = 0; i < kConfigWriteHmacLen; ++i) p.hmac[i] = (uint8_t)(0xC0 + i);
+
+    const Header hdr = make_header();
+    const size_t n = encode_config_write(buf, sizeof(buf), hdr, p);
+    TEST_ASSERT_EQUAL_size_t(kHeaderSize + kConfigWriteFixedOverhead, n);
+
+    Header hdr_out = {};
+    TEST_ASSERT_EQUAL(DecodeResult::Ok, decode_header(buf, n, hdr_out));
+    ConfigWritePayload out = {};
+    TEST_ASSERT_EQUAL(DecodeResult::Ok,
+        decode_config_write(hdr_out, buf + kHeaderSize, hdr_out.payload_len, out));
+    TEST_ASSERT_EQUAL_UINT8(0, out.bag_len);
+    TEST_ASSERT_EQUAL_MEMORY(p.hmac, out.hmac, kConfigWriteHmacLen);
+}
+
+static void test_config_write_rejects_oversize_bag_claim(void) {
+    // Encode a valid short frame, then tamper the bag_len byte to claim
+    // more bytes than the payload holds. Decoder must reject.
+    uint8_t buf[64] = {};
+    const Header hdr = make_header();
+    ConfigWritePayload p = {};
+    p.target_uid = 1; p.bag_len = 0;
+    const size_t n = encode_config_write(buf, sizeof(buf), hdr, p);
+    buf[kHeaderSize + 12] = 200;   // claim a 200-byte bag we never wrote
+    Header hdr_out = {};
+    TEST_ASSERT_EQUAL(DecodeResult::Ok, decode_header(buf, n, hdr_out));
+    ConfigWritePayload out = {};
+    TEST_ASSERT_EQUAL(DecodeResult::PayloadLenMismatch,
+        decode_config_write(hdr_out, buf + kHeaderSize, hdr_out.payload_len, out));
+}
+
+static void test_config_ack_round_trip(void) {
+    uint8_t buf[32] = {};
+    ConfigAckPayload p = {};
+    p.responder_uid = 0x2AF215C8u;
+    for (size_t i = 0; i < 8; ++i) p.responder_numonce[i] = (uint8_t)(0x10 + i);
+    p.status = 0x00;
+    p.applied_keys = 5;
+
+    const Header hdr = make_header(/*source_id=*/0x8000);
+    const size_t n = encode_config_ack(buf, sizeof(buf), hdr, p);
+    TEST_ASSERT_EQUAL_size_t(kHeaderSize + kConfigAckPayloadLen, n);
+
+    Header hdr_out = {};
+    TEST_ASSERT_EQUAL(DecodeResult::Ok, decode_header(buf, n, hdr_out));
+    TEST_ASSERT_EQUAL(MessageType::ConfigAck, hdr_out.message_type);
+
+    ConfigAckPayload out = {};
+    TEST_ASSERT_EQUAL(DecodeResult::Ok,
+        decode_config_ack(hdr_out, buf + kHeaderSize, hdr_out.payload_len, out));
+    TEST_ASSERT_EQUAL_HEX32(p.responder_uid, out.responder_uid);
+    TEST_ASSERT_EQUAL_MEMORY(p.responder_numonce, out.responder_numonce, 8);
+    TEST_ASSERT_EQUAL_UINT8(p.status, out.status);
+    TEST_ASSERT_EQUAL_UINT8(p.applied_keys, out.applied_keys);
+}
+
+static void test_config_write_encode_buffer_too_small(void) {
+    uint8_t buf[8] = {};   // way too small
+    const Header hdr = make_header();
+    ConfigWritePayload p = {};
+    p.bag_len = 0;
+    TEST_ASSERT_EQUAL_size_t(0, encode_config_write(buf, sizeof(buf), hdr, p));
+}
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
@@ -1214,5 +1383,14 @@ int main(int, char**) {
     RUN_TEST(test_v4_light_wash_end_single_led_round_trip);
     RUN_TEST(test_v4_light_wash_pulse_single_led_round_trip);
     RUN_TEST(test_v4_repeat_mask_pack_unpack_boundaries);
+    // Epic 21 authenticated config channel
+    RUN_TEST(test_uid_announce_round_trip_with_friendly_name);
+    RUN_TEST(test_uid_announce_round_trip_empty_friendly_name);
+    RUN_TEST(test_uid_announce_rejects_oversize_friendly_name_claim);
+    RUN_TEST(test_config_write_round_trip_small_bag);
+    RUN_TEST(test_config_write_round_trip_empty_bag);
+    RUN_TEST(test_config_write_rejects_oversize_bag_claim);
+    RUN_TEST(test_config_ack_round_trip);
+    RUN_TEST(test_config_write_encode_buffer_too_small);
     return UNITY_END();
 }

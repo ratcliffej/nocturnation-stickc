@@ -128,6 +128,12 @@ enum class MessageType : uint8_t {
     // ignore it, and repeaters never relay it (census is point-to-Director
     // telemetry, not mesh traffic).
     RepeaterHeartbeat = 0x0D,
+    // Epic 21 (post-EMF): authenticated config channel. Deployed EMF
+    // Lumes silently drop these per [[project-emf-wire-spec-freeze]]
+    // (unknown types ignored), so adding them is forward-compatible.
+    UidAnnounce    = 0x0E,
+    ConfigWrite    = 0x0F,
+    ConfigAck      = 0x10,
     Extension      = 0xFF,
 };
 
@@ -170,6 +176,11 @@ constexpr hal::Capability message_type_required_capability(MessageType t) {
         case MessageType::LightWash:
         case MessageType::LightWashEnd:
         case MessageType::LightWashPulse:
+        // Epic 21 config channel frames: no device-class gate (every
+        // Lume with ESP-NOW RX participates in UID discovery + config).
+        case MessageType::UidAnnounce:
+        case MessageType::ConfigWrite:
+        case MessageType::ConfigAck:
         case MessageType::Extension:
         default:
             return kNoSpecificCapability;
@@ -458,6 +469,67 @@ struct ClearScreenPayload {
 };
 
 // =============================================================================
+// Epic 21: authenticated config channel payloads (UID_ANNOUNCE,
+// CONFIG_WRITE, CONFIG_ACK). See Docs/epics/epic-21-esp-now-config-
+// channel.md for the full design.
+// =============================================================================
+
+// Maximum friendly_name length carried in a UID_ANNOUNCE. Matches the
+// property-bag spec §5 cap of 20 bytes (persistence::save_friendly_name
+// clamps there too).
+constexpr uint8_t kUidAnnounceMaxFriendlyNameLen = 20;
+constexpr uint8_t kUidAnnounceFixedPrefixLen    = 23;   // uid(4) + secret(16) + role(1) + host(1) + friendly_len(1)
+constexpr uint8_t kUidAnnounceMinPayloadLen     = kUidAnnounceFixedPrefixLen;
+constexpr uint8_t kUidAnnounceMaxPayloadLen     =
+    kUidAnnounceFixedPrefixLen + kUidAnnounceMaxFriendlyNameLen;
+
+// UID_ANNOUNCE payload (variable 23..43 bytes). Emitted by a Lume in
+// pairing-burst mode (operator-triggered, bounded ~10 s window) so a
+// Director in a capture UX can register the device by its UID + secret.
+// Trust model: in-the-clear during that one bounded window; equivalent
+// to BLE pairing - physical access + intent assumed. See the Epic 21
+// design doc for the capture-path analysis.
+struct UidAnnouncePayload {
+    uint32_t uid;                                           // CRC32 of STA MAC
+    uint8_t  secret[16];                                    // HMAC-SHA256 key
+    uint8_t  role;                                          // Lume=0x02 etc (same enum as ble::Role)
+    uint8_t  host;                                          // ESP32 host (same enum as ble::Host)
+    uint8_t  friendly_name_len;                             // 0..kUidAnnounceMaxFriendlyNameLen
+    char     friendly_name[kUidAnnounceMaxFriendlyNameLen]; // bytes 0..friendly_name_len-1 valid
+};
+
+// CONFIG_WRITE wire layout: target_uid(4) + numonce(8) + bag_len(1) +
+// bag_tlv(0..kConfigWriteMaxBagLen) + hmac(8). The HMAC covers all
+// preceding bytes INCLUDING the header - the sender computes it over
+// [envelope_header .. end_of_bag_tlv] and writes the result into the
+// trailing 8 bytes. The receiver verifies the same range.
+constexpr uint8_t kConfigWriteHmacLen       = 8;     // truncated HMAC-SHA256
+constexpr uint8_t kConfigWriteMaxBagLen     = 220;   // leaves headroom under kMaxPayloadSize(242) - fixed overhead(21)
+constexpr uint8_t kConfigWriteFixedOverhead = 4 + 8 + 1 + kConfigWriteHmacLen;   // = 21
+constexpr uint16_t kConfigWriteMinPayloadLen = kConfigWriteFixedOverhead;        // empty bag
+constexpr uint16_t kConfigWriteMaxPayloadLen = kConfigWriteFixedOverhead + kConfigWriteMaxBagLen;
+
+struct ConfigWritePayload {
+    uint32_t target_uid;                             // which Lume this is for
+    uint8_t  numonce[8];                               // monotonic per sender; receiver tracks last-seen in LRU
+    uint8_t  bag_len;                                // 0..kConfigWriteMaxBagLen
+    uint8_t  bag_tlv[kConfigWriteMaxBagLen];         // property-bag TLV from the Epic 20 B3b codec
+    uint8_t  hmac[kConfigWriteHmacLen];              // caller fills zeros, signs, overwrites; see config_tx
+};
+
+// CONFIG_ACK payload (fixed 14 bytes). Emitted by a Lume on a
+// successful CONFIG_WRITE apply. Not authenticated - an attacker
+// forging acks only confuses the operator UI; no state changes.
+constexpr uint8_t kConfigAckPayloadLen = 14;   // uid(4) + numonce(8) + status(1) + applied_keys(1)
+
+struct ConfigAckPayload {
+    uint32_t responder_uid;                          // the Lume's own UID
+    uint8_t  responder_numonce[8];                     // echoes the write's numonce so the sender correlates
+    uint8_t  status;                                 // 0x00 = applied, 0x82 = value-out-of-range on at least one key, 0x81 = reserved
+    uint8_t  applied_keys;                           // count of property-bag entries successfully applied (debug aid)
+};
+
+// =============================================================================
 // Result codes
 // =============================================================================
 
@@ -507,6 +579,19 @@ size_t encode_clear_screen    (uint8_t* buf, size_t buf_len, const Header& hdr,
 // Headless repeater census.
 size_t encode_repeater_heartbeat(uint8_t* buf, size_t buf_len, const Header& hdr,
                                  const RepeaterHeartbeatPayload& p);
+
+// Epic 21 encoders. UID_ANNOUNCE + CONFIG_WRITE are variable-length;
+// CONFIG_ACK is fixed. CONFIG_WRITE's encoder writes p.hmac verbatim
+// into the trailing 8 bytes - callers that want a signed frame compute
+// the HMAC over the already-encoded buffer (header..end_of_bag_tlv)
+// and overwrite the last 8 bytes, or populate p.hmac first and encode
+// in one go.
+size_t encode_uid_announce    (uint8_t* buf, size_t buf_len, const Header& hdr,
+                               const UidAnnouncePayload& p);
+size_t encode_config_write    (uint8_t* buf, size_t buf_len, const Header& hdr,
+                               const ConfigWritePayload& p);
+size_t encode_config_ack      (uint8_t* buf, size_t buf_len, const Header& hdr,
+                               const ConfigAckPayload& p);
 
 // =============================================================================
 // Decoders
@@ -564,6 +649,17 @@ DecodeResult decode_bitmap_plane    (const Header& hdr,
 DecodeResult decode_clear_screen    (const Header& hdr,
                                      const uint8_t* payload, size_t payload_len,
                                      ClearScreenPayload& out);
+
+// Epic 21 decoders.
+DecodeResult decode_uid_announce    (const Header& hdr,
+                                     const uint8_t* payload, size_t payload_len,
+                                     UidAnnouncePayload& out);
+DecodeResult decode_config_write    (const Header& hdr,
+                                     const uint8_t* payload, size_t payload_len,
+                                     ConfigWritePayload& out);
+DecodeResult decode_config_ack      (const Header& hdr,
+                                     const uint8_t* payload, size_t payload_len,
+                                     ConfigAckPayload& out);
 
 }  // namespace espnow
 }  // namespace transport
