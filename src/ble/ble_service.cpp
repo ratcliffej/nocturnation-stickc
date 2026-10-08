@@ -72,6 +72,7 @@ NimBLECharacteristic* s_char_config      = nullptr;
 NimBLECharacteristic* s_char_status      = nullptr;
 NimBLECharacteristic* s_char_pair_ctrl   = nullptr;
 NimBLECharacteristic* s_char_show_pt     = nullptr;
+NimBLECharacteristic* s_char_device_secret = nullptr;
 
 // Compose the advertising name, honouring an operator-set friendly_name
 // override when present. Returns chars written (excluding NUL).
@@ -146,8 +147,41 @@ public:
         buf[15] = static_cast<uint8_t>((up_s >>  8) & 0xFF);
         buf[16] = static_cast<uint8_t>((up_s >> 16) & 0xFF);
         buf[17] = static_cast<uint8_t>((up_s >> 24) & 0xFF);
-        // 18..23 reserved (zero)
+        // Epic 21 B2: bytes 18-21 carry the device UID (CRC32 of STA
+        // MAC) as little-endian u32. Old clients that read 24 bytes
+        // and ignore the "reserved" range still see valid data; new
+        // clients can parse this field directly.
+        const uint32_t uid = modes::persistence::load_device_uid();
+        buf[18] = static_cast<uint8_t>( uid        & 0xFF);
+        buf[19] = static_cast<uint8_t>((uid >>  8) & 0xFF);
+        buf[20] = static_cast<uint8_t>((uid >> 16) & 0xFF);
+        buf[21] = static_cast<uint8_t>((uid >> 24) & 0xFF);
+        // 22..23 remain reserved (zero).
         chr->setValue(buf, sizeof(buf));
+    }
+};
+
+// ---- device_secret (Epic 21 B2) -------------------------------------------
+//
+// 16-byte per-device HMAC secret. READ-only; the callback refuses the
+// read with a 1-byte 0x81 status when the pairing window isn't open,
+// matching the refusal pattern the `config` write path uses outside
+// the window. During a pairing window the raw secret is returned so
+// the Director (or future phone app) can capture it into its register.
+
+class DeviceSecretCallbacks : public NimBLECharacteristicCallbacks {
+public:
+    void onRead(NimBLECharacteristic* chr) override {
+        auto& svc = ble_service();
+        if (svc.pairing_state() != PairingState::Open) {
+            const uint8_t refused = kStatusNotInPairingWindow;
+            chr->setValue(&refused, 1);
+            Serial.println("[ble] device_secret read refused: pairing window closed");
+            return;
+        }
+        uint8_t secret[16] = {};
+        modes::persistence::load_device_secret(secret);
+        chr->setValue(secret, sizeof(secret));
     }
 };
 
@@ -382,6 +416,7 @@ public:
 // Static instances so the callback pointers stay valid for the service
 // lifetime. NimBLE holds the pointer — no ownership transfer.
 DeviceInfoCallbacks       s_cb_device_info;
+DeviceSecretCallbacks     s_cb_device_secret;
 ConfigCallbacks           s_cb_config;
 StatusCallbacks           s_cb_status;
 PairingControlCallbacks   s_cb_pair_ctrl;
@@ -452,6 +487,14 @@ bool BleService::begin(Role role, Host host, uint8_t pair_win_s) {
         s_char_show_pt     = svc->createCharacteristic(uuid::kShowPassthrough,
                                                         NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
         s_char_show_pt->setCallbacks(&s_cb_show_pt);
+
+        // Epic 21 B2: per-device HMAC secret, READ-only, gated on the
+        // pairing window being Open. The callback (DeviceSecretCallbacks
+        // above) enforces the gate; the characteristic itself is just
+        // READ at the GATT layer.
+        s_char_device_secret = svc->createCharacteristic(uuid::kDeviceSecret,
+                                                         NIMBLE_PROPERTY::READ);
+        s_char_device_secret->setCallbacks(&s_cb_device_secret);
 
         svc->start();
 
