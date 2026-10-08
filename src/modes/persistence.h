@@ -127,6 +127,17 @@ void             load_device_secret(uint8_t out[16]);
 void             ensure_identity();
 uint32_t         compute_uid_from_mac(const uint8_t mac[6]);
 
+// Director numonce counter for authenticated CONFIG_WRITE emits
+// (Epic 21 B4). Monotonic u64 persisted in NVS as `cfg_numonce`.
+// 0 is the reserved sentinel; next_config_numonce() returns 1 on
+// first call after factory reset, 2 on the second, and so on,
+// writing-through to NVS each time so a Director reboot preserves
+// the sequence. The write cost is a few hundred µs on NVS - fine
+// at operator-triggered CONFIG_WRITE rates (seconds between emits,
+// not milliseconds).
+uint64_t         load_config_numonce();
+uint64_t         next_config_numonce();
+
 uint8_t          load_director_channel();
 void             save_director_channel(uint8_t c);
 
