@@ -32,6 +32,7 @@
 #endif
 #include "output_bindings/output_binding_context.h"
 #include "transport/espnow/frame.h"
+#include "transport/espnow/numonce_lru.h"
 #include "transport/espnow/tofu_lock.h"
 #include "transport/quality.h"
 
@@ -180,6 +181,45 @@ private:
     uint32_t ble_pair_return_after_ms_ = 0;
     static constexpr uint32_t kBlePairPulseHalfPeriodMs = 500;
     static constexpr uint32_t kBlePairTerminalHoldMs    = 500;
+
+    // Epic 21 B3e: UID_ANNOUNCE pairing-burst state. Mirrors the BLE
+    // pair lifecycle - a bounded operator-triggered window during which
+    // the Lume emits UID_ANNOUNCE frames every ~250 ms. A listening
+    // Director in "Capture new Lume" UX picks them up and captures the
+    // {UID, secret, friendly_name} into its register. See
+    // Docs/epics/epic-21-esp-now-config-channel.md B3e.
+    //
+    // No gesture wired in B3e - a caller (B7's double-tap-then-hold)
+    // invokes enter_pairing_burst() to open the window. Until B7 lands,
+    // this state machine is defined but dormant.
+    void enter_pairing_burst();
+    void exit_pairing_burst();
+    void tick_pairing_burst(uint32_t now);
+    void emit_uid_announce();
+    void emit_config_ack(uint64_t numonce, uint8_t status, uint8_t applied_keys);
+
+    // Per-sender numonce LRU for authenticated CONFIG_WRITE replay-
+    // protection. One instance per Lume - the LRU keys on Director
+    // source_id so multiple senders are tracked independently.
+    nocturnation::transport::espnow::NumonceLru config_numonces_;
+
+    bool     pairing_burst_active_         = false;
+    uint32_t pairing_burst_end_ms_         = 0;
+    uint32_t pairing_burst_next_emit_ms_   = 0;
+    uint32_t pairing_burst_next_led_edge_ms_ = 0;
+    bool     pairing_burst_led_on_         = false;
+    uint8_t  config_tx_seq_                = 0;   // header seq for our outbound config frames
+    static constexpr uint32_t kPairingBurstDurationMs       = 10000;  // 10 s window
+    static constexpr uint32_t kPairingBurstEmitPeriodMs     = 250;    // 4 Hz UID_ANNOUNCE
+    static constexpr uint32_t kPairingBurstLedHalfPeriodMs  = 250;    // fast pulse to distinguish from slow BLE-pair pulse
+
+    // Ack-flash on successful CONFIG_WRITE apply (Epic 21 B3d/B3e).
+    // Overlay-paints pixel 0 bright white for a short visible moment
+    // so the operator sees "config applied here". Rendered via the
+    // existing LedStripDriver overlay mechanism so the active wash
+    // doesn't paint over it.
+    uint32_t ack_flash_end_ms_   = 0;
+    static constexpr uint32_t kAckFlashDurationMs = 500;
 
     // Transport-agnostic - could feed off any sequenced protocol.
     transport::SignalQuality quality_;
