@@ -96,6 +96,66 @@ uint64_t send_config_write(uint32_t target_uid,
     return numonce;
 }
 
+// -------------------------------------------------------------------------
+// Epic 21 B6b: CONFIG_ACK listener ring.
+// -------------------------------------------------------------------------
+//
+// Small ring buffer of recently-received ACKs. The ESP-NOW RX dispatch
+// (installed by Config Lumes' Paired-fleet route) calls
+// on_config_ack_received() when it decodes a CONFIG_ACK frame.
+// wait_for_ack() scans the ring with a short polling delay.
+//
+// Not thread-safe in the strict sense - the ESP-NOW RX callback runs
+// on the WiFi task and wait_for_ack() runs on the Arduino loop task.
+// The ring uses interlocked index updates (volatile head_ += 1) and
+// each slot is written in a single pass before head_ advances, so a
+// torn read is impossible - either the slot has the new ACK or the
+// prior one. Good enough for this use case; the alternative (a
+// mutex) would need FreeRTOS primitives for a ~16-byte struct which
+// is overkill.
+
+namespace {
+constexpr size_t kAckRingSize = 8;
+struct AckSlot {
+    bool          valid;
+    ConfigAckInfo info;
+    uint32_t      received_ms;
+};
+AckSlot          s_ack_ring[kAckRingSize] = {};
+volatile size_t  s_ack_head = 0;   // next write slot (circular)
+}  // namespace
+
+void on_config_ack_received(const ConfigAckInfo& ack) {
+    const size_t slot = s_ack_head % kAckRingSize;
+    s_ack_ring[slot].info        = ack;
+    s_ack_ring[slot].received_ms = millis();
+    s_ack_ring[slot].valid       = true;
+    s_ack_head = (s_ack_head + 1) % kAckRingSize;
+}
+
+void clear_ack_ring() {
+    for (size_t i = 0; i < kAckRingSize; ++i) s_ack_ring[i] = {};
+    s_ack_head = 0;
+}
+
+bool wait_for_ack(uint32_t uid, uint64_t numonce, uint32_t timeout_ms,
+                  ConfigAckInfo& out) {
+    const uint32_t start = millis();
+    while ((millis() - start) < timeout_ms) {
+        for (size_t i = 0; i < kAckRingSize; ++i) {
+            if (!s_ack_ring[i].valid) continue;
+            if (s_ack_ring[i].info.responder_uid != uid) continue;
+            if (s_ack_ring[i].info.responder_numonce != numonce) continue;
+            out = s_ack_ring[i].info;
+            // Consume so a repeat retry doesn't re-match.
+            s_ack_ring[i].valid = false;
+            return true;
+        }
+        delay(10);
+    }
+    return false;
+}
+
 #endif   // ARDUINO
 
 }  // namespace ble

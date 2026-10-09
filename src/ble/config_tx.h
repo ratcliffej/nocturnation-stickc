@@ -45,6 +45,30 @@ size_t build_signed_config_write(uint8_t* out_buf, size_t out_cap,
 uint64_t send_config_write(uint32_t target_uid,
                            const uint8_t target_secret[16],
                            const uint8_t* bag_tlv, uint8_t bag_len);
+
+// CONFIG_ACK listener ring (Epic 21 B6b). The caller installs an ESP-NOW
+// recv callback that dispatches CONFIG_ACK frames into this ring via
+// on_config_ack_received(); subsequently wait_for_ack correlates by
+// (uid, numonce) with a short timeout. Fire-and-forget semantics
+// upstream — a missing ACK is "no confirmation", not a failure
+// (CONFIG_WRITE paths can land without a return path for the ACK;
+// see Epic 21 §Design).
+struct ConfigAckInfo {
+    uint32_t responder_uid;
+    uint64_t responder_numonce;
+    uint8_t  status;
+    uint8_t  applied_keys;
+};
+void on_config_ack_received(const ConfigAckInfo& ack);
+
+// Block up to `timeout_ms` for an ACK matching `uid` + `numonce`.
+// Returns true on hit (fills `out`). Returns false on timeout.
+bool wait_for_ack(uint32_t uid, uint64_t numonce, uint32_t timeout_ms,
+                  ConfigAckInfo& out);
+
+// Reset the ring (used when the Paired-fleet route enters, so stale
+// acks from a prior session don't false-positive a new wait).
+void clear_ack_ring();
 #endif
 
 }  // namespace ble

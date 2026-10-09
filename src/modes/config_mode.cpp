@@ -21,6 +21,8 @@
 #include "../ble/property_bag_tlv.h"
 #include "../ble/pair_register.h"
 #include "../ble/config_tx.h"
+#include "transport/espnow/frame.h"
+#include "hal/hal.h"   // Epic 21 B6b: raw ESP-NOW recv callback install
 
 #include <cstdio>
 #include <cstring>
@@ -217,6 +219,14 @@ void ConfigMode::loop_tick() {
             draw();
             return;
         }
+        // Epic 21 B6b: capture-via-ESP-NOW tick lives in a method
+        // defined down in the Config Lumes block so it can see the
+        // capture statics + flash constant.
+        if (cl_screen_ == ConfigLumesScreen::CaptureListening) {
+            tick_config_lumes_capture(now);
+            return;
+        }
+
         // When entering Scanning we've already fired the (blocking)
         // NimBLE scan; ble_service.scan_state() should already be Done
         // on entry to this tick. Transition into the list screen or
@@ -1854,8 +1864,19 @@ namespace {
 // mirror the top-level "Group" system-item cycle. Kept in sync with
 // the wire-supported range even though the wire itself allows 0..255.
 constexpr uint8_t kConfigLumesGroupMax = 6;
-constexpr uint32_t kConfigLumesScanMs   = 5000;
-constexpr uint32_t kConfigLumesFlashMs  = 1200;
+constexpr uint32_t kConfigLumesScanMs          = 5000;
+constexpr uint32_t kConfigLumesFlashMs         = 1200;
+constexpr uint32_t kConfigLumesCaptureWindowMs = 15000;  // Epic 21 B6b
+constexpr uint32_t kConfigLumesAckTimeoutMs    = 1500;   // Epic 21 B6b
+
+// Epic 21 B6b: UID_ANNOUNCE RX hand-off from the WiFi task to the main
+// loop. The recv callback stashes a captured payload here; loop_tick
+// picks it up (needs NVS writes which we don't want to make from the
+// WiFi task). Single-slot - if a second burst arrives before loop_tick
+// processes the first, the second is ignored. OK for v1; capture is a
+// bounded one-shot per operator trigger.
+nocturnation::transport::espnow::UidAnnouncePayload s_pending_capture_ = {};
+volatile bool                                        s_pending_capture_ready_ = false;
 
 // Per-field cycle helpers (Epic 20 B11 bench 2026-09-23). Each returns
 // the next value in that field's discrete cycle wrapping back to the
@@ -1980,10 +2001,104 @@ void ConfigMode::exit_config_lumes() {
     cl_screen_               = ConfigLumesScreen::Scanning;
     cl_return_after_         = 0;
     cl_paired_route_active_  = false;
+    cl_capture_end_ms_       = 0;
+    cl_captured_uid_         = 0;
+    cl_captured_name_[0]     = '\0';
+    // Clear the ESP-NOW recv callback we installed for Paired-fleet /
+    // Capture flows. Lume/Director modes will reinstall their own on
+    // next mode entry.
+    if (auto* radio = hal::HAL::esp_now()) {
+        radio->set_recv_callback(nullptr);
+    }
     level_                   = Level::Top;
     active_sub_              = SubMenu::None;
     active_picker_           = SubMenu::None;
     draw();
+}
+
+void ConfigMode::tick_config_lumes_capture(uint32_t now) {
+    // RX callback stashed a payload - commit it to the register here
+    // on the main task where Preferences writes are safe.
+    if (s_pending_capture_ready_) {
+        const auto p = s_pending_capture_;
+        s_pending_capture_ready_ = false;
+        ble::RegisterEntry re = {};
+        re.uid  = p.uid;
+        std::memcpy(re.secret, p.secret, 16);
+        re.role = p.role;
+        re.host = p.host;
+        const size_t n = (p.friendly_name_len > 20) ? 20 : p.friendly_name_len;
+        for (size_t i = 0; i < n; ++i) re.friendly_name[i] = p.friendly_name[i];
+        re.friendly_name[n] = '\0';
+        // Fallback name if the Lume had no friendly_name (its NVS was
+        // blank). Hex UID keeps the paired-fleet list readable.
+        if (n == 0) {
+            std::snprintf(re.friendly_name, sizeof(re.friendly_name),
+                          "NTN%08lX", (unsigned long)p.uid);
+            const size_t ln = strnlen(re.friendly_name, 20);
+            std::memcpy(cl_captured_name_, re.friendly_name, ln);
+            cl_captured_name_[ln] = '\0';
+        }
+        ble::pair_register().add(re);
+        Serial.printf("[config] captured uid=%08X name=%s\n",
+                      (unsigned)p.uid, re.friendly_name);
+        cl_screen_       = ConfigLumesScreen::CaptureCaptured;
+        cl_return_after_ = millis() + kConfigLumesFlashMs;
+        draw();
+        return;
+    }
+    // No capture yet - time out after the window closes.
+    if (now >= cl_capture_end_ms_) {
+        exit_config_lumes();
+    }
+}
+
+void ConfigMode::start_espnow_for_config_route() {
+    using namespace nocturnation::transport::espnow;
+    auto* bcast = dal::esp_now_broadcast_driver_instance();
+    if (bcast && !bcast->active()) {
+        bcast->start_broadcast(persistence::load_director_channel());
+        Serial.printf("[config] ESP-NOW TX up on ch=%u for config route\n",
+                      (unsigned)persistence::load_director_channel());
+    }
+    ble::clear_ack_ring();
+    auto* radio = hal::HAL::esp_now();
+    if (!radio) return;
+    radio->set_recv_callback([this](const hal::ESPNowMessage& m) {
+        Header hdr{};
+        if (decode_header(m.data, m.len, hdr) != DecodeResult::Ok) return;
+        if (hdr.message_type == MessageType::ConfigAck) {
+            ConfigAckPayload p{};
+            if (decode_config_ack(hdr, m.data + kHeaderSize,
+                                   hdr.payload_len, p) != DecodeResult::Ok) return;
+            ble::ConfigAckInfo info{};
+            info.responder_uid     = p.responder_uid;
+            uint64_t n = 0;
+            for (int i = 7; i >= 0; --i) n = (n << 8) | p.responder_numonce[i];
+            info.responder_numonce = n;
+            info.status            = p.status;
+            info.applied_keys      = p.applied_keys;
+            ble::on_config_ack_received(info);
+            return;
+        }
+        if (hdr.message_type == MessageType::UidAnnounce
+            && cl_screen_ == ConfigLumesScreen::CaptureListening
+            && cl_captured_uid_ == 0) {
+            UidAnnouncePayload a{};
+            if (decode_uid_announce(hdr, m.data + kHeaderSize,
+                                     hdr.payload_len, a) != DecodeResult::Ok) return;
+            // Stash fields; main loop_tick will process (NVS write +
+            // state transition) on the main task - safer than touching
+            // Preferences from the WiFi RX callback.
+            cl_captured_uid_ = a.uid;
+            const size_t n = (a.friendly_name_len > 20) ? 20 : a.friendly_name_len;
+            for (size_t i = 0; i < n; ++i) cl_captured_name_[i] = a.friendly_name[i];
+            cl_captured_name_[n] = '\0';
+            // Stash the whole payload in a static for loop_tick pickup.
+            s_pending_capture_ = a;
+            s_pending_capture_ready_ = true;
+        }
+    });
 }
 
 void ConfigMode::handle_config_lumes(const ButtonPressEvent& ev) {
@@ -2161,7 +2276,7 @@ void ConfigMode::handle_config_lumes(const ButtonPressEvent& ev) {
         // Epic 21 B6a: mode-select + paired-fleet route.
         case ConfigLumesScreen::ModeSelect:
             if (ev.id == ButtonId::Btn2) {
-                cl_mode_select_cursor_ = cl_mode_select_cursor_ ? 0 : 1;
+                cl_mode_select_cursor_ = (cl_mode_select_cursor_ + 1) % 3;
                 draw();
             } else if (ev.id == ButtonId::Btn1) {
                 if (cl_mode_select_cursor_ == 0) {
@@ -2181,28 +2296,24 @@ void ConfigMode::handle_config_lumes(const ButtonPressEvent& ev) {
                     cl_screen_ = ConfigLumesScreen::Scanning;
                     draw();
                     ble::ble_service().start_scan(kConfigLumesScanMs);
-                } else {
+                } else if (cl_mode_select_cursor_ == 1) {
                     cl_paired_route_active_ = true;
                     cl_paired_selected_     = 0;
-                    // Epic 21 B6a bench-fix (Jason 2026-10-09): Config
-                    // mode doesn't start ESP-NOW by default (only Director/
-                    // Lume do), so send_broadcast returned false silently
-                    // and the write looked like it just failed. Spin up
-                    // the broadcast driver here so send_config_write can
-                    // actually put bytes on air. Channel from NVS matches
-                    // DirectorMode's choice so a running fleet's channel
-                    // is reused if the operator has configured one.
-                    auto* bcast = dal::esp_now_broadcast_driver_instance();
-                    if (bcast && !bcast->active()) {
-                        bcast->start_broadcast(persistence::load_director_channel());
-                        Serial.printf("[config] ESP-NOW TX up on ch=%u for Paired-fleet\n",
-                                      (unsigned)persistence::load_director_channel());
-                    }
+                    start_espnow_for_config_route();
                     if (ble::pair_register().count() == 0) {
                         cl_screen_ = ConfigLumesScreen::PairedEmpty;
                     } else {
                         cl_screen_ = ConfigLumesScreen::PairedBrowsing;
                     }
+                    draw();
+                } else {
+                    // Capture via ESP-NOW route (B6b).
+                    cl_paired_route_active_ = true;   // same ESP-NOW machinery
+                    cl_captured_uid_        = 0;
+                    cl_captured_name_[0]    = '\0';
+                    cl_capture_end_ms_      = millis() + kConfigLumesCaptureWindowMs;
+                    start_espnow_for_config_route();
+                    cl_screen_              = ConfigLumesScreen::CaptureListening;
                     draw();
                 }
             }
@@ -2315,7 +2426,27 @@ void ConfigMode::handle_config_lumes(const ButtonPressEvent& ev) {
                             snap.strip_group_size = cl_current_.strip_group_size;
                             snap.pair_win_s       = cl_current_.pair_win_s;
                             ble::pair_register().update_snapshot(ent.uid, snap);
-                            cl_screen_ = ConfigLumesScreen::Success;
+                            // Epic 21 B6b: wait briefly for CONFIG_ACK.
+                            // Missing ACK isn't a failure (see Epic 21
+                            // §Design "ACK delivery is best-effort") -
+                            // just surface Unconfirmed instead of
+                            // Success.
+                            ble::ConfigAckInfo ack{};
+                            const bool got = ble::wait_for_ack(
+                                ent.uid, numonce, kConfigLumesAckTimeoutMs, ack);
+                            if (got) {
+                                Serial.printf("[config] ACK uid=%08X numonce=%lu status=%02X keys=%u\n",
+                                              (unsigned)ack.responder_uid,
+                                              (unsigned long)ack.responder_numonce,
+                                              (unsigned)ack.status,
+                                              (unsigned)ack.applied_keys);
+                            } else {
+                                Serial.printf("[config] no ACK uid=%08X numonce=%lu (unconfirmed)\n",
+                                              (unsigned)ent.uid, (unsigned long)numonce);
+                            }
+                            cl_screen_ = got
+                                ? ConfigLumesScreen::Success
+                                : ConfigLumesScreen::PairedUnconfirmed;
                         } else {
                             cl_screen_ = ConfigLumesScreen::Failed;
                         }
@@ -2327,14 +2458,27 @@ void ConfigMode::handle_config_lumes(const ButtonPressEvent& ev) {
             }
             break;
 
+        case ConfigLumesScreen::CaptureListening:
+            // Any button cancels the capture window early.
+            cl_captured_uid_ = 0;
+            exit_config_lumes();
+            break;
+        case ConfigLumesScreen::CaptureCaptured:
+            // Any button returns to ModeSelect so the operator can
+            // capture another device or move on.
+            cl_captured_uid_ = 0;
+            cl_screen_ = ConfigLumesScreen::ModeSelect;
+            draw();
+            break;
+
         case ConfigLumesScreen::Reading:
         case ConfigLumesScreen::Writing:
         case ConfigLumesScreen::PairedWriting:
         case ConfigLumesScreen::Success:
         case ConfigLumesScreen::Failed:
         case ConfigLumesScreen::ReadFailed:
-            // Terminal / in-flight states; loop_tick will auto-return
-            // (Reading returns via the synchronous read call above).
+        case ConfigLumesScreen::PairedUnconfirmed:
+            // Terminal / in-flight states; loop_tick will auto-return.
             break;
     }
 }
@@ -2445,8 +2589,12 @@ void ConfigMode::draw_config_lumes() {
             break;
         // Epic 21 B6a: paired-fleet draws.
         case ConfigLumesScreen::ModeSelect: {
-            const char* rows[2] = { "Live scan (BLE)", "Paired fleet" };
-            for (int i = 0; i < 2; ++i) {
+            const char* rows[3] = {
+                "Live scan (BLE)",
+                "Paired fleet",
+                "Capture (ESP-NOW)",
+            };
+            for (int i = 0; i < 3; ++i) {
                 const bool sel = (cl_mode_select_cursor_ == i);
                 char buf[32];
                 std::snprintf(buf, sizeof(buf), "%s %s", sel ? ">" : " ", rows[i]);
@@ -2457,6 +2605,35 @@ void ConfigMode::draw_config_lumes() {
                 10, 122, "B: next  A: pick", WHITE, BLACK, 1});
             break;
         }
+        case ConfigLumesScreen::CaptureListening:
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 40, "Capturing...", YELLOW, BLACK, 2});
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 70, "On the Lume:", WHITE, BLACK, 1});
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 86, "Btn1 double-tap+hold", WHITE, BLACK, 1});
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 122, "Any button: cancel", WHITE, BLACK, 1});
+            break;
+        case ConfigLumesScreen::CaptureCaptured: {
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 40, "Captured!", GREEN, BLACK, 2});
+            if (cl_captured_name_[0]) {
+                DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                    10, 70, cl_captured_name_, WHITE, BLACK, 2});
+            }
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 122, "Any button: back", WHITE, BLACK, 1});
+            break;
+        }
+        case ConfigLumesScreen::PairedUnconfirmed:
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 40, "Written", YELLOW, BLACK, 2});
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 70, "No confirmation", WHITE, BLACK, 1});
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 86, "(may still have landed)", WHITE, BLACK, 1});
+            break;
         case ConfigLumesScreen::PairedEmpty:
             DAL::fire_display_show_text("local", DisplayShowTextEvent{
                 10, 40, "Register empty", YELLOW, BLACK, 2});
