@@ -157,9 +157,17 @@ void save_dir_calm(bool e) {
 #endif
 
 uint8_t load_retx_count() {
+    // isKey() guard silences the Preferences verbose NOT_FOUND log on
+    // first boot. Same pattern as load_dir_calm.
     Preferences prefs;
-    prefs.begin("noct", /*readOnly=*/true);
-    uint8_t n = prefs.getUChar("retx_count", ESPNOW_RETRANSMITS_DEFAULT);
+    prefs.begin("noct", /*readOnly=*/false);
+    uint8_t n;
+    if (prefs.isKey("retx_count")) {
+        n = prefs.getUChar("retx_count", ESPNOW_RETRANSMITS_DEFAULT);
+    } else {
+        n = ESPNOW_RETRANSMITS_DEFAULT;
+        prefs.putUChar("retx_count", n);
+    }
     prefs.end();
     if (n < 1) n = 1;
     if (n > 5) n = 5;

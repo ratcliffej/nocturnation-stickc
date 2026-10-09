@@ -2133,6 +2133,18 @@ void ConfigMode::handle_config_lumes(const ButtonPressEvent& ev) {
                                     re.friendly_name[i] = name_src[i];
                                 re.friendly_name[n] = '\0';
                                 ble::pair_register().add(re);
+                                // Hotfix 2026-10-09: also snapshot the
+                                // just-written values so the Paired-
+                                // fleet editor prefills with reality,
+                                // not generic defaults.
+                                ble::ConfigSnapshot snap = {};
+                                snap.group            = cl_current_.group;
+                                snap.led_power        = cl_current_.led_power;
+                                snap.channel_pref     = cl_current_.channel_pref;
+                                snap.strip_chain      = cl_current_.strip_chain;
+                                snap.strip_group_size = cl_current_.strip_group_size;
+                                snap.pair_win_s       = cl_current_.pair_win_s;
+                                ble::pair_register().update_snapshot(cl_current_.uid, snap);
                             }
                             cl_screen_ = ConfigLumesScreen::Success;
                         } else {
@@ -2215,10 +2227,26 @@ void ConfigMode::handle_config_lumes(const ButtonPressEvent& ev) {
                 // READ frame type). Operator sees defaults, cycles
                 // what they want, hits Write.
                 cl_current_ = LumeCurrent{};
-                cl_current_.channel_pref     = 0;   // auto
-                cl_current_.strip_chain      = 1;
-                cl_current_.strip_group_size = 1;
-                cl_current_.pair_win_s       = 180;
+                // Hotfix 2026-10-09: prefill from the register snapshot
+                // if we have one (set after any prior write to this UID).
+                // Else fall back to sensible generic defaults.
+                ble::RegisterEntry rows[ble::PairRegister::kMaxEntries] = {};
+                const size_t n = ble::pair_register()
+                    .list_sorted_by_captured_at(rows, ble::PairRegister::kMaxEntries);
+                if (cl_paired_selected_ < n && rows[cl_paired_selected_].snap_valid) {
+                    const auto& e = rows[cl_paired_selected_];
+                    cl_current_.group            = e.snap_group;
+                    cl_current_.led_power        = e.snap_led_power;
+                    cl_current_.channel_pref     = e.snap_channel_pref;
+                    cl_current_.strip_chain      = e.snap_strip_chain;
+                    cl_current_.strip_group_size = e.snap_strip_group_size;
+                    cl_current_.pair_win_s       = e.snap_pair_win_s;
+                } else {
+                    cl_current_.channel_pref     = 0;   // auto
+                    cl_current_.strip_chain      = 1;
+                    cl_current_.strip_group_size = 1;
+                    cl_current_.pair_win_s       = 180;
+                }
                 cl_edit_selected_ = 0;
                 cl_screen_        = ConfigLumesScreen::PairedEditing;
                 draw();
@@ -2282,7 +2310,14 @@ void ConfigMode::handle_config_lumes(const ButtonPressEvent& ev) {
                         const uint64_t numonce = ble::send_config_write(
                             ent.uid, ent.secret, bag, static_cast<uint8_t>(enc.size()));
                         if (numonce != 0) {
-                            ble::pair_register().mark_configured(ent.uid);
+                            ble::ConfigSnapshot snap = {};
+                            snap.group            = cl_current_.group;
+                            snap.led_power        = cl_current_.led_power;
+                            snap.channel_pref     = cl_current_.channel_pref;
+                            snap.strip_chain      = cl_current_.strip_chain;
+                            snap.strip_group_size = cl_current_.strip_group_size;
+                            snap.pair_win_s       = cl_current_.pair_win_s;
+                            ble::pair_register().update_snapshot(ent.uid, snap);
                             cl_screen_ = ConfigLumesScreen::Success;
                         } else {
                             cl_screen_ = ConfigLumesScreen::Failed;
@@ -2448,11 +2483,16 @@ void ConfigMode::draw_config_lumes() {
             for (size_t i = first; i < last_excl; ++i) {
                 const bool sel = (i == cl_paired_selected_);
                 char row[32];
+                // Hotfix 2026-10-09: friendly_name only (no UID prefix).
+                // register.add() populates friendly_name from the Lume's
+                // TLV if set, else from the BLE adv name (NTN12C15), so
+                // this is always non-empty for devices captured via Live-
+                // scan. ESP-NOW UID_ANNOUNCE capture (future B6b) will
+                // need to apply the same fallback.
                 const char* name = rows[i].friendly_name[0]
                     ? rows[i].friendly_name : "(unnamed)";
-                std::snprintf(row, sizeof(row), "%s %08lX %s",
-                              sel ? ">" : " ",
-                              (unsigned long)rows[i].uid, name);
+                std::snprintf(row, sizeof(row), "%s %s",
+                              sel ? ">" : " ", name);
                 DAL::fire_display_show_text("local", DisplayShowTextEvent{
                     10, kRowY0 + static_cast<int>(i - first) * kRowStride,
                     row, sel ? YELLOW : WHITE, BLACK, 2});

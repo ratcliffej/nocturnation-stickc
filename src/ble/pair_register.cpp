@@ -13,15 +13,14 @@ namespace ble {
 
 namespace {
 
-// On-NVS blob layout: entry_count (u8) + next_sequence_val (u32)
-// + packed array of RegisterEntry. Header lets us detect "no register
-// yet" cheaply (count = 0 or blob missing entirely) and preserves
-// the monotonic sequence across reboots.
-constexpr const char* kBlobKey = "pair_reg";
-
-#ifdef ARDUINO
-constexpr size_t kBlobHeaderSize = 1 + 4;   // count + next_sequence
-#endif
+// On-NVS blob layout: version (u8) + entry_count (u8) + next_sequence_val
+// (u32) + packed array of RegisterEntry. Version byte lets us
+// clean-slate a register captured under an older RegisterEntry layout
+// instead of silently loading corrupt bytes. Bumped at Epic 21 B6a
+// hotfix 2026-10-09 when the snapshot fields were added.
+constexpr const char* kBlobKey     = "pair_reg";
+constexpr uint8_t     kBlobVersion = 2;
+constexpr size_t      kBlobHeaderSize = 1 + 1 + 4;   // version + count + next_sequence
 
 }  // namespace
 
@@ -136,6 +135,24 @@ bool PairRegister::mark_configured(uint32_t uid) {
     return false;
 }
 
+bool PairRegister::update_snapshot(uint32_t uid, const ConfigSnapshot& s) {
+    for (size_t i = 0; i < count_; ++i) {
+        if (entries_[i].uid == uid) {
+            entries_[i].snap_group            = s.group;
+            entries_[i].snap_led_power        = s.led_power;
+            entries_[i].snap_channel_pref     = s.channel_pref;
+            entries_[i].snap_strip_chain      = s.strip_chain;
+            entries_[i].snap_strip_group_size = s.strip_group_size;
+            entries_[i].snap_pair_win_s       = s.pair_win_s;
+            entries_[i].snap_valid            = 1;
+            entries_[i].last_configured_at    = next_sequence_();
+            save();
+            return true;
+        }
+    }
+    return false;
+}
+
 void PairRegister::clear_in_memory() {
     for (size_t i = 0; i < kMaxEntries; ++i) entries_[i] = {};
     count_ = 0;
@@ -153,23 +170,23 @@ void PairRegister::load() {
         prefs.end();
         return;
     }
-    // Max possible blob size.
     uint8_t raw[kBlobHeaderSize + sizeof(RegisterEntry) * kMaxEntries];
-    const size_t cap = sizeof(raw);
-    const size_t to_read = blob_len < cap ? blob_len : cap;
+    const size_t to_read = blob_len < sizeof(raw) ? blob_len : sizeof(raw);
     prefs.getBytes(kBlobKey, raw, to_read);
     prefs.end();
 
-    const uint8_t  count = raw[0];
-    const uint32_t seq   = (uint32_t)raw[1]
-                         | ((uint32_t)raw[2] << 8)
-                         | ((uint32_t)raw[3] << 16)
-                         | ((uint32_t)raw[4] << 24);
-    const size_t expected = kBlobHeaderSize + (size_t)count * sizeof(RegisterEntry);
-    if (count > kMaxEntries || to_read < expected) {
-        // Corrupt or truncated — leave empty.
+    if (raw[0] != kBlobVersion) {
+        // Older format - operator will re-pair. Low cost for v1; the
+        // alternative (migrate) would need per-version decoders.
         return;
     }
+    const uint8_t  count = raw[1];
+    const uint32_t seq   = (uint32_t)raw[2]
+                         | ((uint32_t)raw[3] << 8)
+                         | ((uint32_t)raw[4] << 16)
+                         | ((uint32_t)raw[5] << 24);
+    const size_t expected = kBlobHeaderSize + (size_t)count * sizeof(RegisterEntry);
+    if (count > kMaxEntries || to_read < expected) return;
     count_             = count;
     next_sequence_val_ = seq ? seq : 1;
     std::memcpy(entries_, raw + kBlobHeaderSize,
@@ -179,11 +196,12 @@ void PairRegister::load() {
 void PairRegister::save() const {
     const size_t blob_len = kBlobHeaderSize + count_ * sizeof(RegisterEntry);
     uint8_t raw[kBlobHeaderSize + sizeof(RegisterEntry) * kMaxEntries];
-    raw[0] = static_cast<uint8_t>(count_);
-    raw[1] = static_cast<uint8_t>( next_sequence_val_        & 0xFF);
-    raw[2] = static_cast<uint8_t>((next_sequence_val_ >>  8) & 0xFF);
-    raw[3] = static_cast<uint8_t>((next_sequence_val_ >> 16) & 0xFF);
-    raw[4] = static_cast<uint8_t>((next_sequence_val_ >> 24) & 0xFF);
+    raw[0] = kBlobVersion;
+    raw[1] = static_cast<uint8_t>(count_);
+    raw[2] = static_cast<uint8_t>( next_sequence_val_        & 0xFF);
+    raw[3] = static_cast<uint8_t>((next_sequence_val_ >>  8) & 0xFF);
+    raw[4] = static_cast<uint8_t>((next_sequence_val_ >> 16) & 0xFF);
+    raw[5] = static_cast<uint8_t>((next_sequence_val_ >> 24) & 0xFF);
     std::memcpy(raw + kBlobHeaderSize, entries_,
                 count_ * sizeof(RegisterEntry));
     Preferences prefs;
@@ -195,34 +213,36 @@ void PairRegister::save() const {
 #else   // !ARDUINO: native stub, process-static buffer.
 
 namespace {
-uint8_t  s_native_pair_blob[1 + 4 + sizeof(RegisterEntry) * PairRegister::kMaxEntries] = {};
+uint8_t  s_native_pair_blob[kBlobHeaderSize + sizeof(RegisterEntry) * PairRegister::kMaxEntries] = {};
 size_t   s_native_pair_blob_len = 0;
 }  // namespace
 
 void PairRegister::load() {
     clear_in_memory();
-    if (s_native_pair_blob_len < 5) return;
-    const uint8_t count = s_native_pair_blob[0];
-    const uint32_t seq  = (uint32_t)s_native_pair_blob[1]
-                         | ((uint32_t)s_native_pair_blob[2] << 8)
-                         | ((uint32_t)s_native_pair_blob[3] << 16)
-                         | ((uint32_t)s_native_pair_blob[4] << 24);
+    if (s_native_pair_blob_len < kBlobHeaderSize) return;
+    if (s_native_pair_blob[0] != kBlobVersion) return;
+    const uint8_t count = s_native_pair_blob[1];
+    const uint32_t seq  = (uint32_t)s_native_pair_blob[2]
+                         | ((uint32_t)s_native_pair_blob[3] << 8)
+                         | ((uint32_t)s_native_pair_blob[4] << 16)
+                         | ((uint32_t)s_native_pair_blob[5] << 24);
     if (count > kMaxEntries) return;
     count_             = count;
     next_sequence_val_ = seq ? seq : 1;
-    std::memcpy(entries_, s_native_pair_blob + 5,
+    std::memcpy(entries_, s_native_pair_blob + kBlobHeaderSize,
                 (size_t)count * sizeof(RegisterEntry));
 }
 
 void PairRegister::save() const {
-    s_native_pair_blob[0] = static_cast<uint8_t>(count_);
-    s_native_pair_blob[1] = static_cast<uint8_t>( next_sequence_val_        & 0xFF);
-    s_native_pair_blob[2] = static_cast<uint8_t>((next_sequence_val_ >>  8) & 0xFF);
-    s_native_pair_blob[3] = static_cast<uint8_t>((next_sequence_val_ >> 16) & 0xFF);
-    s_native_pair_blob[4] = static_cast<uint8_t>((next_sequence_val_ >> 24) & 0xFF);
-    std::memcpy(s_native_pair_blob + 5, entries_,
+    s_native_pair_blob[0] = kBlobVersion;
+    s_native_pair_blob[1] = static_cast<uint8_t>(count_);
+    s_native_pair_blob[2] = static_cast<uint8_t>( next_sequence_val_        & 0xFF);
+    s_native_pair_blob[3] = static_cast<uint8_t>((next_sequence_val_ >>  8) & 0xFF);
+    s_native_pair_blob[4] = static_cast<uint8_t>((next_sequence_val_ >> 16) & 0xFF);
+    s_native_pair_blob[5] = static_cast<uint8_t>((next_sequence_val_ >> 24) & 0xFF);
+    std::memcpy(s_native_pair_blob + kBlobHeaderSize, entries_,
                 count_ * sizeof(RegisterEntry));
-    s_native_pair_blob_len = 5 + count_ * sizeof(RegisterEntry);
+    s_native_pair_blob_len = kBlobHeaderSize + count_ * sizeof(RegisterEntry);
 }
 
 // Test seam exposed for native tests only — reset the NVS stub.
