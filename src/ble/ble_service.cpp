@@ -107,7 +107,18 @@ size_t compose_adv_name(char* buf, size_t buflen, const uint8_t* mac) {
         static_cast<unsigned>(mac[3]),
         static_cast<unsigned>(mac[4]),
         static_cast<unsigned>((mac[5] >> 4) & 0x0F));
-    return (n < 0) ? 0 : static_cast<size_t>(n);
+    if (n <= 0) return 0;
+    // Epic 21 B6a hotfix 2026-10-09: persist the computed default back
+    // to NVS so subsequent reads (BLE advertising, config TLV, register
+    // capture, phone-app rename UI) see a stable non-blank string. The
+    // operator can overwrite with "Lantern 7" via config write; this
+    // just guarantees we never show "(unnamed)" anywhere.
+    //
+    // Only writes NVS on first boot - a saved name of the same value
+    // on subsequent calls would hit the Preferences wear path for no
+    // reason, so the `fn_len == 0` branch already gates that.
+    modes::persistence::save_friendly_name(buf);
+    return static_cast<size_t>(n);
 }
 
 bool fetch_bt_mac(uint8_t out[6]) {
