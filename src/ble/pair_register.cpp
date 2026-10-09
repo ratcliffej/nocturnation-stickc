@@ -108,6 +108,28 @@ const RegisterEntry* PairRegister::find(uint32_t uid) const {
     return nullptr;
 }
 
+const RegisterEntry* PairRegister::nth_sorted(size_t sorted_index) const {
+    if (sorted_index >= count_) return nullptr;
+    // Find the (sorted_index + 1)-th largest captured_at by rank.
+    // Count how many entries have captured_at strictly greater than
+    // each candidate - the one with exactly `sorted_index` greater
+    // entries is the one we want.
+    const RegisterEntry* best = nullptr;
+    for (size_t i = 0; i < count_; ++i) {
+        size_t rank_above = 0;
+        for (size_t j = 0; j < count_; ++j) {
+            if (j == i) continue;
+            if (entries_[j].captured_at > entries_[i].captured_at) ++rank_above;
+            else if (entries_[j].captured_at == entries_[i].captured_at && j < i) ++rank_above;
+        }
+        if (rank_above == sorted_index) {
+            best = &entries_[i];
+            break;
+        }
+    }
+    return best;
+}
+
 size_t PairRegister::list_sorted_by_captured_at(RegisterEntry* out, size_t cap) const {
     const size_t n = (count_ < cap) ? count_ : cap;
     for (size_t i = 0; i < n; ++i) out[i] = entries_[i];

@@ -109,6 +109,13 @@ public:
     // (min(count_, cap)).
     size_t list_sorted_by_captured_at(RegisterEntry* out, size_t cap) const;
 
+    // Return the entry at `sorted_index` in the captured-at-descending
+    // ordering, or nullptr if out of range. O(count_) per call but no
+    // large caller-provided buffer required - avoid the 50-entry stack
+    // allocation that caused a canary trigger in Config Lumes (bench
+    // 2026-10-09). Pointer valid until the next mutation.
+    const RegisterEntry* nth_sorted(size_t sorted_index) const;
+
     // Mark the given UID as just-configured. Updates last_configured_at
     // to a fresh monotonic sequence, writes NVS. Returns true if found.
     bool mark_configured(uint32_t uid);

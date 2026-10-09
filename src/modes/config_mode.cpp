@@ -2230,17 +2230,15 @@ void ConfigMode::handle_config_lumes(const ButtonPressEvent& ev) {
                 // Hotfix 2026-10-09: prefill from the register snapshot
                 // if we have one (set after any prior write to this UID).
                 // Else fall back to sensible generic defaults.
-                ble::RegisterEntry rows[ble::PairRegister::kMaxEntries] = {};
-                const size_t n = ble::pair_register()
-                    .list_sorted_by_captured_at(rows, ble::PairRegister::kMaxEntries);
-                if (cl_paired_selected_ < n && rows[cl_paired_selected_].snap_valid) {
-                    const auto& e = rows[cl_paired_selected_];
-                    cl_current_.group            = e.snap_group;
-                    cl_current_.led_power        = e.snap_led_power;
-                    cl_current_.channel_pref     = e.snap_channel_pref;
-                    cl_current_.strip_chain      = e.snap_strip_chain;
-                    cl_current_.strip_group_size = e.snap_strip_group_size;
-                    cl_current_.pair_win_s       = e.snap_pair_win_s;
+                const auto* ent =
+                    ble::pair_register().nth_sorted(cl_paired_selected_);
+                if (ent && ent->snap_valid) {
+                    cl_current_.group            = ent->snap_group;
+                    cl_current_.led_power        = ent->snap_led_power;
+                    cl_current_.channel_pref     = ent->snap_channel_pref;
+                    cl_current_.strip_chain      = ent->snap_strip_chain;
+                    cl_current_.strip_group_size = ent->snap_strip_group_size;
+                    cl_current_.pair_win_s       = ent->snap_pair_win_s;
                 } else {
                     cl_current_.channel_pref     = 0;   // auto
                     cl_current_.strip_chain      = 1;
@@ -2288,15 +2286,14 @@ void ConfigMode::handle_config_lumes(const ButtonPressEvent& ev) {
                         // Resolve the selected register entry fresh in
                         // case the register was mutated between
                         // PairedBrowsing and here.
-                        ble::RegisterEntry rows[ble::PairRegister::kMaxEntries] = {};
-                        const size_t n = ble::pair_register()
-                            .list_sorted_by_captured_at(rows, ble::PairRegister::kMaxEntries);
-                        if (cl_paired_selected_ >= n) {
+                        const ble::RegisterEntry* ent_ptr =
+                            ble::pair_register().nth_sorted(cl_paired_selected_);
+                        if (!ent_ptr) {
                             cl_screen_ = ConfigLumesScreen::PairedBrowsing;
                             draw();
                             break;
                         }
-                        const ble::RegisterEntry& ent = rows[cl_paired_selected_];
+                        const ble::RegisterEntry& ent = *ent_ptr;
                         uint8_t bag[240] = {};
                         ble::TlvEncoder enc(bag, sizeof(bag));
                         enc.add_u8 (ble::key::kGroup,          cl_current_.group);
@@ -2471,9 +2468,12 @@ void ConfigMode::draw_config_lumes() {
                 10, 122, "Any button: back", WHITE, BLACK, 1});
             break;
         case ConfigLumesScreen::PairedBrowsing: {
-            ble::RegisterEntry rows[ble::PairRegister::kMaxEntries] = {};
-            const size_t count = ble::pair_register()
-                .list_sorted_by_captured_at(rows, ble::PairRegister::kMaxEntries);
+            // Hotfix 2026-10-09: use nth_sorted to avoid a 3 KB stack
+            // allocation (RegisterEntry grew to ~60 B with snapshot
+            // fields; a 50-entry local array triggered the loopTask
+            // stack canary when combined with other locals in the
+            // same frame).
+            const size_t count = ble::pair_register().count();
             constexpr int kRowY0 = 30;
             const size_t max_visible = static_cast<size_t>(
                 (kBodyBottomLimit - kRowY0) / kRowStride);
@@ -2481,16 +2481,12 @@ void ConfigMode::draw_config_lumes() {
             const size_t last_excl = (first + max_visible > count)
                                      ? count : first + max_visible;
             for (size_t i = first; i < last_excl; ++i) {
+                const auto* e = ble::pair_register().nth_sorted(i);
+                if (!e) continue;
                 const bool sel = (i == cl_paired_selected_);
                 char row[32];
-                // Hotfix 2026-10-09: friendly_name only (no UID prefix).
-                // register.add() populates friendly_name from the Lume's
-                // TLV if set, else from the BLE adv name (NTN12C15), so
-                // this is always non-empty for devices captured via Live-
-                // scan. ESP-NOW UID_ANNOUNCE capture (future B6b) will
-                // need to apply the same fallback.
-                const char* name = rows[i].friendly_name[0]
-                    ? rows[i].friendly_name : "(unnamed)";
+                const char* name = e->friendly_name[0]
+                    ? e->friendly_name : "(unnamed)";
                 std::snprintf(row, sizeof(row), "%s %s",
                               sel ? ">" : " ", name);
                 DAL::fire_display_show_text("local", DisplayShowTextEvent{
@@ -2504,11 +2500,11 @@ void ConfigMode::draw_config_lumes() {
         case ConfigLumesScreen::PairedEditing: {
             // Mirror the Live-scan Editing screen but note the write
             // will go over ESP-NOW with no current-config readback.
-            ble::RegisterEntry rows[ble::PairRegister::kMaxEntries] = {};
-            const size_t n = ble::pair_register()
-                .list_sorted_by_captured_at(rows, ble::PairRegister::kMaxEntries);
-            const char* name = (cl_paired_selected_ < n && rows[cl_paired_selected_].friendly_name[0])
-                ? rows[cl_paired_selected_].friendly_name : "(unnamed)";
+            // nth_sorted avoids the 3 KB stack buffer; see
+            // PairedBrowsing above.
+            const auto* ent = ble::pair_register().nth_sorted(cl_paired_selected_);
+            const char* name = (ent && ent->friendly_name[0])
+                ? ent->friendly_name : "(unnamed)";
             DAL::fire_display_show_text("local", DisplayShowTextEvent{
                 10, 26, name, WHITE, BLACK, 1});
 
