@@ -73,7 +73,14 @@ struct ConfigSnapshot {
 
 class PairRegister {
 public:
-    static constexpr size_t kMaxEntries = 50;
+    // Capped at 20 for v1 (Jason 2026-10-09): we haven't measured
+    // actual "noct" NVS namespace headroom with the latest key set
+    // (dev_uid, dev_secret, cfg_numonce, snapshot fields), so 50
+    // risked silent putBytes failures. 20 × ~60 B = 1.2 KB blob,
+    // comfortable margin. The StickC's two-button UI is awkward past
+    // ~10 entries anyway, so this doubles that for safety. Bump back
+    // up here if a future NVS audit shows room.
+    static constexpr size_t kMaxEntries = 20;
 
     PairRegister();
 
