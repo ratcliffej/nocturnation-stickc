@@ -277,6 +277,21 @@ uint64_t next_config_numonce() {
     return next;
 }
 
+uint32_t load_paired_dir_uid() {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/true);
+    const uint32_t uid = prefs.getUInt("pair_duid", 0);
+    prefs.end();
+    return uid;
+}
+
+void save_paired_dir_uid(uint32_t uid) {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/false);
+    prefs.putUInt("pair_duid", uid);
+    prefs.end();
+}
+
 void ensure_identity() {
     // Must be called AFTER WiFi/BT init so esp_random() draws from the
     // hardware RNG rather than the weakly-seeded pre-radio PRNG. See
@@ -868,6 +883,10 @@ void             ensure_identity()                        {
 namespace { uint64_t s_native_config_numonce = 0; }
 uint64_t load_config_numonce() { return s_native_config_numonce; }
 uint64_t next_config_numonce() { return ++s_native_config_numonce; }
+
+namespace { uint32_t s_native_paired_dir_uid = 0; }
+uint32_t load_paired_dir_uid()               { return s_native_paired_dir_uid; }
+void     save_paired_dir_uid(uint32_t uid)   { s_native_paired_dir_uid = uid; }
 
 namespace {
 uint8_t  s_native_strip_brightness = kDefaultStripBrightness;

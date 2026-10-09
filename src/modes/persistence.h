@@ -138,6 +138,16 @@ uint32_t         compute_uid_from_mac(const uint8_t mac[6]);
 uint64_t         load_config_numonce();
 uint64_t         next_config_numonce();
 
+// UID of the Director that captured this Lume (post-Epic-21 follow-up).
+// 0 = unpaired. Written by the capture flow on the Director side when
+// a CONFIG_WRITE arrives from a UID that this Lume hasn't recorded yet;
+// readable in the config bag so operators can see "my Lume is paired to
+// Director X". Reserved for a future OTA path - a Lume will refuse an
+// update instruction unless the sender's source_id maps back to this UID,
+// orthogonal to the HMAC gate that already protects regular writes.
+uint32_t         load_paired_dir_uid();
+void             save_paired_dir_uid(uint32_t uid);
+
 uint8_t          load_director_channel();
 void             save_director_channel(uint8_t c);
 

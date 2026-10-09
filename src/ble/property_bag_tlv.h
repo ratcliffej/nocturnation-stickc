@@ -149,6 +149,19 @@ constexpr const char* kRetxCount      = "retx_count";      // u8 (1..5)
 constexpr const char* kPairWinS       = "pair_win_s";      // u8 (5..255 seconds)
 constexpr const char* kFriendlyName   = "friendly_name";   // utf8 (0..20 bytes)
 
+// Read-only firmware version string (included on config-bag read; writes
+// silently ignored). Shipped alongside kPairedDirUid as prep for a future
+// OTA path - the operator needs to know what version a Lume is on before
+// deciding to push an image.
+constexpr const char* kFwVersion      = "fw_version";      // utf8 read-only
+
+// UID of the Director that captured this Lume. 0 = unpaired. Written by
+// the capture flow; readable in the config bag. Acts as a filter for
+// future per-Lume update instructions - "only accept OTA from the
+// Director I was paired to" - orthogonal to the HMAC path which gates
+// on secret-knowledge.
+constexpr const char* kPairedDirUid   = "paired_dir_uid";  // u32 LE (0 = unpaired)
+
 }  // namespace key
 
 }  // namespace ble

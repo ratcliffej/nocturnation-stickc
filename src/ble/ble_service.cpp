@@ -24,6 +24,7 @@
 #include <cstring>
 
 #include "property_bag_tlv.h"
+#include "firmware_version.h"
 
 #ifdef ARDUINO
 #include <Arduino.h>
@@ -219,7 +220,8 @@ size_t serialise_config_bag(uint8_t* buf, size_t buflen, Role role) {
     } else {
         // Lume bag: group, led_power, bound_sid (skipped in v0x01 — the
         // NVS key + consumer land in a follow-on epic), channel_pref,
-        // strip topology, pair_win_s, friendly_name.
+        // strip topology, pair_win_s, friendly_name, paired_dir_uid,
+        // fw_version.
         enc.add_u8 (key::kGroup,
                     modes::persistence::load_lume_group());
         enc.add_u8 (key::kLedPower,
@@ -237,7 +239,10 @@ size_t serialise_config_bag(uint8_t* buf, size_t buflen, Role role) {
         if (nlen > 0) {
             enc.add_utf8(key::kFriendlyName, name, static_cast<uint8_t>(nlen));
         }
+        enc.add_u32(key::kPairedDirUid,
+                    modes::persistence::load_paired_dir_uid());
     }
+    enc.add_utf8(key::kFwVersion, kFirmwareVersion);
     return enc.size();
 }
 
