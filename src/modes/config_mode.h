@@ -447,6 +447,16 @@ private:
 
     // Epic 20 B10 - BLE central-role Config Lumes sub-mode.
     void handle_config_lumes(const dal::ButtonPressEvent& ev);
+    // Epic 21 B6b: shared ESP-NOW setup for Paired-fleet + Capture
+    // sub-flows. Starts the broadcast driver and installs an RX
+    // dispatcher that routes CONFIG_ACK into config_tx's ring and
+    // UID_ANNOUNCE into the capture state.
+    void start_espnow_for_config_route();
+    // Epic 21 B6b: capture-flow tick, defined alongside the Config
+    // Lumes block in the .cpp so it can see the capture statics +
+    // flash-duration constant. Called from loop_tick when the operator
+    // is in the CaptureListening state.
+    void tick_config_lumes_capture(uint32_t now);
     void draw_config_lumes();
     void enter_config_lumes();
     void exit_config_lumes();
@@ -465,10 +475,14 @@ private:
         // Epic 21 B6a: paired-fleet route. Lists register entries from
         // pair_register(); operator picks one and the editor writes via
         // config_tx::send_config over ESP-NOW instead of BLE.
-        PairedBrowsing = 11,
-        PairedEditing  = 12,
-        PairedWriting  = 13,
-        PairedEmpty    = 14, // register has no entries
+        PairedBrowsing   = 11,
+        PairedEditing    = 12,
+        PairedWriting    = 13,
+        PairedEmpty      = 14, // register has no entries
+        // Epic 21 B6b: ESP-NOW UID_ANNOUNCE capture sub-flow.
+        CaptureListening = 15, // 15 s window listening for UID_ANNOUNCE bursts
+        CaptureCaptured  = 16, // "Captured <name>" brief confirmation flash
+        PairedUnconfirmed = 17, // write sent but no CONFIG_ACK received in timeout
     };
     ConfigLumesScreen cl_screen_        = ConfigLumesScreen::Scanning;
     size_t            cl_selected_      = 0;   // index into ble_service().discovered()
@@ -492,10 +506,15 @@ private:
     static constexpr size_t kLumeEditItemCount = 7;
     size_t cl_edit_selected_ = 0;   // row index into LumeEditItem
 
-    // Epic 21 B6a: mode-select cursor + paired-fleet cursor.
-    uint8_t cl_mode_select_cursor_   = 0;   // 0 = Live scan, 1 = Paired fleet
+    // Epic 21 B6a + B6b: mode-select cursor + paired-fleet cursor.
+    // Mode-select cursor: 0 = Live scan, 1 = Paired fleet, 2 = Capture via ESP-NOW.
+    uint8_t cl_mode_select_cursor_   = 0;
     size_t  cl_paired_selected_      = 0;   // index into pair_register listing
     bool    cl_paired_route_active_  = false; // true while operator is in Paired-fleet sub-flow
+    // Epic 21 B6b: capture sub-flow state.
+    uint32_t cl_capture_end_ms_      = 0;
+    uint32_t cl_captured_uid_        = 0;
+    char     cl_captured_name_[21]   = {};
 
 public:
     // Snapshot of the selected Lume's current property bag, populated on
