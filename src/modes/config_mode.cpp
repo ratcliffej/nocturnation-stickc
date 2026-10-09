@@ -9,6 +9,7 @@
 #include "hal/hal.h"                        // for ir_tx_ext() emitter probe
 #include "../dal/drivers/local_driver.h"   // for set_pulse_enabled gating
 #include "../dal/drivers/pixmob_ir_driver.h"   // for internal/external IR toggles
+#include "../dal/drivers/espnow_broadcast_driver.h"   // Epic 21 B6a: paired-fleet CONFIG_WRITE needs ESP-NOW TX
 #include "output_bindings/pixmob_ir.h"
 #include "plugins/property_bag.h"
 #include "shows/show.h"
@@ -1969,11 +1970,19 @@ void ConfigMode::exit_config_lumes() {
     if (ble::ble_service().scan_state() == ble::ScanState::Scanning) {
         ble::ble_service().stop_scan();
     }
-    cl_screen_        = ConfigLumesScreen::Scanning;
-    cl_return_after_  = 0;
-    level_            = Level::Top;
-    active_sub_       = SubMenu::None;
-    active_picker_    = SubMenu::None;
+    // Tear down the ESP-NOW broadcast if we spun it up for the Paired-
+    // fleet route (B6a). Idempotent - no-op if we never started.
+    auto* bcast = dal::esp_now_broadcast_driver_instance();
+    if (bcast && bcast->active() && cl_paired_route_active_) {
+        bcast->stop_broadcast();
+        Serial.println("[config] ESP-NOW TX down");
+    }
+    cl_screen_               = ConfigLumesScreen::Scanning;
+    cl_return_after_         = 0;
+    cl_paired_route_active_  = false;
+    level_                   = Level::Top;
+    active_sub_              = SubMenu::None;
+    active_picker_           = SubMenu::None;
     draw();
 }
 
@@ -2104,10 +2113,24 @@ void ConfigMode::handle_config_lumes(const ButtonPressEvent& ev) {
                                 std::memcpy(re.secret, cl_current_.secret, 16);
                                 re.role = static_cast<uint8_t>(ble::Role::Lume);
                                 re.host = cl_current_.host;
-                                const size_t n = cl_current_.has_friendly_name
-                                    ? strnlen(cl_current_.friendly_name, 20) : 0;
+                                // Display name fallback order (Jason 2026-10-09):
+                                // 1. TLV friendly_name if set,
+                                // 2. BLE advertising name (NTN<5 hex>) seen in
+                                //    the Live-scan list,
+                                // 3. empty - caller will render "(unnamed)".
+                                // The paired-fleet UI thus shows the same
+                                // identifier the operator saw during BLE pair.
+                                const char* name_src = nullptr;
+                                if (cl_current_.has_friendly_name &&
+                                    cl_current_.friendly_name[0]) {
+                                    name_src = cl_current_.friendly_name;
+                                } else {
+                                    name_src = svc.discovered()[cl_selected_].adv_name;
+                                }
+                                const size_t n = name_src
+                                    ? strnlen(name_src, 20) : 0;
                                 for (size_t i = 0; i < n; ++i)
-                                    re.friendly_name[i] = cl_current_.friendly_name[i];
+                                    re.friendly_name[i] = name_src[i];
                                 re.friendly_name[n] = '\0';
                                 ble::pair_register().add(re);
                             }
@@ -2137,6 +2160,20 @@ void ConfigMode::handle_config_lumes(const ButtonPressEvent& ev) {
                 } else {
                     cl_paired_route_active_ = true;
                     cl_paired_selected_     = 0;
+                    // Epic 21 B6a bench-fix (Jason 2026-10-09): Config
+                    // mode doesn't start ESP-NOW by default (only Director/
+                    // Lume do), so send_broadcast returned false silently
+                    // and the write looked like it just failed. Spin up
+                    // the broadcast driver here so send_config_write can
+                    // actually put bytes on air. Channel from NVS matches
+                    // DirectorMode's choice so a running fleet's channel
+                    // is reused if the operator has configured one.
+                    auto* bcast = dal::esp_now_broadcast_driver_instance();
+                    if (bcast && !bcast->active()) {
+                        bcast->start_broadcast(persistence::load_director_channel());
+                        Serial.printf("[config] ESP-NOW TX up on ch=%u for Paired-fleet\n",
+                                      (unsigned)persistence::load_director_channel());
+                    }
                     if (ble::pair_register().count() == 0) {
                         cl_screen_ = ConfigLumesScreen::PairedEmpty;
                     } else {
