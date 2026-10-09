@@ -452,15 +452,23 @@ private:
     void exit_config_lumes();
 
     enum class ConfigLumesScreen : uint8_t {
-        Scanning    = 0,  // 5 s scan window; list builds
-        Empty       = 1,  // scan done, no Lumes found
-        Browsing    = 2,  // list of discovered Lumes; operator picks one
-        Reading     = 3,  // B11: connect + read current config bag
-        Editing     = 4,  // group editor pre-populated from the read (B11)
-        Writing     = 5,  // brief spinner while configure_lume runs
-        Success     = 6,  // "Written!" flash -> Browsing
-        Failed      = 7,  // "Failed" flash -> Browsing (err text next to it)
-        ReadFailed  = 8,  // B11: read on selection failed; flash + return
+        ModeSelect     = 10, // Epic 21 B6a: entry screen - Live scan vs Paired fleet
+        Scanning       = 0,  // 5 s scan window; list builds
+        Empty          = 1,  // scan done, no Lumes found
+        Browsing       = 2,  // list of discovered Lumes; operator picks one
+        Reading        = 3,  // B11: connect + read current config bag
+        Editing        = 4,  // group editor pre-populated from the read (B11)
+        Writing        = 5,  // brief spinner while configure_lume runs
+        Success        = 6,  // "Written!" flash -> Browsing
+        Failed         = 7,  // "Failed" flash -> Browsing (err text next to it)
+        ReadFailed     = 8,  // B11: read on selection failed; flash + return
+        // Epic 21 B6a: paired-fleet route. Lists register entries from
+        // pair_register(); operator picks one and the editor writes via
+        // config_tx::send_config over ESP-NOW instead of BLE.
+        PairedBrowsing = 11,
+        PairedEditing  = 12,
+        PairedWriting  = 13,
+        PairedEmpty    = 14, // register has no entries
     };
     ConfigLumesScreen cl_screen_        = ConfigLumesScreen::Scanning;
     size_t            cl_selected_      = 0;   // index into ble_service().discovered()
@@ -484,6 +492,11 @@ private:
     static constexpr size_t kLumeEditItemCount = 7;
     size_t cl_edit_selected_ = 0;   // row index into LumeEditItem
 
+    // Epic 21 B6a: mode-select cursor + paired-fleet cursor.
+    uint8_t cl_mode_select_cursor_   = 0;   // 0 = Live scan, 1 = Paired fleet
+    size_t  cl_paired_selected_      = 0;   // index into pair_register listing
+    bool    cl_paired_route_active_  = false; // true while operator is in Paired-fleet sub-flow
+
 public:
     // Snapshot of the selected Lume's current property bag, populated on
     // Browsing -> Reading -> Editing transition (Epic 20 B11). All fields
@@ -500,6 +513,13 @@ public:
         uint8_t  pair_win_s;
         char     friendly_name[21];   // ≤20 chars + NUL
         bool     has_friendly_name;
+        // Epic 21 B6a: identity fields read from the same BLE
+        // session as the config bag. Populated by read_lume_config
+        // so the write-success path can add {uid, secret} to the
+        // pair register without a second round-trip.
+        uint32_t uid;
+        uint8_t  secret[16];
+        uint8_t  host;                // ble::Host as u8 from device_info[2]
     };
 private:
     LumeCurrent cl_current_ = {};

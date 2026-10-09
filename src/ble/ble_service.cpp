@@ -843,8 +843,21 @@ ConfigureResult BleService::configure_lume(const DiscoveredLume& target,
 ConfigureResult BleService::read_lume_config(const DiscoveredLume& target,
                                               uint8_t* out_bag,
                                               size_t& in_out_len) {
+    return read_lume_config(target, out_bag, in_out_len,
+                             nullptr, nullptr, nullptr);
+}
+
+ConfigureResult BleService::read_lume_config(const DiscoveredLume& target,
+                                              uint8_t* out_bag,
+                                              size_t& in_out_len,
+                                              uint32_t* out_uid,
+                                              uint8_t   out_secret[16],
+                                              uint8_t*  out_host) {
     const size_t cap = in_out_len;
     in_out_len = 0;
+    if (out_uid)    *out_uid = 0;
+    if (out_secret) std::memset(out_secret, 0, 16);
+    if (out_host)   *out_host = 0;
     if (!out_bag || cap == 0) return ConfigureResult::WriteFailed;
 
     NimBLERemoteService* svc = nullptr;
@@ -878,6 +891,39 @@ ConfigureResult BleService::read_lume_config(const DiscoveredLume& target,
     std::memcpy(out_bag, value.data(), value.size());
     in_out_len = value.size();
     Serial.printf("[ble] config read OK (%u bytes)\n", (unsigned)value.size());
+
+    // Epic 21 B6a: fetch identity fields from the same connection
+    // when caller asked for them. device_info bytes 18-21 carry UID
+    // (little-endian); device_secret is a separate characteristic.
+    // All failures here are non-fatal to the config read - we return
+    // Ok with zeroed identity so the caller can decide what to do.
+    if (out_uid || out_host) {
+        NimBLERemoteCharacteristic* chr_info =
+            svc->getCharacteristic(NimBLEUUID(uuid::kDeviceInfo));
+        if (chr_info) {
+            std::string info = chr_info->readValue();
+            if (info.size() >= 22) {
+                if (out_host) *out_host = static_cast<uint8_t>(info[2]);
+                if (out_uid) {
+                    const uint8_t* p = reinterpret_cast<const uint8_t*>(info.data());
+                    *out_uid = (uint32_t)p[18]
+                             | ((uint32_t)p[19] << 8)
+                             | ((uint32_t)p[20] << 16)
+                             | ((uint32_t)p[21] << 24);
+                }
+            }
+        }
+    }
+    if (out_secret) {
+        NimBLERemoteCharacteristic* chr_sec =
+            svc->getCharacteristic(NimBLEUUID(uuid::kDeviceSecret));
+        if (chr_sec) {
+            std::string sec = chr_sec->readValue();
+            if (sec.size() == 16) {
+                std::memcpy(out_secret, sec.data(), 16);
+            }
+        }
+    }
 
     client->disconnect();
     NimBLEDevice::deleteClient(client);
@@ -960,6 +1006,18 @@ ConfigureResult BleService::read_lume_config(const DiscoveredLume& /*target*/,
                                               uint8_t* /*out_bag*/,
                                               size_t& in_out_len) {
     in_out_len = 0;
+    return ConfigureResult::Ok;
+}
+ConfigureResult BleService::read_lume_config(const DiscoveredLume& /*target*/,
+                                              uint8_t* /*out_bag*/,
+                                              size_t& in_out_len,
+                                              uint32_t* out_uid,
+                                              uint8_t   out_secret[16],
+                                              uint8_t*  out_host) {
+    in_out_len = 0;
+    if (out_uid)    *out_uid = 0;
+    if (out_secret) std::memset(out_secret, 0, 16);
+    if (out_host)   *out_host = 0;
     return ConfigureResult::Ok;
 }
 

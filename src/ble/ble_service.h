@@ -232,6 +232,19 @@ public:
                                      uint8_t* out_bag,
                                      size_t& in_out_len);
 
+    // Epic 21 B6a overload: reads the config bag AND captures the
+    // Lume's identity (UID + 16-byte secret + host byte) in the same
+    // BLE session. Used by Config Lumes to populate the pair_register
+    // after a successful read/write cycle. All three identity pointers
+    // may be null if the caller only wants the bag. Everything the
+    // 3-arg overload does, plus the identity reads.
+    ConfigureResult read_lume_config(const DiscoveredLume& target,
+                                     uint8_t* out_bag,
+                                     size_t& in_out_len,
+                                     uint32_t* out_uid,
+                                     uint8_t   out_secret[16],
+                                     uint8_t*  out_host);
+
 private:
     // role_label was removed 2026-09-20 alongside the "NTN" short-name
     // rewrite — the advertising name no longer carries the role (see
