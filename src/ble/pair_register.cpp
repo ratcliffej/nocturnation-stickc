@@ -40,22 +40,31 @@ uint32_t PairRegister::next_sequence_() {
 }
 
 bool PairRegister::add(const RegisterEntry& in) {
-    // In-place update if the UID already exists.
+    // In-place update if the UID already exists. Preserves the
+    // original captured_at (FIFO semantics - re-pairing doesn't
+    // promote an entry; the eviction order stays "oldest insertion
+    // first" however many times you re-pair). Also preserves
+    // last_configured_at so a re-pair doesn't forget prior writes.
     for (size_t i = 0; i < count_; ++i) {
         if (entries_[i].uid == in.uid) {
-            const uint32_t prev_last_configured = entries_[i].last_configured_at;
+            const uint32_t prev_captured         = entries_[i].captured_at;
+            const uint32_t prev_last_configured  = entries_[i].last_configured_at;
             entries_[i] = in;
-            entries_[i].captured_at = next_sequence_();
+            entries_[i].captured_at        = prev_captured;
             entries_[i].last_configured_at = prev_last_configured;
             save();
             return true;
         }
     }
 
-    // New UID — append or evict-oldest + append.
+    // New UID — append or evict-FIFO + append.
     size_t slot = count_;
     if (count_ >= kMaxEntries) {
-        // Find the smallest captured_at and evict.
+        // FIFO: evict the entry with the smallest captured_at
+        // (= longest-ago insertion). Captured_at is monotonic and
+        // never updated after initial insertion, so this is
+        // genuinely "first in, first out" regardless of any
+        // subsequent re-pairs or configure writes.
         size_t   oldest_idx = 0;
         uint32_t oldest_seq = entries_[0].captured_at;
         for (size_t i = 1; i < kMaxEntries; ++i) {

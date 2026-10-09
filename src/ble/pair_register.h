@@ -11,10 +11,18 @@
 // Storage: a 50-slot array held in RAM + persisted to NVS as a single
 // blob. 50 entries × 51 bytes = ~2.6 KB — comfortable headroom in the
 // StickC Plus2's "noct" NVS namespace. On saturation, add() evicts
-// the oldest entry by captured_at (LRU). For fleets bigger than ~10
-// entries the StickC UI becomes awkward anyway ([[project-device-
-// uid-design]] + Jason 2026-10-07 note) and the fleet should migrate
-// to a phone/laptop register as a near-term follow-on epic.
+// the oldest entry (FIFO - earliest insertion goes first, re-pairing
+// does NOT promote). The eviction order is "the 51st knocks out the
+// 1st I paired, period" - predictable mental model for the operator.
+// For fleets bigger than ~10 entries the StickC UI becomes awkward
+// anyway ([[project-device-uid-design]] + Jason 2026-10-07 note) and
+// the fleet should migrate to a phone/laptop register as a near-term
+// follow-on epic.
+//
+// `captured_at` is a monotonic sequence number (NOT millis()) that is
+// persisted alongside the array in NVS, so eviction ordering survives
+// power cycles. There's no wall clock on the StickC - a reboot-safe
+// counter is the right primitive.
 //
 // Pure logic, native-safe. The Arduino build loads/saves via NVS;
 // the native stub keeps everything in process-static memory so the
@@ -59,11 +67,10 @@ public:
 
     // Add or update an entry. If an entry with the same `uid` already
     // exists, it is updated in place: secret / role / host / friendly_
-    // name are overwritten, captured_at bumps to the new monotonic
-    // sequence (so re-capture promotes it in the LRU ordering), and
-    // last_configured_at is preserved. If the register is at capacity
-    // and the uid is new, the entry with the lowest captured_at is
-    // evicted to make room. Returns true on success.
+    // name are overwritten; captured_at AND last_configured_at are
+    // preserved (FIFO - re-pairing does NOT promote). If the register
+    // is at capacity and the uid is new, the entry with the lowest
+    // captured_at is evicted to make room. Returns true on success.
     bool add(const RegisterEntry& in);
 
     // Remove the entry matching `uid`. Returns true if found + removed.

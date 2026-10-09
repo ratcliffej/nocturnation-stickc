@@ -57,16 +57,35 @@ void test_add_and_find_round_trip() {
     TEST_ASSERT_GREATER_THAN_UINT32(0, e->captured_at);
 }
 
-void test_re_add_updates_in_place_and_bumps_captured_at() {
+void test_re_add_updates_in_place_preserves_captured_at() {
+    // FIFO: re-pairing an existing UID overwrites the fields but
+    // leaves captured_at alone. This keeps eviction order predictable
+    // ("the 51st knocks out the 1st I paired, period") regardless of
+    // how often a device is re-paired.
     PairRegister r;
     r.add(make_entry(0x1111u, "first"));
     const uint32_t first_captured = r.find(0x1111u)->captured_at;
-    r.add(make_entry(0x2222u));          // bump sequence
-    r.add(make_entry(0x1111u, "second"));
+    r.add(make_entry(0x2222u));                   // bump sequence
+    r.add(make_entry(0x1111u, "second"));         // re-pair same UID
     TEST_ASSERT_EQUAL_size_t(2, r.count());
     const auto* e = r.find(0x1111u);
     TEST_ASSERT_EQUAL_STRING("second", e->friendly_name);
-    TEST_ASSERT_GREATER_THAN_UINT32(first_captured, e->captured_at);
+    TEST_ASSERT_EQUAL_UINT32(first_captured, e->captured_at);
+}
+
+void test_re_add_does_not_rescue_from_eviction() {
+    // Demonstrates the FIFO guarantee under saturation: re-pairing the
+    // first-inserted entry does NOT save it from being evicted when a
+    // new UID arrives at full capacity.
+    PairRegister r;
+    for (uint32_t i = 1; i <= PairRegister::kMaxEntries; ++i) {
+        r.add(make_entry(i));
+    }
+    // Re-pair UID 1 - under FIFO this does nothing to its eviction position.
+    r.add(make_entry(1, "re-paired"));
+    // Adding one more new UID evicts UID 1 anyway.
+    r.add(make_entry(0xFFFF0001u));
+    TEST_ASSERT_NULL(r.find(1u));
 }
 
 void test_remove_takes_entry_out() {
@@ -160,7 +179,8 @@ int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_empty_register_has_no_entries);
     RUN_TEST(test_add_and_find_round_trip);
-    RUN_TEST(test_re_add_updates_in_place_and_bumps_captured_at);
+    RUN_TEST(test_re_add_updates_in_place_preserves_captured_at);
+    RUN_TEST(test_re_add_does_not_rescue_from_eviction);
     RUN_TEST(test_remove_takes_entry_out);
     RUN_TEST(test_saturation_evicts_oldest_by_captured_at);
     RUN_TEST(test_list_sorted_returns_most_recent_first);
