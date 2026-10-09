@@ -2154,6 +2154,18 @@ void ConfigMode::handle_config_lumes(const ButtonPressEvent& ev) {
             } else if (ev.id == ButtonId::Btn1) {
                 if (cl_mode_select_cursor_ == 0) {
                     cl_paired_route_active_ = false;
+                    // Defensive: if a prior Paired-fleet session left
+                    // ESP-NOW TX running, tear it down before BLE
+                    // central scan+connect. Concurrent broadcast
+                    // heartbeat + BLE central causes HCI status=574
+                    // (Connection Failed to be Established) in the LL
+                    // handshake (Jason bench 2026-10-09).
+                    if (auto* bcast = dal::esp_now_broadcast_driver_instance()) {
+                        if (bcast->active()) {
+                            bcast->stop_broadcast();
+                            Serial.println("[config] ESP-NOW TX down (Live-scan takeover)");
+                        }
+                    }
                     cl_screen_ = ConfigLumesScreen::Scanning;
                     draw();
                     ble::ble_service().start_scan(kConfigLumesScanMs);
