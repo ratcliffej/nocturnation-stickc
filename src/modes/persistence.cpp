@@ -240,6 +240,24 @@ void load_device_secret(uint8_t out[16]) {
     prefs.end();
 }
 
+uint64_t load_config_numonce() {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/true);
+    const uint64_t n = prefs.getULong64("cfg_numonce", 0);
+    prefs.end();
+    return n;
+}
+
+uint64_t next_config_numonce() {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/false);
+    const uint64_t current = prefs.getULong64("cfg_numonce", 0);
+    const uint64_t next    = current + 1;   // monotonic; wraps every 2^64 — never
+    prefs.putULong64("cfg_numonce", next);
+    prefs.end();
+    return next;
+}
+
 void ensure_identity() {
     // Must be called AFTER WiFi/BT init so esp_random() draws from the
     // hardware RNG rather than the weakly-seeded pre-radio PRNG. See
@@ -828,6 +846,9 @@ void             ensure_identity()                        {
         s_native_dev_secret_set = true;
     }
 }
+namespace { uint64_t s_native_config_numonce = 0; }
+uint64_t load_config_numonce() { return s_native_config_numonce; }
+uint64_t next_config_numonce() { return ++s_native_config_numonce; }
 
 namespace {
 uint8_t  s_native_strip_brightness = kDefaultStripBrightness;
