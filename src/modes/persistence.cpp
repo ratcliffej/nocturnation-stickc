@@ -127,9 +127,20 @@ void save_screen_pulse_enabled(bool e) {
 }
 
 bool load_dir_calm() {
+    // isKey() guard silences the Preferences "nvs_get_u8 fail: dir_calm
+    // NOT_FOUND" verbose log that fires on every boot when the key is
+    // absent (default state for a never-configured Director). On first
+    // read with the key missing we write the default so subsequent
+    // boots take the normal get path.
     Preferences prefs;
-    prefs.begin("noct", /*readOnly=*/true);
-    bool e = prefs.getBool("dir_calm", false);   // default OFF (Full)
+    prefs.begin("noct", /*readOnly=*/false);
+    bool e;
+    if (prefs.isKey("dir_calm")) {
+        e = prefs.getBool("dir_calm", false);
+    } else {
+        e = false;   // default OFF (Full)
+        prefs.putBool("dir_calm", e);
+    }
     prefs.end();
     return e;
 }
@@ -146,9 +157,17 @@ void save_dir_calm(bool e) {
 #endif
 
 uint8_t load_retx_count() {
+    // isKey() guard silences the Preferences verbose NOT_FOUND log on
+    // first boot. Same pattern as load_dir_calm.
     Preferences prefs;
-    prefs.begin("noct", /*readOnly=*/true);
-    uint8_t n = prefs.getUChar("retx_count", ESPNOW_RETRANSMITS_DEFAULT);
+    prefs.begin("noct", /*readOnly=*/false);
+    uint8_t n;
+    if (prefs.isKey("retx_count")) {
+        n = prefs.getUChar("retx_count", ESPNOW_RETRANSMITS_DEFAULT);
+    } else {
+        n = ESPNOW_RETRANSMITS_DEFAULT;
+        prefs.putUChar("retx_count", n);
+    }
     prefs.end();
     if (n < 1) n = 1;
     if (n > 5) n = 5;

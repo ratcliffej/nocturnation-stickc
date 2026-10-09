@@ -77,11 +77,22 @@ uint64_t send_config_write(uint32_t target_uid,
     if (n == 0) return 0;
 
     auto* radio = hal::HAL::esp_now();
-    if (!radio) return 0;
-    if (!radio->send_broadcast(buf, n)) return 0;
+    if (!radio) {
+        Serial.println("[config_tx] FAILED: hal::HAL::esp_now() returned null");
+        return 0;
+    }
+    if (!radio->send_broadcast(buf, n)) {
+        // Most common cause: ESP-NOW hasn't been initialised in the
+        // current mode (Config mode doesn't by default; the caller
+        // must start_broadcast() first).
+        Serial.println("[config_tx] FAILED: send_broadcast returned false "
+                       "(is ESP-NOW initialised?)");
+        return 0;
+    }
 
-    Serial.printf("[config_tx] sent to uid=%08X numonce=%lu bag_len=%u\n",
-                  (unsigned)target_uid, (unsigned long)numonce, (unsigned)bag_len);
+    Serial.printf("[config_tx] sent to uid=%08X numonce=%lu bag_len=%u frame=%u\n",
+                  (unsigned)target_uid, (unsigned long)numonce,
+                  (unsigned)bag_len, (unsigned)n);
     return numonce;
 }
 

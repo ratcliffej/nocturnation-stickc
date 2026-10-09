@@ -37,6 +37,8 @@ namespace nocturnation {
 namespace ble {
 
 // One pairing-register entry. Stored packed on-wire (no padding).
+// Format version bumped at Epic 21 B6a hotfix 2026-10-09 to carry
+// the last-known config snapshot; see kBlobVersion in pair_register.cpp.
 struct RegisterEntry {
     uint32_t uid;                         // CRC32-of-STA-MAC (identity)
     uint8_t  secret[16];                  // HMAC-SHA256 key
@@ -45,11 +47,40 @@ struct RegisterEntry {
     char     friendly_name[21];           // NUL-terminated, 20 chars max
     uint32_t captured_at;                 // monotonic sequence; higher = more recent
     uint32_t last_configured_at;          // 0 if never written to; monotonic sequence
+    // Last-known property-bag snapshot. Populated by Config Lumes on
+    // successful BLE read / BLE write / ESP-NOW CONFIG_WRITE, so the
+    // Paired-fleet editor prefills with what the operator last pushed
+    // instead of generic defaults. snap_valid=0 when the entry has
+    // never had its config captured through a path that saw the values.
+    uint8_t  snap_group;
+    uint8_t  snap_led_power;
+    uint8_t  snap_channel_pref;
+    uint16_t snap_strip_chain;
+    uint8_t  snap_strip_group_size;
+    uint8_t  snap_pair_win_s;
+    uint8_t  snap_valid;                  // 0 = never populated; 1 = has real values
+};
+
+// Config snapshot mirror of the Paired-fleet editor fields.
+struct ConfigSnapshot {
+    uint8_t  group;
+    uint8_t  led_power;
+    uint8_t  channel_pref;
+    uint16_t strip_chain;
+    uint8_t  strip_group_size;
+    uint8_t  pair_win_s;
 };
 
 class PairRegister {
 public:
-    static constexpr size_t kMaxEntries = 50;
+    // Capped at 20 for v1 (Jason 2026-10-09): we haven't measured
+    // actual "noct" NVS namespace headroom with the latest key set
+    // (dev_uid, dev_secret, cfg_numonce, snapshot fields), so 50
+    // risked silent putBytes failures. 20 × ~60 B = 1.2 KB blob,
+    // comfortable margin. The StickC's two-button UI is awkward past
+    // ~10 entries anyway, so this doubles that for safety. Bump back
+    // up here if a future NVS audit shows room.
+    static constexpr size_t kMaxEntries = 20;
 
     PairRegister();
 
@@ -85,9 +116,23 @@ public:
     // (min(count_, cap)).
     size_t list_sorted_by_captured_at(RegisterEntry* out, size_t cap) const;
 
+    // Return the entry at `sorted_index` in the captured-at-descending
+    // ordering, or nullptr if out of range. O(count_) per call but no
+    // large caller-provided buffer required - avoid the 50-entry stack
+    // allocation that caused a canary trigger in Config Lumes (bench
+    // 2026-10-09). Pointer valid until the next mutation.
+    const RegisterEntry* nth_sorted(size_t sorted_index) const;
+
     // Mark the given UID as just-configured. Updates last_configured_at
     // to a fresh monotonic sequence, writes NVS. Returns true if found.
     bool mark_configured(uint32_t uid);
+
+    // Overwrite the last-known config snapshot for `uid`. Also bumps
+    // last_configured_at. Writes NVS. Returns true if the entry was
+    // found. Called from the Paired-fleet write path (ESP-NOW) and the
+    // Live-scan write + read path (BLE) so the UI's prefill matches
+    // what's actually on the device.
+    bool update_snapshot(uint32_t uid, const ConfigSnapshot& snap);
 
     // Clear in-memory state only (test seam; does NOT touch NVS).
     void clear_in_memory();

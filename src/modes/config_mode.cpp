@@ -9,6 +9,7 @@
 #include "hal/hal.h"                        // for ir_tx_ext() emitter probe
 #include "../dal/drivers/local_driver.h"   // for set_pulse_enabled gating
 #include "../dal/drivers/pixmob_ir_driver.h"   // for internal/external IR toggles
+#include "../dal/drivers/espnow_broadcast_driver.h"   // Epic 21 B6a: paired-fleet CONFIG_WRITE needs ESP-NOW TX
 #include "output_bindings/pixmob_ir.h"
 #include "plugins/property_bag.h"
 #include "shows/show.h"
@@ -18,6 +19,8 @@
 #include "pixmob_protocol.h"
 #include "../ble/ble_service.h"
 #include "../ble/property_bag_tlv.h"
+#include "../ble/pair_register.h"
+#include "../ble/config_tx.h"
 
 #include <cstdio>
 #include <cstring>
@@ -208,7 +211,9 @@ void ConfigMode::loop_tick() {
     if (level_ == Level::Sub && active_sub_ == SubMenu::ConfigLumes) {
         if (cl_return_after_ != 0 && now >= cl_return_after_) {
             cl_return_after_ = 0;
-            cl_screen_       = ConfigLumesScreen::Browsing;
+            cl_screen_       = cl_paired_route_active_
+                               ? ConfigLumesScreen::PairedBrowsing
+                               : ConfigLumesScreen::Browsing;
             draw();
             return;
         }
@@ -1946,28 +1951,38 @@ void ConfigMode::enter_config_lumes() {
     previous_sub_  = SubMenu::None;
     sub_selected_  = 0;
     confirm_until_ms_ = 0;
-    cl_screen_       = ConfigLumesScreen::Scanning;
-    cl_selected_     = 0;
-    cl_edit_selected_ = 0;
-    cl_return_after_ = 0;
-    cl_last_error_   = 0;
-    // Kick off the scan. NimBLE-Arduino's scan->start(secs, false)
-    // blocks on this task for the duration, so the "Scanning..." draw
-    // below fires FIRST, then start_scan returns and the loop_tick
-    // above sees scan_state()==Done and transitions us.
+    // Epic 21 B6a: entry is a mode-select screen that lets the
+    // operator pick BLE Live scan (pairing-window-in-flight on the
+    // target Lume) or Paired fleet (previously-captured Lume targeted
+    // via authenticated CONFIG_WRITE over ESP-NOW).
+    cl_screen_             = ConfigLumesScreen::ModeSelect;
+    cl_selected_           = 0;
+    cl_edit_selected_      = 0;
+    cl_mode_select_cursor_   = 0;
+    cl_paired_selected_      = 0;
+    cl_paired_route_active_  = false;
+    cl_return_after_         = 0;
+    cl_last_error_           = 0;
     draw();
-    ble::ble_service().start_scan(kConfigLumesScanMs);
 }
 
 void ConfigMode::exit_config_lumes() {
     if (ble::ble_service().scan_state() == ble::ScanState::Scanning) {
         ble::ble_service().stop_scan();
     }
-    cl_screen_        = ConfigLumesScreen::Scanning;
-    cl_return_after_  = 0;
-    level_            = Level::Top;
-    active_sub_       = SubMenu::None;
-    active_picker_    = SubMenu::None;
+    // Tear down the ESP-NOW broadcast if we spun it up for the Paired-
+    // fleet route (B6a). Idempotent - no-op if we never started.
+    auto* bcast = dal::esp_now_broadcast_driver_instance();
+    if (bcast && bcast->active() && cl_paired_route_active_) {
+        bcast->stop_broadcast();
+        Serial.println("[config] ESP-NOW TX down");
+    }
+    cl_screen_               = ConfigLumesScreen::Scanning;
+    cl_return_after_         = 0;
+    cl_paired_route_active_  = false;
+    level_                   = Level::Top;
+    active_sub_              = SubMenu::None;
+    active_picker_           = SubMenu::None;
     draw();
 }
 
@@ -2006,8 +2021,12 @@ void ConfigMode::handle_config_lumes(const ButtonPressEvent& ev) {
                 uint8_t bag[240] = {};
                 size_t  bag_len   = sizeof(bag);
                 const auto& target = svc.discovered()[cl_selected_];
+                // B6a: ask for identity alongside the config bag so a
+                // subsequent write-success can add {uid, secret} to the
+                // pair_register without a second BLE round-trip.
                 const auto rr = ble::ble_service().read_lume_config(
-                    target, bag, bag_len);
+                    target, bag, bag_len,
+                    &cl_current_.uid, cl_current_.secret, &cl_current_.host);
                 if (rr != ble::ConfigureResult::Ok || bag_len == 0) {
                     cl_last_error_    = static_cast<uint8_t>(rr);
                     cl_screen_        = ConfigLumesScreen::ReadFailed;
@@ -2080,9 +2099,57 @@ void ConfigMode::handle_config_lumes(const ButtonPressEvent& ev) {
                         const auto result = ble::ble_service().configure_lume(
                             target, bag, enc.size());
                         cl_last_error_ = static_cast<uint8_t>(result);
-                        cl_screen_ = (result == ble::ConfigureResult::Ok)
-                                     ? ConfigLumesScreen::Success
-                                     : ConfigLumesScreen::Failed;
+                        if (result == ble::ConfigureResult::Ok) {
+                            // Epic 21 B6a (B5.3): capture into the pair
+                            // register so this Lume becomes targetable
+                            // over ESP-NOW CONFIG_WRITE afterwards.
+                            // Only register if we actually got a UID +
+                            // secret during the Reading step above
+                            // (a device without the Epic 21 BLE fields
+                            // reports uid=0, in which case we skip).
+                            if (cl_current_.uid != 0) {
+                                ble::RegisterEntry re = {};
+                                re.uid  = cl_current_.uid;
+                                std::memcpy(re.secret, cl_current_.secret, 16);
+                                re.role = static_cast<uint8_t>(ble::Role::Lume);
+                                re.host = cl_current_.host;
+                                // Display name fallback order (Jason 2026-10-09):
+                                // 1. TLV friendly_name if set,
+                                // 2. BLE advertising name (NTN<5 hex>) seen in
+                                //    the Live-scan list,
+                                // 3. empty - caller will render "(unnamed)".
+                                // The paired-fleet UI thus shows the same
+                                // identifier the operator saw during BLE pair.
+                                const char* name_src = nullptr;
+                                if (cl_current_.has_friendly_name &&
+                                    cl_current_.friendly_name[0]) {
+                                    name_src = cl_current_.friendly_name;
+                                } else {
+                                    name_src = svc.discovered()[cl_selected_].adv_name;
+                                }
+                                const size_t n = name_src
+                                    ? strnlen(name_src, 20) : 0;
+                                for (size_t i = 0; i < n; ++i)
+                                    re.friendly_name[i] = name_src[i];
+                                re.friendly_name[n] = '\0';
+                                ble::pair_register().add(re);
+                                // Hotfix 2026-10-09: also snapshot the
+                                // just-written values so the Paired-
+                                // fleet editor prefills with reality,
+                                // not generic defaults.
+                                ble::ConfigSnapshot snap = {};
+                                snap.group            = cl_current_.group;
+                                snap.led_power        = cl_current_.led_power;
+                                snap.channel_pref     = cl_current_.channel_pref;
+                                snap.strip_chain      = cl_current_.strip_chain;
+                                snap.strip_group_size = cl_current_.strip_group_size;
+                                snap.pair_win_s       = cl_current_.pair_win_s;
+                                ble::pair_register().update_snapshot(cl_current_.uid, snap);
+                            }
+                            cl_screen_ = ConfigLumesScreen::Success;
+                        } else {
+                            cl_screen_ = ConfigLumesScreen::Failed;
+                        }
                         cl_return_after_ = millis() + kConfigLumesFlashMs;
                         draw();
                         break;
@@ -2090,8 +2157,179 @@ void ConfigMode::handle_config_lumes(const ButtonPressEvent& ev) {
                 }
             }
             break;
+
+        // Epic 21 B6a: mode-select + paired-fleet route.
+        case ConfigLumesScreen::ModeSelect:
+            if (ev.id == ButtonId::Btn2) {
+                cl_mode_select_cursor_ = cl_mode_select_cursor_ ? 0 : 1;
+                draw();
+            } else if (ev.id == ButtonId::Btn1) {
+                if (cl_mode_select_cursor_ == 0) {
+                    cl_paired_route_active_ = false;
+                    // Defensive: if a prior Paired-fleet session left
+                    // ESP-NOW TX running, tear it down before BLE
+                    // central scan+connect. Concurrent broadcast
+                    // heartbeat + BLE central causes HCI status=574
+                    // (Connection Failed to be Established) in the LL
+                    // handshake (Jason bench 2026-10-09).
+                    if (auto* bcast = dal::esp_now_broadcast_driver_instance()) {
+                        if (bcast->active()) {
+                            bcast->stop_broadcast();
+                            Serial.println("[config] ESP-NOW TX down (Live-scan takeover)");
+                        }
+                    }
+                    cl_screen_ = ConfigLumesScreen::Scanning;
+                    draw();
+                    ble::ble_service().start_scan(kConfigLumesScanMs);
+                } else {
+                    cl_paired_route_active_ = true;
+                    cl_paired_selected_     = 0;
+                    // Epic 21 B6a bench-fix (Jason 2026-10-09): Config
+                    // mode doesn't start ESP-NOW by default (only Director/
+                    // Lume do), so send_broadcast returned false silently
+                    // and the write looked like it just failed. Spin up
+                    // the broadcast driver here so send_config_write can
+                    // actually put bytes on air. Channel from NVS matches
+                    // DirectorMode's choice so a running fleet's channel
+                    // is reused if the operator has configured one.
+                    auto* bcast = dal::esp_now_broadcast_driver_instance();
+                    if (bcast && !bcast->active()) {
+                        bcast->start_broadcast(persistence::load_director_channel());
+                        Serial.printf("[config] ESP-NOW TX up on ch=%u for Paired-fleet\n",
+                                      (unsigned)persistence::load_director_channel());
+                    }
+                    if (ble::pair_register().count() == 0) {
+                        cl_screen_ = ConfigLumesScreen::PairedEmpty;
+                    } else {
+                        cl_screen_ = ConfigLumesScreen::PairedBrowsing;
+                    }
+                    draw();
+                }
+            }
+            break;
+        case ConfigLumesScreen::PairedEmpty:
+            cl_screen_ = ConfigLumesScreen::ModeSelect;
+            draw();
+            break;
+        case ConfigLumesScreen::PairedBrowsing: {
+            const size_t count = ble::pair_register().count();
+            if (count == 0) {
+                cl_screen_ = ConfigLumesScreen::PairedEmpty;
+                draw();
+                break;
+            }
+            if (ev.id == ButtonId::Btn2) {
+                cl_paired_selected_ = (cl_paired_selected_ + 1) % count;
+                draw();
+            } else if (ev.id == ButtonId::Btn1) {
+                // Prime the editor with defaults - we can't read the
+                // Lume's current config over ESP-NOW in v1 (no CONFIG_
+                // READ frame type). Operator sees defaults, cycles
+                // what they want, hits Write.
+                cl_current_ = LumeCurrent{};
+                // Hotfix 2026-10-09: prefill from the register snapshot
+                // if we have one (set after any prior write to this UID).
+                // Else fall back to sensible generic defaults.
+                const auto* ent =
+                    ble::pair_register().nth_sorted(cl_paired_selected_);
+                if (ent && ent->snap_valid) {
+                    cl_current_.group            = ent->snap_group;
+                    cl_current_.led_power        = ent->snap_led_power;
+                    cl_current_.channel_pref     = ent->snap_channel_pref;
+                    cl_current_.strip_chain      = ent->snap_strip_chain;
+                    cl_current_.strip_group_size = ent->snap_strip_group_size;
+                    cl_current_.pair_win_s       = ent->snap_pair_win_s;
+                } else {
+                    cl_current_.channel_pref     = 0;   // auto
+                    cl_current_.strip_chain      = 1;
+                    cl_current_.strip_group_size = 1;
+                    cl_current_.pair_win_s       = 180;
+                }
+                cl_edit_selected_ = 0;
+                cl_screen_        = ConfigLumesScreen::PairedEditing;
+                draw();
+            }
+            break;
+        }
+        case ConfigLumesScreen::PairedEditing:
+            if (ev.id == ButtonId::Btn2) {
+                cl_edit_selected_ = (cl_edit_selected_ + 1) % kLumeEditItemCount;
+                draw();
+            } else if (ev.id == ButtonId::Btn1) {
+                switch (static_cast<LumeEditItem>(cl_edit_selected_)) {
+                    case LumeEditItem::Group:
+                        cl_current_.group = static_cast<uint8_t>(
+                            (cl_current_.group + 1) % (kConfigLumesGroupMax + 1));
+                        draw();
+                        break;
+                    case LumeEditItem::LedPower:
+                        cl_current_.led_power = next_led_power(cl_current_.led_power);
+                        draw();
+                        break;
+                    case LumeEditItem::ChannelPref:
+                        cl_current_.channel_pref = next_channel_pref(cl_current_.channel_pref);
+                        draw();
+                        break;
+                    case LumeEditItem::StripChain:
+                        cl_current_.strip_chain = next_strip_chain(cl_current_.strip_chain);
+                        draw();
+                        break;
+                    case LumeEditItem::StripGroupSize:
+                        cl_current_.strip_group_size = next_strip_group_size(cl_current_.strip_group_size);
+                        draw();
+                        break;
+                    case LumeEditItem::PairWinS:
+                        cl_current_.pair_win_s = next_pair_win_s(cl_current_.pair_win_s);
+                        draw();
+                        break;
+                    case LumeEditItem::Write: {
+                        // Resolve the selected register entry fresh in
+                        // case the register was mutated between
+                        // PairedBrowsing and here.
+                        const ble::RegisterEntry* ent_ptr =
+                            ble::pair_register().nth_sorted(cl_paired_selected_);
+                        if (!ent_ptr) {
+                            cl_screen_ = ConfigLumesScreen::PairedBrowsing;
+                            draw();
+                            break;
+                        }
+                        const ble::RegisterEntry& ent = *ent_ptr;
+                        uint8_t bag[240] = {};
+                        ble::TlvEncoder enc(bag, sizeof(bag));
+                        enc.add_u8 (ble::key::kGroup,          cl_current_.group);
+                        enc.add_u8 (ble::key::kLedPower,       cl_current_.led_power);
+                        enc.add_u8 (ble::key::kChannelPref,    cl_current_.channel_pref);
+                        enc.add_u16(ble::key::kStripChain,     cl_current_.strip_chain);
+                        enc.add_u8 (ble::key::kStripGroupSize, cl_current_.strip_group_size);
+                        enc.add_u8 (ble::key::kPairWinS,       cl_current_.pair_win_s);
+                        cl_screen_ = ConfigLumesScreen::PairedWriting;
+                        draw();
+                        const uint64_t numonce = ble::send_config_write(
+                            ent.uid, ent.secret, bag, static_cast<uint8_t>(enc.size()));
+                        if (numonce != 0) {
+                            ble::ConfigSnapshot snap = {};
+                            snap.group            = cl_current_.group;
+                            snap.led_power        = cl_current_.led_power;
+                            snap.channel_pref     = cl_current_.channel_pref;
+                            snap.strip_chain      = cl_current_.strip_chain;
+                            snap.strip_group_size = cl_current_.strip_group_size;
+                            snap.pair_win_s       = cl_current_.pair_win_s;
+                            ble::pair_register().update_snapshot(ent.uid, snap);
+                            cl_screen_ = ConfigLumesScreen::Success;
+                        } else {
+                            cl_screen_ = ConfigLumesScreen::Failed;
+                        }
+                        cl_return_after_ = millis() + kConfigLumesFlashMs;
+                        draw();
+                        break;
+                    }
+                }
+            }
+            break;
+
         case ConfigLumesScreen::Reading:
         case ConfigLumesScreen::Writing:
+        case ConfigLumesScreen::PairedWriting:
         case ConfigLumesScreen::Success:
         case ConfigLumesScreen::Failed:
         case ConfigLumesScreen::ReadFailed:
@@ -2204,6 +2442,112 @@ void ConfigMode::draw_config_lumes() {
                 10, 50, "Writing...", WHITE, BLACK, 2});
             DAL::fire_display_show_text("local", DisplayShowTextEvent{
                 10, 76, "(BLE takes a sec)", WHITE, BLACK, 1});
+            break;
+        // Epic 21 B6a: paired-fleet draws.
+        case ConfigLumesScreen::ModeSelect: {
+            const char* rows[2] = { "Live scan (BLE)", "Paired fleet" };
+            for (int i = 0; i < 2; ++i) {
+                const bool sel = (cl_mode_select_cursor_ == i);
+                char buf[32];
+                std::snprintf(buf, sizeof(buf), "%s %s", sel ? ">" : " ", rows[i]);
+                DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                    10, 36 + i * kRowStride, buf, sel ? YELLOW : WHITE, BLACK, 2});
+            }
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 122, "B: next  A: pick", WHITE, BLACK, 1});
+            break;
+        }
+        case ConfigLumesScreen::PairedEmpty:
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 40, "Register empty", YELLOW, BLACK, 2});
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 70, "Pair via Live scan", WHITE, BLACK, 1});
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 90, "first.", WHITE, BLACK, 1});
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 122, "Any button: back", WHITE, BLACK, 1});
+            break;
+        case ConfigLumesScreen::PairedBrowsing: {
+            // Hotfix 2026-10-09: use nth_sorted to avoid a 3 KB stack
+            // allocation (RegisterEntry grew to ~60 B with snapshot
+            // fields; a 50-entry local array triggered the loopTask
+            // stack canary when combined with other locals in the
+            // same frame).
+            const size_t count = ble::pair_register().count();
+            constexpr int kRowY0 = 30;
+            const size_t max_visible = static_cast<size_t>(
+                (kBodyBottomLimit - kRowY0) / kRowStride);
+            const size_t first = scroll_offset(cl_paired_selected_, count, max_visible);
+            const size_t last_excl = (first + max_visible > count)
+                                     ? count : first + max_visible;
+            for (size_t i = first; i < last_excl; ++i) {
+                const auto* e = ble::pair_register().nth_sorted(i);
+                if (!e) continue;
+                const bool sel = (i == cl_paired_selected_);
+                char row[32];
+                const char* name = e->friendly_name[0]
+                    ? e->friendly_name : "(unnamed)";
+                std::snprintf(row, sizeof(row), "%s %s",
+                              sel ? ">" : " ", name);
+                DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                    10, kRowY0 + static_cast<int>(i - first) * kRowStride,
+                    row, sel ? YELLOW : WHITE, BLACK, 2});
+            }
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 122, "B: next  A: pick", WHITE, BLACK, 1});
+            break;
+        }
+        case ConfigLumesScreen::PairedEditing: {
+            // Mirror the Live-scan Editing screen but note the write
+            // will go over ESP-NOW with no current-config readback.
+            // nth_sorted avoids the 3 KB stack buffer; see
+            // PairedBrowsing above.
+            const auto* ent = ble::pair_register().nth_sorted(cl_paired_selected_);
+            const char* name = (ent && ent->friendly_name[0])
+                ? ent->friendly_name : "(unnamed)";
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 26, name, WHITE, BLACK, 1});
+
+            char row_strs[kLumeEditItemCount][40];
+            std::snprintf(row_strs[0], sizeof(row_strs[0]), "Group: %u",
+                          (unsigned)cl_current_.group);
+            std::snprintf(row_strs[1], sizeof(row_strs[1]), "LED: %u%%",
+                          (unsigned)cl_current_.led_power);
+            std::snprintf(row_strs[2], sizeof(row_strs[2]), "Channel: %u",
+                          (unsigned)cl_current_.channel_pref);
+            std::snprintf(row_strs[3], sizeof(row_strs[3]), "Chain: %u",
+                          (unsigned)cl_current_.strip_chain);
+            std::snprintf(row_strs[4], sizeof(row_strs[4]), "Grp size: %u",
+                          (unsigned)cl_current_.strip_group_size);
+            std::snprintf(row_strs[5], sizeof(row_strs[5]), "Pair win: %us",
+                          (unsigned)cl_current_.pair_win_s);
+            std::snprintf(row_strs[6], sizeof(row_strs[6]), "Write >>");
+            constexpr int kRowY0 = 40;
+            const size_t max_visible = static_cast<size_t>(
+                (kBodyBottomLimit - kRowY0) / kRowStride);
+            const size_t first = scroll_offset(cl_edit_selected_, kLumeEditItemCount, max_visible);
+            const size_t last_excl = (first + max_visible > kLumeEditItemCount)
+                                     ? kLumeEditItemCount : first + max_visible;
+            for (size_t i = first; i < last_excl; ++i) {
+                const bool sel = (i == cl_edit_selected_);
+                char buf[48];
+                std::snprintf(buf, sizeof(buf), "%s %s", sel ? ">" : " ", row_strs[i]);
+                const uint16_t fg =
+                    (i == (size_t)LumeEditItem::Write) ? GREEN
+                    : (sel ? YELLOW : WHITE);
+                DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                    10, kRowY0 + static_cast<int>(i - first) * kRowStride,
+                    buf, fg, BLACK, 2});
+            }
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 122, "B: next  A: change/write", WHITE, BLACK, 1});
+            break;
+        }
+        case ConfigLumesScreen::PairedWriting:
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 50, "Writing...", WHITE, BLACK, 2});
+            DAL::fire_display_show_text("local", DisplayShowTextEvent{
+                10, 76, "(ESP-NOW)", WHITE, BLACK, 1});
             break;
         case ConfigLumesScreen::Success:
             DAL::fire_display_show_text("local", DisplayShowTextEvent{
