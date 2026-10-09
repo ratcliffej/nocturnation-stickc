@@ -14,7 +14,7 @@
 #pragma once
 
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "v0.5"
+#define FIRMWARE_VERSION "v0.21"
 #endif
 
 namespace nocturnation {

@@ -71,6 +71,17 @@ bool apply_config_entry(const TlvEntry& e, void* raw_ctx) {
             modes::persistence::save_strip_group_size(v);
             return true;
         }
+        if (std::strcmp(keybuf, key::kPairedDirUid) == 0) {
+            if (e.type != ValueType::U32 || e.value_len != 4 || !e.value) {
+                ctx->value_out_of_range = true; return true;
+            }
+            const uint32_t v = static_cast<uint32_t>(e.value[0])
+                             | (static_cast<uint32_t>(e.value[1]) << 8)
+                             | (static_cast<uint32_t>(e.value[2]) << 16)
+                             | (static_cast<uint32_t>(e.value[3]) << 24);
+            modes::persistence::save_paired_dir_uid(v);
+            return true;
+        }
     }
 
     // Keys common to both roles.
