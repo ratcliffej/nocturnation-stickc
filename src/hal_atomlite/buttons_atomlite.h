@@ -35,6 +35,16 @@ private:
     bool           last_pressed_       = false;
     uint32_t       pressed_at_ms_      = 0;
     bool           long_press_fired_   = false;
+    // Epic 21 B7: double-tap-then-hold detector. On a short press+
+    // release (Clicked), remember the timestamp. If the next press
+    // arrives within kDoubleTapWindowMs AND is held past long_press_ms_,
+    // fire DoubleTapHeld instead of the usual LongPressed. Zero means
+    // "no recent click" (sentinel - acceptable since millis() returns 0
+    // only within the first ms of boot, and no gesture completes that
+    // fast).
+    static constexpr uint16_t kDoubleTapWindowMs = 400;
+    uint32_t       last_clicked_at_ms_   = 0;
+    bool           in_double_tap_second_ = false;
 };
 
 }  // namespace hal

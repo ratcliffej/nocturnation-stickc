@@ -399,6 +399,13 @@ enum class ButtonEvent : uint8_t {
     Clicked,        // short press + release
     DoubleClicked,  // optional - backend may not support
     LongPressed,    // held past long-press threshold
+    // Epic 21 B7 (Atom Lite): quick click immediately followed by a
+    // held press. Distinct from LongPressed so a Lume can route the
+    // normal long-press to BLE pairing (shipped) and this new gesture
+    // to the ESP-NOW UID_ANNOUNCE pairing-burst without conflating
+    // operator intent. Only emitted by backends that support it;
+    // unsupported backends never fire it.
+    DoubleTapHeld,
 };
 
 class Buttons {
