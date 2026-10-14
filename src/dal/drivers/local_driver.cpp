@@ -3,6 +3,7 @@
 #include "hal/input_action.h"
 #include "hal/input_action_mapper_2btn.h"
 #include "pixmob_protocol.h"
+#include "modes/persistence.h"
 
 #include <cstdlib>       // std::rand() for chance roll
 
@@ -222,6 +223,13 @@ bool LocalDriver::begin() {
         any_capability_wired = true;
     }
 
+    // Apply operator beat-sensitivity settings to the three onset
+    // detectors. Safe to call regardless of whether a mic is wired -
+    // the detectors cache the settings and apply them on next process().
+    apply_beat_settings(modes::persistence::load_beat_sens(),
+                        modes::persistence::load_beat_floor(),
+                        modes::persistence::load_beat_sens_auto());
+
     // Refuse registration if no capability is wired - there's nothing
     // useful for this driver to do, and registering would just add
     // lookup overhead.
@@ -383,6 +391,29 @@ bool LocalDriver::stop_audio_input() {
     if (!mic) return false;
     mic->end();
     return true;
+}
+
+void LocalDriver::apply_beat_settings(uint8_t sens_slider,
+                                      uint8_t floor_slider,
+                                      bool    auto_enabled) {
+    cached_sens_slider_  = sens_slider;
+    cached_floor_slider_ = floor_slider;
+    cached_sens_auto_    = auto_enabled;
+
+    // Auto on → always use scale 1.0 (revert to the baseline threshold_k
+    // values the detectors were tuned around). Auto off → apply the
+    // operator's slider.
+    const float scale    = auto_enabled
+                             ? 1.0f
+                             : analyser::beat_sens_slider_to_scale(sens_slider);
+    const float cutoff   = analyser::beat_floor_slider_to_magnitude(floor_slider);
+
+    beat_detector_ .set_threshold_scale(scale);
+    snare_detector_.set_threshold_scale(scale);
+    hihat_detector_.set_threshold_scale(scale);
+    beat_detector_ .set_min_cutoff(cutoff);
+    snare_detector_.set_min_cutoff(cutoff);
+    hihat_detector_.set_min_cutoff(cutoff);
 }
 
 // -----------------------------------------------------------------------------

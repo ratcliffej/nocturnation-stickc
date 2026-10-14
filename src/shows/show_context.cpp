@@ -70,6 +70,16 @@ bool ShowContext::set_property(const char* key,
     return bag_->set(key, value);
 }
 
+uint8_t ShowContext::beat_sensitivity() const {
+    return modes::persistence::load_beat_sens();
+}
+uint8_t ShowContext::beat_floor() const {
+    return modes::persistence::load_beat_floor();
+}
+bool ShowContext::beat_sens_auto() const {
+    return modes::persistence::load_beat_sens_auto();
+}
+
 bool ShowContext::director_calm() const {
     return modes::persistence::load_dir_calm();
 }

@@ -35,13 +35,14 @@ private:
         WhiteOut,
         AudioLive,
         Calibrate,
+        BeatMonitor,
         WashTest,
         PixMobBench,
         LedAddressing,
     };
 
     struct MenuItem { SubTest test; const char* label; };
-    static constexpr MenuItem kSubTests[10] = {
+    static constexpr MenuItem kSubTests[11] = {
         { SubTest::PulseTest,     "Pulse"        },
         { SubTest::FadeTest,      "Fade"         },
         { SubTest::RainbowTest,   "Rainbow"      },
@@ -49,6 +50,7 @@ private:
         { SubTest::WhiteOut,      "White Out"    },
         { SubTest::AudioLive,     "Audio Live"   },
         { SubTest::Calibrate,     "Calibrate"    },
+        { SubTest::BeatMonitor,   "Beat Monitor" },   // Beat sens tune (parade mode)
         { SubTest::WashTest,      "Wash Test"    },
         { SubTest::PixMobBench,   "PMob Bench"   },
         { SubTest::LedAddressing, "LED Address"  },   // Epic 18 v0x04 bench
@@ -160,6 +162,20 @@ private:
     void tick_calibrate(uint32_t now);
     void handle_button_calibrate(const dal::ButtonPressEvent& ev);
     void draw_calibrate();
+
+    // Beat Monitor. AudioLive-style 4-band bars with:
+    //   - a dot per detector (K/S/H) that flashes green on fire and fades
+    //   - a horizontal line showing where the absolute floor sits (if non-0)
+    //   - current Sens / Floor / Auto values at the bottom
+    // Lets the operator tune Config > Utilities > Beat Sens with visible
+    // feedback. Does not itself edit values - go back to Config to change
+    // them. Shares the AudioLive capture + display state.
+    uint32_t beat_mon_last_fire_ms_[3] = {0, 0, 0};   // K/S/H last-fire timestamps
+    void enter_beat_monitor();
+    void on_audio_frame_beat_monitor(const dal::AudioFrameEvent& ev);
+    void tick_beat_monitor(uint32_t now);
+    void draw_beat_monitor_static();
+    void draw_beat_monitor_dynamic();
 
     // Wash Test. Three-item sub-screen (Fire wash / Cancel wash / Pulse
     // over wash). step_index_ doubles as the cursor; last_step_ms_

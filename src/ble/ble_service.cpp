@@ -32,6 +32,7 @@
 #include <esp_mac.h>
 #include <esp_sleep.h>
 #include "../modes/persistence.h"
+#include "../dal/drivers/local_driver.h"
 #include "config_apply.h"
 #endif
 
@@ -204,7 +205,8 @@ public:
 size_t serialise_config_bag(uint8_t* buf, size_t buflen, Role role) {
     TlvEncoder enc(buf, buflen);
     if (role == Role::Director) {
-        // Director bag: sid_perf, retx_count, pair_win_s, friendly_name.
+        // Director bag: sid_perf, retx_count, pair_win_s, friendly_name,
+        // beat sensitivity + floor + auto.
         enc.add_u8 (key::kDirSidPerf,
                     modes::persistence::load_director_perf_source_id());
         enc.add_u8 (key::kRetxCount,
@@ -216,6 +218,10 @@ size_t serialise_config_bag(uint8_t* buf, size_t buflen, Role role) {
         if (nlen > 0) {
             enc.add_utf8(key::kFriendlyName, name, static_cast<uint8_t>(nlen));
         }
+        enc.add_u8 (key::kBeatSens,     modes::persistence::load_beat_sens());
+        enc.add_u8 (key::kBeatSensAuto,
+                    modes::persistence::load_beat_sens_auto() ? 1 : 0);
+        enc.add_u8 (key::kBeatFloor,    modes::persistence::load_beat_floor());
     } else {
         // Lume bag: group, led_power, bound_sid (skipped in v0x01 — the
         // NVS key + consumer land in a follow-on epic), channel_pref,
@@ -272,6 +278,17 @@ public:
         }
         if (ctx.value_out_of_range) {
             Serial.println("[ble] config write: some entries out of range (partial apply)");
+        }
+        if (ctx.beat_settings_changed) {
+            // Re-apply to the live onset detectors so BLE writes take
+            // effect without a reboot. Safe even if LocalDriver isn't
+            // registered (apply_beat_settings only mutates in-process state).
+            if (auto* local = dal::local_driver_instance()) {
+                local->apply_beat_settings(
+                    modes::persistence::load_beat_sens(),
+                    modes::persistence::load_beat_floor(),
+                    modes::persistence::load_beat_sens_auto());
+            }
         }
         svc.on_config_write_success();
         Serial.printf("[ble] config write applied: %u bytes\n",

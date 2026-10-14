@@ -145,6 +145,16 @@ constexpr const char* kStripGroupSize = "strip_group_size";// u8  (1..255 pixels
 constexpr const char* kDirSidPerf     = "dir_sid_perf";    // u8 (0x40..0xFE)
 constexpr const char* kRetxCount      = "retx_count";      // u8 (1..5)
 
+// Beat-detection sensitivity (Director role). The sensitivity slider
+// tunes how far above the running adaptive baseline a magnitude must
+// sit for a beat to fire; the floor sets an absolute minimum magnitude
+// below which nothing fires regardless. Auto on → sensitivity slider is
+// ignored and the designed defaults are used. See dal/analyser/
+// beat_detector.h for the slider→scale mappings.
+constexpr const char* kBeatSens       = "beat_sens";       // u8 (1..10)
+constexpr const char* kBeatSensAuto   = "beat_sens_auto";  // u8 (0/1)
+constexpr const char* kBeatFloor      = "beat_floor";      // u8 (0..10, 0 = disabled)
+
 // Both roles
 constexpr const char* kPairWinS       = "pair_win_s";      // u8 (5..255 seconds)
 constexpr const char* kFriendlyName   = "friendly_name";   // utf8 (0..20 bytes)

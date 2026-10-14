@@ -66,6 +66,15 @@ public:
     // show's behalf. Forwards to persistence::load_dir_calm().
     bool director_calm() const;
 
+    // Beat-detection operator settings. Shows receive BeatEvents with the
+    // slider's effect already baked in - these accessors are for shows
+    // that want to display the current values or self-modulate (e.g. a
+    // "parade mode" show that composes more conservative output when
+    // the floor is high).
+    uint8_t beat_sensitivity() const;   // 1..10, operator-set
+    uint8_t beat_floor()       const;   // 0..10, 0 = disabled
+    bool    beat_sens_auto()   const;
+
     // -- Framework-managed state ------------------------------------------
     bool paused()           const { return paused_; }
     void set_paused(bool p)       { paused_ = p; }
