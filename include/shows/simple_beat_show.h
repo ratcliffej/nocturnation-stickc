@@ -36,7 +36,6 @@
 
 #include "shows/show.h"
 #include "plugins/property_bag.h"
-#include "widgets/beat_bar.h"
 
 namespace nocturnation {
 namespace shows {
@@ -65,31 +64,17 @@ public:
     // having to scrape the rendered framebuffer.
 #ifndef ARDUINO
     float    estimated_bpm_for_tests()   const { return estimated_bpm_; }
-    float    current_flux_for_tests()    const { return current_flux_; }
-    float    baseline_flux_for_tests()   const { return baseline_flux_; }
 #endif
 
 private:
     static constexpr size_t kIbiBufferSize = 8;
 
-    // Block 2: flux meter rendering moved into the BeatBarWidget
-    // library. SimpleBeatShow's on_render owns the widget instance and
-    // feeds it the current ratio / threshold every frame.
-    widgets::BeatBarWidget flux_bar_;
-
-    // Beat / BPM tracking (mirrors BeatPulseVisualisation exactly).
+    // Beat / BPM tracking.
     uint32_t  last_beat_ms_   = 0;
     uint32_t  ibi_buffer_[kIbiBufferSize] = {0};
     size_t    ibi_index_      = 0;
     size_t    ibi_count_      = 0;
     float     estimated_bpm_  = 0.0f;
-
-    // Flux meter state (display-only; mirrors pre-Block-1
-    // DirectorMode's per-frame tracking that fed the meter).
-    float     baseline_flux_    = 100.0f;
-    float     prev_bass_energy_ = 0.0f;
-    float     current_flux_     = 0.0f;
-    float     current_level_    = 0.0f;
 
     void update_bpm_from_buffer();
 };

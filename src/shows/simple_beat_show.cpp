@@ -90,11 +90,6 @@ void colour_to_rgb(Colour c, uint8_t& r, uint8_t& g, uint8_t& b) {
     }
 }
 
-// Flux meter tuning - mirrors DirectorMode's pre-Block-1 values.
-constexpr float kBeatMultiplier = 2.5f;
-constexpr float kBaselineAlpha  = 0.02f;
-constexpr float kVolumeGate     = 500.0f;
-
 }  // namespace
 
 // =============================================================================
@@ -154,32 +149,16 @@ void SimpleBeatShow::enter(ShowContext& /*ctx*/) {
     ibi_index_         = 0;
     ibi_count_         = 0;
     estimated_bpm_     = 0.0f;
-    baseline_flux_     = 100.0f;
-    prev_bass_energy_  = 0.0f;
-    current_flux_      = 0.0f;
-    current_level_     = 0.0f;
 }
 
 void SimpleBeatShow::exit(ShowContext& /*ctx*/) {}
 
 void SimpleBeatShow::on_audio_frame(ShowContext& /*ctx*/,
-                                     const AudioFrameEvent& ev) {
-    // Flux meter tracking - display-only. Beat firing routes through
-    // on_beat_detected (the framework dispatches based on ev.is_beat).
-    current_level_ = ev.overall_rms;
-
-    if (current_level_ < kVolumeGate) {
-        prev_bass_energy_ = 0.0f;
-        return;
-    }
-
-    float flux = ev.bass_energy - prev_bass_energy_;
-    if (flux < 0) flux = 0;
-    prev_bass_energy_ = ev.bass_energy;
-    current_flux_     = flux;
-
-    baseline_flux_ = baseline_flux_ * (1.0f - kBaselineAlpha)
-                   + flux * kBaselineAlpha;
+                                     const AudioFrameEvent& /*ev*/) {
+    // Beat firing routes through on_beat_detected (the framework
+    // dispatches based on ev.is_beat produced by BeatDetector, which
+    // respects the operator's Config > Beat Sens settings). This
+    // show has no per-frame work beyond that.
 }
 
 void SimpleBeatShow::on_beat_detected(ShowContext& ctx, uint8_t /*strength*/) {
@@ -314,19 +293,6 @@ void SimpleBeatShow::on_render(ShowContext& ctx) {
                   DAL::battery_level("local"), ir_buf);
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         10, 75, batt, WHITE, BLACK, 2});
-
-    // Flux meter via the BeatBarWidget. Equivalent to the pre-Block-2
-    // inline rendering: bar fraction = ratio * 50 / 218 (clamped),
-    // marker at kBeatMultiplier * 50 / 218 ~= 0.573. The 218 figure
-    // is the inner drawable width (220 - 2 px frame).
-    const int meterX = 10, meterY = 110, meterW = 220, meterH = 14;
-    const float ratio = (baseline_flux_ > 1.0f)
-                            ? current_flux_ / baseline_flux_
-                            : 0.0f;
-    constexpr float kBarScale       = 50.0f / 218.0f;
-    constexpr float kMarkerFraction = kBeatMultiplier * 50.0f / 218.0f;
-    flux_bar_.update(ratio * kBarScale, kMarkerFraction);
-    flux_bar_.draw(meterX, meterY, meterW, meterH);
 
     // Operator hint footer.
     DAL::fire_display_show_text("local", DisplayShowTextEvent{

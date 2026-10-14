@@ -51,7 +51,7 @@ constexpr uint32_t kSparkleStepMs     = 1100;
 
 }  // namespace
 
-constexpr TestMode::MenuItem TestMode::kSubTests[11];
+constexpr TestMode::MenuItem TestMode::kSubTests[10];
 
 void TestMode::enter() {
     menu_selected_    = 0;
@@ -68,8 +68,7 @@ void TestMode::enter() {
 
 void TestMode::exit() {
     if (active_test_ == SubTest::AudioLive
-     || active_test_ == SubTest::Calibrate
-     || active_test_ == SubTest::BeatMonitor) DAL::stop_audio_input("local");
+     || active_test_ == SubTest::Calibrate) DAL::stop_audio_input("local");
     dal::local_driver_instance()->cancel_pulse();
     dal::esp_now_broadcast_driver_instance()->stop_broadcast();
     active_test_ = SubTest::None;
@@ -84,7 +83,6 @@ void TestMode::loop_tick() {
         case SubTest::SparkleTest: tick_sparkle(now);                        break;
         case SubTest::AudioLive:   tick_audio_live(now);                     break;
         case SubTest::Calibrate:   tick_calibrate(now);                      break;
-        case SubTest::BeatMonitor: tick_beat_monitor(now);                   break;
         case SubTest::PixMobBench: tick_pixmob_bench(now);                   break;
         case SubTest::LedAddressing: tick_led_addressing(now);               break;
         default: break;
@@ -109,8 +107,6 @@ void TestMode::on_audio_frame(const AudioFrameEvent& ev) {
         process_audio_frame(ev);
     } else if (active_test_ == SubTest::Calibrate) {
         on_audio_frame_calibrate(ev);
-    } else if (active_test_ == SubTest::BeatMonitor) {
-        on_audio_frame_beat_monitor(ev);
     }
 }
 
@@ -216,7 +212,6 @@ void TestMode::launch_test(SubTest t) {
         case SubTest::WhiteOut:     draw_whiteout();                      break;
         case SubTest::AudioLive:    enter_audio_live();                   break;
         case SubTest::Calibrate:    enter_calibrate();                    break;
-        case SubTest::BeatMonitor:  enter_beat_monitor();                 break;
         case SubTest::WashTest:     enter_wash_test();                    break;
         case SubTest::PixMobBench:  enter_pixmob_bench();                 break;
         case SubTest::LedAddressing: enter_led_addressing();              break;
@@ -820,164 +815,6 @@ void TestMode::draw_calibrate() {
                 10, 50, "Saved!", GREEN, BLACK, 3});
             break;
     }
-}
-
-// -------------------------------------------------------------------------
-// Beat Monitor: visual tuning aid for Config > Utilities > Beat Sens.
-// -------------------------------------------------------------------------
-//
-// Shares AudioLive's spectrum capture + bar renderer, then overlays:
-//   - three detector dots (K/S/H) that flash green on fire and fade over ~400ms
-//   - a horizontal line across each bar at the current floor magnitude
-//     (hidden when floor slider is 0)
-//   - current Sens / Floor / Auto readout at the bottom
-//
-// Read-only - the operator goes back to Config to change values. The point
-// is "look at this while you tune" not "tune from here".
-
-void TestMode::enter_beat_monitor() {
-    audio_bass_ = audio_mid_ = audio_treble_ = audio_rms_ = 0.0f;
-    beat_mon_last_fire_ms_[0] = 0;
-    beat_mon_last_fire_ms_[1] = 0;
-    beat_mon_last_fire_ms_[2] = 0;
-    for (int i = 0; i < 4; ++i) {
-        auto_min_[i] = 1.0e9f;
-        auto_max_[i] = 1.0f;
-    }
-    DAL::start_audio_input("local", 16000, 512);
-    draw_beat_monitor_static();
-    draw_beat_monitor_dynamic();
-}
-
-void TestMode::on_audio_frame_beat_monitor(const AudioFrameEvent& ev) {
-    // Reuse AudioLive's band tracking so the bars update identically.
-    process_audio_frame(ev);
-    // Record per-detector fire timestamps for the fade dots.
-    if (ev.beat_strength  > 0) beat_mon_last_fire_ms_[0] = ev.timestamp_ms;
-    if (ev.snare_strength > 0) beat_mon_last_fire_ms_[1] = ev.timestamp_ms;
-    if (ev.hihat_strength > 0) beat_mon_last_fire_ms_[2] = ev.timestamp_ms;
-}
-
-void TestMode::tick_beat_monitor(uint32_t now) {
-    if (now - last_step_ms_ < 50) return;      // ~20 Hz redraw
-    last_step_ms_ = now;
-    draw_beat_monitor_dynamic();
-}
-
-void TestMode::draw_beat_monitor_static() {
-    DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
-    DAL::fire_display_show_text("local", DisplayShowTextEvent{
-        10, 2, "Beat Monitor", WHITE, BLACK, 1});
-    // Bar frame (same as AudioLive but shorter so we have room for the
-    // K/S/H dots + settings line at the bottom).
-    const int bar_y_top    = 14;
-    const int bar_y_bottom = 72;
-    const int bar_w        = 42;
-    for (int i = 0; i < 4; ++i) {
-        const int x = 10 + i * 56;
-        DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
-            x, bar_y_top,    bar_w, 1, WHITE});
-        DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
-            x, bar_y_bottom, bar_w, 1, WHITE});
-    }
-    DAL::fire_display_show_text("local", DisplayShowTextEvent{
-        10, 128, "B-hold: back", WHITE, BLACK, 1});
-}
-
-void TestMode::draw_beat_monitor_dynamic() {
-    auto& s_calibration = persistence::current_calibration();
-    const int   bar_y_top    = 14;
-    const int   bar_y_bottom = 72;
-    const int   bar_w        = 42;
-    const int   bar_h_max    = bar_y_bottom - bar_y_top - 2;
-    float floors[4];
-    float ceils[4];
-    if (s_calibration.auto_enabled) {
-        for (int i = 0; i < 4; ++i) {
-            floors[i] = std::log2f(auto_min_[i]);
-            ceils[i]  = std::log2f(auto_max_[i]);
-            if (ceils[i] - floors[i] < 2.0f) ceils[i] = floors[i] + 2.0f;
-        }
-    } else {
-        for (int i = 0; i < 4; ++i) {
-            floors[i] = s_calibration.floor[i];
-            ceils[i]  = s_calibration.ceil[i];
-        }
-    }
-    const char  band_labels[4] = { 'B', 'M', 'T', 'R' };
-    const float values[4]    = { audio_bass_, audio_mid_, audio_treble_, audio_rms_ };
-
-    // Current operator settings - read fresh each frame so a mid-tune
-    // return from Config picks up new values.
-    const uint8_t floor_slider = persistence::load_beat_floor();
-    const float   floor_mag    = dal::analyser::beat_floor_slider_to_magnitude(floor_slider);
-    const float   floor_log    = (floor_mag > 0.0f) ? std::log2f(floor_mag) : -1.0f;
-
-    for (int i = 0; i < 4; ++i) {
-        const int x = 10 + i * 56;
-        DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
-            x, bar_y_top + 1, bar_w, bar_h_max, BLACK});
-        float v = values[i];
-        if (v < 1.0f) v = 1.0f;
-        const float lg    = std::log2f(v);
-        float ratio = (lg - floors[i]) / (ceils[i] - floors[i]);
-        if (ratio < 0)   ratio = 0;
-        if (ratio > 1.f) ratio = 1.f;
-        const int h = (int)(ratio * (float)bar_h_max);
-        if (h > 0) {
-            DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
-                x, bar_y_bottom - h, bar_w, h, GREEN});
-        }
-        // Overlay the floor line (log2 scale into the same bar range).
-        if (floor_log > 0.0f) {
-            float fr = (floor_log - floors[i]) / (ceils[i] - floors[i]);
-            if (fr >= 0.0f && fr <= 1.0f) {
-                const int fy = bar_y_bottom - (int)(fr * (float)bar_h_max);
-                constexpr uint16_t kRed = 0xF800;
-                DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
-                    x, fy, bar_w, 1, kRed});
-            }
-        }
-        char lb[6];
-        std::snprintf(lb, sizeof(lb), "%c", band_labels[i]);
-        DAL::fire_display_show_text("local", DisplayShowTextEvent{
-            x + bar_w / 2 - 3, bar_y_bottom + 4, lb, WHITE, BLACK, 1});
-    }
-
-    // Detector dots - K / S / H row below the bars.
-    const uint32_t now = millis();
-    const int      dot_y = bar_y_bottom + 20;
-    const int      dot_r = 5;
-    const char* labels[3] = { "K", "S", "H" };
-    for (int i = 0; i < 3; ++i) {
-        const int x = 20 + i * 60;
-        // Fade over 400 ms post-fire; otherwise dim grey.
-        const uint32_t elapsed = (beat_mon_last_fire_ms_[i] == 0)
-                                   ? 0xFFFFFFFFu
-                                   : (now - beat_mon_last_fire_ms_[i]);
-        uint16_t colour;
-        if (elapsed < 400) {
-            // Simple two-step fade: bright green then dim.
-            colour = (elapsed < 150) ? 0x07E0 /*bright green*/
-                                     : 0x03E0 /*dim green*/;
-        } else {
-            colour = 0x4208;   // dark grey "off"
-        }
-        DAL::fire_display_fill_rect("local", DisplayFillRectEvent{
-            x, dot_y, dot_r * 2, dot_r * 2, colour});
-        DAL::fire_display_show_text("local", DisplayShowTextEvent{
-            x + dot_r * 2 + 4, dot_y, labels[i], WHITE, BLACK, 1});
-    }
-
-    // Current settings line at the bottom.
-    const bool    auto_on = persistence::load_beat_sens_auto();
-    const uint8_t sens    = persistence::load_beat_sens();
-    char settings[32];
-    std::snprintf(settings, sizeof(settings), "A:%s S:%u F:%u",
-                  auto_on ? "ON" : "--",
-                  (unsigned)sens, (unsigned)floor_slider);
-    DAL::fire_display_show_text("local", DisplayShowTextEvent{
-        10, 112, settings, WHITE, BLACK, 1});
 }
 
 // -------------------------------------------------------------------------
