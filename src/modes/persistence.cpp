@@ -277,6 +277,57 @@ uint64_t next_config_numonce() {
     return next;
 }
 
+uint8_t load_beat_sens() {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/true);
+    uint8_t v = prefs.getUChar("beat_sens", kDefaultBeatSens);
+    prefs.end();
+    if (v < 1)  v = 1;
+    if (v > 10) v = 10;
+    return v;
+}
+
+void save_beat_sens(uint8_t v) {
+    if (v < 1)  v = 1;
+    if (v > 10) v = 10;
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/false);
+    prefs.putUChar("beat_sens", v);
+    prefs.end();
+}
+
+bool load_beat_sens_auto() {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/true);
+    bool e = prefs.getBool("beat_sens_a", kDefaultBeatSensAuto);
+    prefs.end();
+    return e;
+}
+
+void save_beat_sens_auto(bool e) {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/false);
+    prefs.putBool("beat_sens_a", e);
+    prefs.end();
+}
+
+uint8_t load_beat_floor() {
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/true);
+    uint8_t v = prefs.getUChar("beat_floor", kDefaultBeatFloor);
+    prefs.end();
+    if (v > 10) v = 10;
+    return v;
+}
+
+void save_beat_floor(uint8_t v) {
+    if (v > 10) v = 10;
+    Preferences prefs;
+    prefs.begin("noct", /*readOnly=*/false);
+    prefs.putUChar("beat_floor", v);
+    prefs.end();
+}
+
 void ensure_identity() {
     // Must be called AFTER WiFi/BT init so esp_random() draws from the
     // hardware RNG rather than the weakly-seeded pre-radio PRNG. See
@@ -868,6 +919,25 @@ void             ensure_identity()                        {
 namespace { uint64_t s_native_config_numonce = 0; }
 uint64_t load_config_numonce() { return s_native_config_numonce; }
 uint64_t next_config_numonce() { return ++s_native_config_numonce; }
+
+namespace {
+uint8_t s_native_beat_sens      = kDefaultBeatSens;
+bool    s_native_beat_sens_auto = kDefaultBeatSensAuto;
+uint8_t s_native_beat_floor     = kDefaultBeatFloor;
+}  // namespace
+uint8_t load_beat_sens()                     { return s_native_beat_sens; }
+void    save_beat_sens(uint8_t v)            {
+    if (v < 1)  v = 1;
+    if (v > 10) v = 10;
+    s_native_beat_sens = v;
+}
+bool    load_beat_sens_auto()                { return s_native_beat_sens_auto; }
+void    save_beat_sens_auto(bool e)          { s_native_beat_sens_auto = e; }
+uint8_t load_beat_floor()                    { return s_native_beat_floor; }
+void    save_beat_floor(uint8_t v)           {
+    if (v > 10) v = 10;
+    s_native_beat_floor = v;
+}
 
 namespace {
 uint8_t  s_native_strip_brightness = kDefaultStripBrightness;

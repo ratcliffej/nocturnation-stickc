@@ -38,6 +38,20 @@ public:
     bool start_audio_input(uint16_t sample_rate_hz, uint16_t fft_size) override;
     bool stop_audio_input() override;
 
+    // Push the operator-selected beat-sensitivity slider (1..10) and
+    // minimum-cutoff slider (0..10, 0 = disabled) into all three onset
+    // detectors. Called from begin() with NVS-persisted values and
+    // again whenever Config writes update them (menu, BLE, or
+    // CONFIG_WRITE). Auto mode is a UX gate: when auto_enabled is true,
+    // the sensitivity slider is ignored and scale 1.0 is used; the
+    // floor slider is independent of auto.
+    void apply_beat_settings(uint8_t sens_slider, uint8_t floor_slider, bool auto_enabled);
+
+    // Operator-visible current values, surfaced on ShowContext.
+    uint8_t beat_sensitivity_slider() const { return cached_sens_slider_; }
+    uint8_t beat_floor_slider()       const { return cached_floor_slider_; }
+    bool    beat_sensitivity_auto()   const { return cached_sens_auto_; }
+
     int  battery_level() override;
 
     // True while an RgbPulseEvent is mid-render. Orchestration that owns
@@ -166,6 +180,11 @@ private:
     analyser::BeatDetector beat_detector_;
     analyser::BeatDetector snare_detector_{snare_config()};
     analyser::BeatDetector hihat_detector_{hihat_config()};
+
+    // Cached values of the operator settings most recently pushed in.
+    uint8_t cached_sens_slider_  = 5;
+    uint8_t cached_floor_slider_ = 0;
+    bool    cached_sens_auto_    = true;
 
     // Drop and breakdown detector. Same lifecycle as beat_detector_ -
     // one update per FFT cycle, the result is stamped onto each

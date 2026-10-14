@@ -23,6 +23,19 @@ void BeatDetector::reset() {
     frames_seen_   = 0;
     last_beat_ms_  = 0;
     last_strength_ = 0;
+    // threshold_scale_ intentionally preserved across reset - it reflects
+    // the operator setting, not accumulated signal state.
+}
+
+void BeatDetector::set_threshold_scale(float scale) {
+    if (scale < 0.4f) scale = 0.4f;
+    if (scale > 2.0f) scale = 2.0f;
+    threshold_scale_ = scale;
+}
+
+void BeatDetector::set_min_cutoff(float cutoff) {
+    if (cutoff < 0.0f) cutoff = 0.0f;
+    min_cutoff_ = cutoff;
 }
 
 bool BeatDetector::process(const SpectrumFrame& frame, uint32_t now_ms) {
@@ -78,8 +91,9 @@ bool BeatDetector::process(const SpectrumFrame& frame, uint32_t now_ms) {
                 const float variance = m2 / static_cast<float>(window);
                 const float std_dev  = std::sqrt(variance);
 
-                const float threshold = mean + cfg_.threshold_k * std_dev;
-                if (frame.magnitudes[b] > threshold) {
+                const float threshold = mean + (cfg_.threshold_k * threshold_scale_) * std_dev;
+                if (frame.magnitudes[b] > threshold
+                 && frame.magnitudes[b] > min_cutoff_) {
                     fired = true;
                     // Strength: linear over the magnitude-vs-threshold
                     // ratio. mag == threshold reads 0; mag == 2*threshold

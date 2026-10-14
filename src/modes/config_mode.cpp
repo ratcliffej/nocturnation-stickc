@@ -85,7 +85,7 @@ size_t scroll_offset(size_t selected, size_t total, size_t max_visible) {
 // Out-of-class definitions for the ODR-used static constexpr members.
 constexpr ConfigMode::TopEntry    ConfigMode::kTop[6];
 constexpr ConfigMode::PickerEntry ConfigMode::kConnectivity[4];
-constexpr ConfigMode::PickerEntry ConfigMode::kUtilities[2];
+constexpr ConfigMode::PickerEntry ConfigMode::kUtilities[3];
 constexpr const char* ConfigMode::kWifiItems[];
 constexpr const char* ConfigMode::kDmxItems[];
 
@@ -525,6 +525,7 @@ void ConfigMode::handle_sub(const ButtonPressEvent& ev) {
         case SubMenu::EspNow:      handle_espnow(ev);      break;
         case SubMenu::PixMob:      handle_pixmob(ev);      break;
         case SubMenu::LevelTuning: handle_level_tuning(ev); break;
+        case SubMenu::BeatSens:    handle_beat_sens(ev); break;
         case SubMenu::LedStrip:    handle_led_strip(ev); break;
         case SubMenu::BlePair:     handle_ble_pair(ev);    break;
         case SubMenu::ConfigLumes: handle_config_lumes(ev); break;
@@ -553,6 +554,7 @@ void ConfigMode::draw_sub() {
         case SubMenu::LedStrip:    draw_led_strip(); break;
         case SubMenu::PixMob:      draw_pixmob(); break;
         case SubMenu::LevelTuning: draw_level_tuning(); break;
+        case SubMenu::BeatSens:    draw_beat_sens(); break;
         case SubMenu::System:      draw_system(); break;
         case SubMenu::BlePair:     draw_ble_pair(); break;
         case SubMenu::ConfigLumes: draw_config_lumes(); break;
@@ -1711,6 +1713,92 @@ void ConfigMode::draw_system() {
     }
     DAL::fire_display_show_text("local", DisplayShowTextEvent{
         10, 122, "B: cycle  A: select  B-hold: back",
+        WHITE, BLACK, 1});
+}
+
+// -------------------------------------------------------------------------
+// Beat Sensitivity submenu (parade / crowd-noise rejection)
+// -------------------------------------------------------------------------
+//
+// Three rows:
+//   Auto  = ON | OFF
+//   Sens  = 1..10 (greyed out when Auto is ON)
+//   Floor = 0..10, 0 = disabled
+//
+// Btn2 cycles the selected row. Btn1 flips Auto, or increments Sens / Floor
+// with wrap. Writes persist to NVS immediately and refresh the live detector
+// state so an operator who's in Director mode sees the change at once.
+// The companion Test Mode "Beat Monitor" sub-test is the recommended visual
+// aid for picking the right values.
+
+void ConfigMode::handle_beat_sens(const dal::ButtonPressEvent& ev) {
+    if (ev.id == ButtonId::Btn2) {
+        sub_selected_ = (sub_selected_ + 1) % kBeatSensItemCount;
+        draw();
+        return;
+    }
+    if (ev.id != ButtonId::Btn1) return;
+
+    switch ((BeatSensItem)sub_selected_) {
+        case BeatSensItem::Auto: {
+            persistence::save_beat_sens_auto(!persistence::load_beat_sens_auto());
+            break;
+        }
+        case BeatSensItem::Sens: {
+            // Only mutable when Auto is OFF; be forgiving and just no-op
+            // in Auto mode so the operator notices nothing changes.
+            if (persistence::load_beat_sens_auto()) break;
+            uint8_t v = persistence::load_beat_sens();
+            v = static_cast<uint8_t>((v % 10) + 1);   // 1..10 wrap
+            persistence::save_beat_sens(v);
+            break;
+        }
+        case BeatSensItem::Floor: {
+            uint8_t v = persistence::load_beat_floor();
+            v = static_cast<uint8_t>((v + 1) % 11);   // 0..10 wrap
+            persistence::save_beat_floor(v);
+            break;
+        }
+    }
+#ifdef ARDUINO
+    if (auto* local = dal::local_driver_instance()) {
+        local->apply_beat_settings(persistence::load_beat_sens(),
+                                   persistence::load_beat_floor(),
+                                   persistence::load_beat_sens_auto());
+    }
+#endif
+    draw();
+}
+
+void ConfigMode::draw_beat_sens() {
+    DAL::fire_display_clear("local", DisplayClearEvent{BLACK});
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 5, "Beat Sens", WHITE, BLACK, 2});
+
+    const bool    auto_on   = persistence::load_beat_sens_auto();
+    const uint8_t sens      = persistence::load_beat_sens();
+    const uint8_t floor_val = persistence::load_beat_floor();
+
+    char a[28]; std::snprintf(a, sizeof(a), "Auto:  %s",      auto_on ? "ON" : "OFF");
+    char s[28]; std::snprintf(s, sizeof(s), "Sens:  %u/10",   (unsigned)sens);
+    char f[28]; std::snprintf(f, sizeof(f), "Floor: %u/10",   (unsigned)floor_val);
+
+    const char* lines[kBeatSensItemCount] = { a, s, f };
+    constexpr int kRowY0 = 32;
+    for (size_t i = 0; i < kBeatSensItemCount; ++i) {
+        const bool sel = (i == sub_selected_);
+        char buf[40];
+        std::snprintf(buf, sizeof(buf), "%s %s", sel ? ">" : " ", lines[i]);
+        uint16_t fg = sel ? YELLOW : WHITE;
+        // Grey Sens when Auto is on so operators know the slider is ignored.
+        // Dim Sens when Auto is on so operators know the slider is ignored.
+        constexpr uint16_t kDarkGrey = 0x4208;   // RGB565 ~#404040
+        if ((BeatSensItem)i == BeatSensItem::Sens && auto_on) fg = kDarkGrey;
+        DAL::fire_display_show_text("local", DisplayShowTextEvent{
+            10, kRowY0 + static_cast<int>(i) * kRowStride, buf, fg, BLACK, 2});
+    }
+    DAL::fire_display_show_text("local", DisplayShowTextEvent{
+        10, 122, "B: cycle  A: adj  B-hold: back",
         WHITE, BLACK, 1});
 }
 

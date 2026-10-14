@@ -67,6 +67,7 @@ private:
         Dmx,
         PixMob,
         LevelTuning,
+        BeatSens,
         System,
         // Epic 12 B4 stub. Functional wiring (NVS-backed enable +
         // brightness cap + group/repeat data model) lands once the
@@ -152,9 +153,10 @@ private:
     // Wash Test (Epic 6C) moved to Test Mode (test_mode.h) so it sits
     // alongside the rest of the §8.5 hardware-verification catalogue;
     // Utilities is for developer bench tools, not operator-facing tests.
-    static constexpr PickerEntry kUtilities[2] = {
+    static constexpr PickerEntry kUtilities[3] = {
         { SubMenu::PixMob,      "PixMob"       },
         { SubMenu::LevelTuning, "Level Tuning" },
+        { SubMenu::BeatSens,    "Beat Sens"    },
     };
     static constexpr size_t kUtilitiesCount =
         sizeof(kUtilities) / sizeof(kUtilities[0]);
@@ -417,6 +419,20 @@ private:
     void handle_system(const dal::ButtonPressEvent& ev);
     void factory_reset();
     void draw_system();
+
+    // Beat Sensitivity submenu. Three items: Auto on/off, manual
+    // sensitivity 1..10 (ignored when Auto is on), absolute floor
+    // 0..10 (0 = disabled). Btn2 cycles the row; Btn1 increments the
+    // selected row's value or flips Auto. Changes write-through to
+    // NVS and refresh the live detector state.
+    enum class BeatSensItem : uint8_t {
+        Auto = 0,
+        Sens,
+        Floor,
+    };
+    static constexpr size_t kBeatSensItemCount = 3;
+    void handle_beat_sens(const dal::ButtonPressEvent& ev);
+    void draw_beat_sens();
 
     // BLE pairing sub-mode (Epic 20 B4). Entered via the Top "BLE
     // Pair" direct action; drives BleService lifecycle, shows a

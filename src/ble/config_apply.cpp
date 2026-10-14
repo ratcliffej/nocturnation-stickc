@@ -37,6 +37,29 @@ bool apply_config_entry(const TlvEntry& e, void* raw_ctx) {
             modes::persistence::save_retx_count(v);
             return true;
         }
+        if (std::strcmp(keybuf, key::kBeatSens) == 0) {
+            uint8_t v;
+            if (!read_u8(v)) { ctx->value_out_of_range = true; return true; }
+            if (v < 1 || v > 10) { ctx->value_out_of_range = true; return true; }
+            modes::persistence::save_beat_sens(v);
+            ctx->beat_settings_changed = true;
+            return true;
+        }
+        if (std::strcmp(keybuf, key::kBeatSensAuto) == 0) {
+            uint8_t v;
+            if (!read_u8(v)) { ctx->value_out_of_range = true; return true; }
+            modes::persistence::save_beat_sens_auto(v != 0);
+            ctx->beat_settings_changed = true;
+            return true;
+        }
+        if (std::strcmp(keybuf, key::kBeatFloor) == 0) {
+            uint8_t v;
+            if (!read_u8(v)) { ctx->value_out_of_range = true; return true; }
+            if (v > 10) { ctx->value_out_of_range = true; return true; }
+            modes::persistence::save_beat_floor(v);
+            ctx->beat_settings_changed = true;
+            return true;
+        }
     } else {
         if (std::strcmp(keybuf, key::kGroup) == 0) {
             uint8_t v;

@@ -138,6 +138,28 @@ uint32_t         compute_uid_from_mac(const uint8_t mac[6]);
 uint64_t         load_config_numonce();
 uint64_t         next_config_numonce();
 
+// Beat-detection sensitivity (Director-role). Operator-visible 1..10 slider
+// mapped by dal::analyser::beat_sens_slider_to_scale() to a multiplier
+// applied over the baseline BeatDetector threshold_k values. Default
+// slider 5 == scale 1.0 == no change from the historical hard-coded
+// behaviour. `beat_sens_auto` reserves a future auto-tune path where
+// the Director continuously calibrates against the room's ambient noise
+// floor so operators can walk from a quiet rehearsal into a loud venue
+// without re-tuning.
+constexpr uint8_t kDefaultBeatSens     = 5;    // slider 1..10
+constexpr bool    kDefaultBeatSensAuto = true;
+constexpr uint8_t kDefaultBeatFloor    = 0;    // slider 0..10, 0 = disabled
+uint8_t          load_beat_sens();
+void             save_beat_sens(uint8_t v);
+bool             load_beat_sens_auto();
+void             save_beat_sens_auto(bool e);
+
+// Absolute per-band magnitude floor (parade / crowd-noise rejection).
+// 0 = floor disabled (adaptive gate only); 1..10 = raise cutoff log-
+// linearly. See dal::analyser::beat_floor_slider_to_magnitude().
+uint8_t          load_beat_floor();
+void             save_beat_floor(uint8_t v);
+
 uint8_t          load_director_channel();
 void             save_director_channel(uint8_t c);
 
