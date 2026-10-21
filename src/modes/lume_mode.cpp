@@ -403,28 +403,14 @@ void LumeMode::on_button_event(const ButtonPressEvent& ev) {
         }
         return;
     }
-    // Epic 21 B7: Btn1 double-tap-then-hold on display-less hosts opens
-    // the ESP-NOW UID_ANNOUNCE pairing-burst window - proves out the
-    // no-BLE capture path (B3e state machine). Routed separately from
-    // LongPressed so the two gestures stay unambiguous on the operator
-    // side. Cancels the window if invoked while already bursting.
-    if (ev.id == ButtonId::Btn1
-        && ev.kind == ButtonEvent::DoubleTapHeld
-        && hal::HAL::display() == nullptr
-        && hal::HAL::led_strip() != nullptr) {
-        if (pairing_burst_active_) {
-#ifdef ARDUINO
-            Serial.println("[lume] Btn1 DoubleTapHeld while active -> cancel");
-#endif
-            exit_pairing_burst();
-        } else {
-#ifdef ARDUINO
-            Serial.println("[lume] Btn1 DoubleTapHeld -> enter UID_ANNOUNCE burst");
-#endif
-            enter_pairing_burst();
-        }
-        return;
-    }
+    // Epic 21 B7's Btn1 double-tap-then-hold gesture (operator-triggered
+    // UID_ANNOUNCE burst) retired 2026-10-21: every current fleet host
+    // has BLE silicon, so BLE pairing is the single approach and the
+    // in-the-clear UID_ANNOUNCE window on a BLE-capable device adds
+    // risk without new capability. The CONFIG_WRITE receive path stays
+    // (Director reconfigures already-paired Lumes over ESP-NOW); the
+    // UID_ANNOUNCE emit is reserved for future Tier-1 hardware
+    // without BLE (ESP32-S2 class). See [[project-device-tier-model]].
 #endif
 }
 
