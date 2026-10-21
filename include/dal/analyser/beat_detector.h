@@ -66,6 +66,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <cmath>
 
 namespace nocturnation {
 namespace dal {
@@ -170,6 +171,36 @@ public:
     // history doesn't bias detection on resume.
     void reset();
 
+    // Runtime scale factor applied over cfg_.threshold_k. Default 1.0 =
+    // use the baseline k as configured at construction. The Config
+    // menu's "Beat Sensitivity" slider (1..10) maps to a scale value
+    // via dal::beat_sens_slider_to_scale(); shows see the slider value
+    // via ShowContext::beat_sensitivity(). A single scale across all
+    // detectors preserves the kick 2.2 / snare 2.0 / hat 1.8 ratio
+    // that was empirically tuned - we only shift the overall threshold.
+    //
+    // Clamped internally to a sensible range so an operator setting
+    // "0" doesn't effectively mute detection (fire on noise) or "max"
+    // raise it so high nothing fires.
+    void  set_threshold_scale(float scale);
+    float threshold_scale() const { return threshold_scale_; }
+
+    // Absolute minimum magnitude cutoff. A beat only fires when the
+    // triggering band's magnitude is BOTH above the adaptive threshold
+    // (mean + k × stddev) AND above this absolute floor. Default 0 =
+    // floor disabled.
+    //
+    // The adaptive threshold handles typical scenarios where background
+    // energy rises or falls with the room - the baseline rises with it.
+    // The floor handles the specific case where background noise contains
+    // its own transients (crowd shouts, cheers) that would otherwise
+    // momentarily cross the adaptive threshold even when the actual
+    // signal of interest (drums at close range) is briefly quiet. Set
+    // the floor above typical crowd-ambient per-band magnitude; the
+    // drum hit at close range easily clears both gates.
+    void  set_min_cutoff(float cutoff);
+    float min_cutoff() const { return min_cutoff_; }
+
     // Read-only diagnostics.
     size_t   frames_seen()  const { return frames_seen_; }
     uint32_t last_beat_ms() const { return last_beat_ms_; }
@@ -198,7 +229,40 @@ private:
     size_t   frames_seen_    = 0;         // capped at kHistorySize for stats
     uint32_t last_beat_ms_   = 0;
     uint8_t  last_strength_  = 0;
+    float    threshold_scale_ = 1.0f;
+    float    min_cutoff_      = 0.0f;
 };
+
+// Map the operator-visible slider value (1..10) to the scale factor
+// applied over the baseline threshold_k. Slider 5 == 1.0 (default,
+// no change); slider 1 → 0.6 (more sensitive, fires more often);
+// slider 10 → 1.5 (less sensitive, only big transients fire).
+//
+// For reference against the baseline kick k = 2.2:
+//   slider 1  → effective k ≈ 1.32  (fires on anything)
+//   slider 5  → effective k = 2.20  (default)
+//   slider 10 → effective k = 3.30  (drum-hit only; good for noisy rooms)
+inline float beat_sens_slider_to_scale(uint8_t slider_1_to_10) {
+    if (slider_1_to_10 < 1)  slider_1_to_10 = 1;
+    if (slider_1_to_10 > 10) slider_1_to_10 = 10;
+    return 0.5f + 0.1f * static_cast<float>(slider_1_to_10);
+}
+
+// Map the operator-visible floor slider (0..10) to an absolute per-band
+// magnitude cutoff. Slider 0 disables the floor. Slider 1..10 maps
+// log-linearly through the typical AudioLive magnitude range so the
+// slider aligns visually with the bars display. Values picked empirically
+// against Jason's StickC Plus2 + Vengaboys reference (log2 floors in
+// kCalibrationDefault: 14..15 bass/mid, 15 treble) and bench-tuned
+// at EMF site surveys. Slider 5 ≈ 2^17 (just above typical bar baseline);
+// slider 10 ≈ 2^22 (well into the loud-signal range).
+inline float beat_floor_slider_to_magnitude(uint8_t slider_0_to_10) {
+    if (slider_0_to_10 == 0)  return 0.0f;
+    if (slider_0_to_10 > 10)  slider_0_to_10 = 10;
+    // log2 scale: slider 1 → 2^13 (quiet threshold); slider 10 → 2^22
+    const float exponent = 13.0f + (static_cast<float>(slider_0_to_10) - 1.0f) * (9.0f / 9.0f);
+    return std::exp2(exponent);
+}
 
 }  // namespace analyser
 }  // namespace dal

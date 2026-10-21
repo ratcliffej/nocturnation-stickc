@@ -31,6 +31,11 @@ namespace ble {
 struct ApplyCtx {
     Role role;
     bool value_out_of_range;
+    // Set true when at least one beat-sensitivity key (beat_sens /
+    // beat_sens_auto / beat_floor) was written in this bag. Caller
+    // uses it to refresh the live detector state so BLE / CONFIG_WRITE
+    // takes effect without a reboot. See LocalDriver::apply_beat_settings.
+    bool beat_settings_changed = false;
 };
 
 // TLV decoder callback. Returns true to continue iterating the bag.

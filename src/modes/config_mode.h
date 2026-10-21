@@ -66,7 +66,7 @@ private:
         WiFi,
         Dmx,
         PixMob,
-        LevelTuning,
+        BeatSens,
         System,
         // Epic 12 B4 stub. Functional wiring (NVS-backed enable +
         // brightness cap + group/repeat data model) lands once the
@@ -154,7 +154,7 @@ private:
     // Utilities is for developer bench tools, not operator-facing tests.
     static constexpr PickerEntry kUtilities[2] = {
         { SubMenu::PixMob,      "PixMob"       },
-        { SubMenu::LevelTuning, "Level Tuning" },
+        { SubMenu::BeatSens,    "Beat Sens"    },
     };
     static constexpr size_t kUtilitiesCount =
         sizeof(kUtilities) / sizeof(kUtilities[0]);
@@ -242,45 +242,7 @@ private:
     void handle_show(const dal::ButtonPressEvent& ev);
     void draw_show();
 
-    // Level Tuning submenu (Epic 4.7 Block 2). Live audio drives the
-    // BeatBarWidget (flux ratio with threshold marker at 2.5x baseline)
-    // and the SpectrumBarsWidget (7-band perceptual roll-up from the
-    // AudioFrameEvent's per-band summary). Btn2 cycles the display
-    // mode (Live / 25 / 50 / 75 / 100 %); the four percentage modes
-    // override the widgets to fixed values so a developer can verify
-    // the IR + ESP-NOW path without audio. Btn1 fires a render_fx
-    // pulse at the currently-displayed level (live ratio or fixed %).
-    enum class LevelTuningMode : uint8_t {
-        Live = 0,
-        Pct25,
-        Pct50,
-        Pct75,
-        Pct100,
-    };
-    static constexpr size_t kLevelTuningModeCount = 5;
-    LevelTuningMode level_tuning_mode_ = LevelTuningMode::Live;
-
-    // Audio state captured by on_audio_frame while the sub is active.
-    bool      level_tuning_audio_active_  = false;
-    float     level_tuning_prev_bass_     = 0.0f;
-    float     level_tuning_baseline_      = 100.0f;
-    float     level_tuning_flux_          = 0.0f;
-    float     level_tuning_level_rms_     = 0.0f;
-    float     level_tuning_spectrum_[7]   = {0, 0, 0, 0, 0, 0, 0};
-    uint32_t  last_level_tuning_draw_ms_  = 0;
     uint32_t  last_system_redraw_ms_      = 0;
-
-    void handle_level_tuning(const dal::ButtonPressEvent& ev);
-    void draw_level_tuning();
-    // Audio lifecycle helpers - called when the operator transitions
-    // into / out of the Level Tuning sub-mode. Starts / stops mic
-    // capture so audio frames only flow while the widgets are visible.
-    void level_tuning_audio_enter();
-    void level_tuning_audio_exit();
-    // Translate LevelTuningMode to its display label and override
-    // fraction. Static so the helpers don't widen the public surface.
-    static float       mode_to_fraction(LevelTuningMode m);
-    static const char* mode_label(LevelTuningMode m);
 
     // Display submenu (functional: Pulse Enable toggle + persists).
     enum class DisplayItem : uint8_t {
@@ -417,6 +379,35 @@ private:
     void handle_system(const dal::ButtonPressEvent& ev);
     void factory_reset();
     void draw_system();
+
+    // Beat Sensitivity submenu. Combined screen with live visualisation
+    // and operator controls, so the operator can tune and see the
+    // detector firing in one place. Mic is captured for as long as the
+    // sub is active; stops on B-hold back. Three editable rows:
+    // Auto on/off, manual sensitivity 1..10 (dimmed when Auto is on),
+    // absolute floor 0..10 (0 = disabled). Btn2 cycles the row; Btn1
+    // increments or flips. Changes write-through to NVS and refresh
+    // the live detector state immediately.
+    enum class BeatSensItem : uint8_t {
+        Auto = 0,
+        Sens,
+        Floor,
+    };
+    static constexpr size_t kBeatSensItemCount = 3;
+    bool     beat_sens_audio_active_ = false;
+    float    beat_sens_bass_         = 0.0f;
+    float    beat_sens_mid_          = 0.0f;
+    float    beat_sens_treble_       = 0.0f;
+    float    beat_sens_rms_          = 0.0f;
+    float    beat_sens_auto_min_[4]  = { 1.0e9f, 1.0e9f, 1.0e9f, 1.0e9f };
+    float    beat_sens_auto_max_[4]  = { 1.0f,   1.0f,   1.0f,   1.0f   };
+    uint32_t beat_sens_fire_ms_[3]   = {0, 0, 0};   // K/S/H last-fire
+    uint32_t beat_sens_last_draw_ms_ = 0;
+    void handle_beat_sens(const dal::ButtonPressEvent& ev);
+    void draw_beat_sens();
+    void on_audio_frame_beat_sens(const dal::AudioFrameEvent& ev);
+    void beat_sens_audio_enter();
+    void beat_sens_audio_exit();
 
     // BLE pairing sub-mode (Epic 20 B4). Entered via the Top "BLE
     // Pair" direct action; drives BleService lifecycle, shows a

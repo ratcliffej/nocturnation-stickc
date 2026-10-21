@@ -2,6 +2,7 @@
 
 #include "persistence.h"
 #include "dal/dal.h"
+#include "dal/analyser/beat_detector.h"   // beat_floor_slider_to_magnitude
 #include "effects/effects.h"
 #include "../dal/drivers/local_driver.h"
 #include "../dal/drivers/espnow_broadcast_driver.h"
@@ -67,7 +68,7 @@ void TestMode::enter() {
 
 void TestMode::exit() {
     if (active_test_ == SubTest::AudioLive
-     || active_test_ == SubTest::Calibrate)   DAL::stop_audio_input("local");
+     || active_test_ == SubTest::Calibrate) DAL::stop_audio_input("local");
     dal::local_driver_instance()->cancel_pulse();
     dal::esp_now_broadcast_driver_instance()->stop_broadcast();
     active_test_ = SubTest::None;
