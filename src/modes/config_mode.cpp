@@ -2609,9 +2609,9 @@ void ConfigMode::draw_config_lumes() {
             DAL::fire_display_show_text("local", DisplayShowTextEvent{
                 10, 40, "Capturing...", YELLOW, BLACK, 2});
             DAL::fire_display_show_text("local", DisplayShowTextEvent{
-                10, 70, "On the Lume:", WHITE, BLACK, 1});
+                10, 70, "Trigger pairing", WHITE, BLACK, 1});
             DAL::fire_display_show_text("local", DisplayShowTextEvent{
-                10, 86, "Btn1 double-tap+hold", WHITE, BLACK, 1});
+                10, 86, "on the Lume", WHITE, BLACK, 1});
             DAL::fire_display_show_text("local", DisplayShowTextEvent{
                 10, 122, "Any button: cancel", WHITE, BLACK, 1});
             break;
