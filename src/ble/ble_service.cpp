@@ -377,14 +377,21 @@ bool BleService::begin(Role role, Host host, uint8_t pair_win_s) {
     if (!s_stack_initialized) {
         NimBLEDevice::init("NocturNation");
         NimBLEDevice::setPower(ESP_PWR_LVL_P9);
-        // Request a 247-byte MTU on every connection. Default 23 forces
-        // any write larger than 20 bytes onto the ATT Prepare+Execute
-        // long-write path, which the Tildagon's aioble doesn't
-        // implement - the write silently never reaches the server's
-        // _remote_write handler. 247 lets a ~89-byte config bag land
-        // in a single ATT Write Request (opcode 0x12), which aioble
-        // DOES handle.
-        NimBLEDevice::setMTU(247);
+        // Request MTU = 512 (BLE spec max) on every connection.
+        // Default 23 forces any write larger than 20 bytes onto the
+        // ATT Prepare+Execute long-write path, which the Tildagon's
+        // aioble doesn't implement - the write silently never reaches
+        // the server's _remote_write handler. 512 gives a 509-byte
+        // ATT payload window so every realistic property-bag write
+        // (today ~89 B, capped at ~480 B by build_lume_config_bag)
+        // lands in a single ATT Write Request (opcode 0x12), which
+        // aioble DOES handle.
+        //
+        // Payloads BIGGER than that (images, firmware OTA, show cue
+        // files) must NOT go through GATT writes - BLE L2CAP CoC is
+        // the correct primitive for bulk transfer and will be a
+        // separate epic. See 2026-10-22 discussion in session notes.
+        NimBLEDevice::setMTU(512);
 
         if (!fetch_bt_mac(bt_mac_)) {
             Serial.println("[ble] warn: BT MAC read failed; adv name will have zero suffix");
@@ -658,7 +665,7 @@ bool BleService::start_scan(uint32_t duration_ms) {
         // See the init path above for the rationale; must match so a
         // scan-first flow (Config Lumes without pairing first) still
         // gets the same MTU preference.
-        NimBLEDevice::setMTU(247);
+        NimBLEDevice::setMTU(512);
         // Note: we're leaving the peripheral service unregistered here.
         // The first call to begin() will register it; subsequent calls
         // find s_stack_initialized true and skip re-registration.
